@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, Callable, Sequence
-from .analysts.llm import analyst_tag, predict_values_llm, propose_hypotheses_llm
+from .analysts import probability, validate_values, validate_hypotheses
+from . import CODE_VERSION
+from .analysts.llm import (analyst_tag, predict_values_llm, propose_hypotheses_llm, build_call1_input, build_call2_input, CALL1_SYSTEM_PROMPT, CALL2_SYSTEM_PROMPT)
 from .analysts.rules import (
     REFERENCE_ANALYST_ID,
     RULES_ANALYST_ID,
@@ -12,10 +14,10 @@ from .analysts.rules import (
     propose_hypotheses_rules,
 )
 from .config import load as load_config
-from .curve import build_curve_plan, execute_curve
+from .curve import build_curve_plan, execute_curve, ensure_plan_identity
 from .evidence.l1 import L1Package
 from .facts.build import build_facts
-from .io import digest, read_json, read_jsonl, sha_file, with_header, write_json, write_jsonl
+from .io import code_fingerprint, validate_output_location, L2Error, digest, read_json, sha_file, with_header, write_json, write_jsonl
 from .score import score_episode
 
 
@@ -41,7 +43,7 @@ def render_report_md(
             "",
             "## 执行状态",
             "",
-            "- 仅生成计划与第 1 次分析器价值预测（未带 `--execute`，未调用 L1 续跑）。",
+            "- 仅生成计划与本地规则预测；外部分析器为 deferred，未调用模型或 L1 续跑。",
         ])
         return '\n'.join(lines) + '\n'
 
@@ -87,6 +89,9 @@ def run_episode(
     stride: int = 4,
     alpha: float = 0.05,
     max_concurrency: int = 4,
+    rpm: float | None = None,
+    tpm: float | None = None,
+    baseline_provenance: str = "external supplied p0; cohort origin and parent exclusion unverified",
     resume_fn: Callable[..., Any] | None = None,
     llm_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     reference_snapshot_scores: dict[int, float] | None = None,
@@ -106,27 +111,22 @@ def run_episode(
     """
     parent = L1Package(Path(l1_run_dir))
     l2_dir = Path(output_dir) if output_dir is not None else (Path('l2') / parent.episode_id)
-    l2_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Extract turn-indexed parent facts
+    probability(p0, 'p0')
+    for label, limit in (('rpm', rpm), ('tpm', tpm)):
+        if limit is not None:
+            import math
+            if type(limit) not in (int, float) or not math.isfinite(limit) or limit <= 0:
+                raise L2Error(f'{label} must be positive and finite')
+    validate_output_location(parent.root, l2_dir)
+    plan = build_curve_plan(parent, n1=n1, n2=n2, stride=stride, alpha=alpha,
+                            max_concurrency=max_concurrency)
+    ensure_plan_identity(l2_dir, plan)
     facts = build_facts(parent)
-    facts_path = write_jsonl(l2_dir / 'facts.jsonl', facts)
-    facts_sha = sha_file(facts_path)
-
-    # 2. Build curve plan (no branches run yet)
-    plan = build_curve_plan(
-        parent,
-        n1=n1,
-        n2=n2,
-        stride=stride,
-        alpha=alpha,
-        max_concurrency=max_concurrency,
-    )
-    write_json(l2_dir / 'plan.json', plan)
+    fingerprint = code_fingerprint()
 
     # Parse requested analysts (`rules`, `reference`, `llm:<config_path>`, `llm_raw:<config_path>`)
     parsed_specs = []
-    for spec in analysts:
+    for spec in ('rules', *analysts):
         s = spec.strip()
         if not s:
             continue
@@ -148,45 +148,88 @@ def run_episode(
         else:
             raise ValueError(f'Unknown analyst specification: {s}')
 
-    # 3. Analyst Call 1: Value Predictions (cached by input sha256)
-    values_dir = l2_dir / 'values'
-    values_dir.mkdir(parents=True, exist_ok=True)
-    call1_outputs = {}
-    for spec in parsed_specs:
-        fname = _safe_filename(spec['id'])
-        v_path = values_dir / fname
-        in_sha = {
-            'parent_index_sha256': parent.index_sha256,
-            'facts_sha256': facts_sha,
-            'p0_sha256': digest(round(float(p0), 8)),
-        }
-        if v_path.is_file():
-            existing = read_json(v_path)
-            if existing.get('input_sha256') == in_sha:
-                call1_outputs[spec['id']] = existing
-                continue
+    # Validate all requested configurations before producing artifacts.
+    parsed_specs = list({spec['id']: spec for spec in parsed_specs}.values())
+    if any(spec['kind'] == 'reference' for spec in parsed_specs):
+        predict_values_reference(facts, parent.turns, p0, float(plan['terminal_outcome']), reference_snapshot_scores)
+    def preserve_previous(path):
+        if path.is_file():
+            archive = l2_dir / 'history' / path.parent.name / (path.stem + '@' + sha_file(path) + path.suffix)
+            if not archive.exists():
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                archive.write_bytes(path.read_bytes())
 
-        if spec['kind'] == 'rules':
-            val_res = predict_values_rules(facts, parent.turns, p0, float(plan['terminal_outcome']))
-        elif spec['kind'] == 'reference':
-            val_res = predict_values_reference(
-                facts, parent.turns, p0, float(plan['terminal_outcome']), reference_snapshot_scores
-            )
+    l2_dir.mkdir(parents=True, exist_ok=True)
+    facts_path = write_jsonl(l2_dir / 'facts.jsonl', facts)
+    facts_sha = sha_file(facts_path)
+    write_json(l2_dir / 'plan.json', plan)
+    baseline = {'p0': p0, 'provenance': baseline_provenance, 'cohort_verified': False}
+    preserve_previous(l2_dir / 'baseline.json')
+    write_json(l2_dir / 'baseline.json', with_header(plan['input_sha256'], baseline))
+    bindings = {'values': {}, 'hypotheses': {}}
+
+    def binding(spec, call, curve=None):
+        if spec['kind'] == 'llm':
+            payload = (build_call1_input(parent, p0, facts, include_facts=spec['include_facts']) if call == 1 else
+                       build_call2_input(parent, p0, curve, facts, include_facts=spec['include_facts']))
         else:
-            val_res = predict_values_llm(
-                parent,
-                p0,
-                spec['config']['model'],
-                facts,
-                include_facts=spec['include_facts'],
-                llm_caller=llm_caller,
-            )
-        doc = with_header(in_sha, dict(val_res))
-        write_json(v_path, doc)
+            payload = {'facts': facts, 'turns': parent.turns, 'p0': p0,
+                       'terminal_y': plan['terminal_outcome']}
+            if call == 2:
+                # The constructed summary strips every branch-level field.
+                payload['curve_summary'] = build_call2_input(parent, p0, curve, None, include_facts=False)['curve_summary']
+            if spec['kind'] == 'reference':
+                payload['reference_scores'] = {str(k): v for k, v in reference_snapshot_scores.items()}
+        return {'parent_index_sha256': parent.index_sha256, 'facts_sha256': facts_sha,
+                'payload_sha256': digest(payload), 'analyst_config_sha256': digest(spec),
+                'prompt_sha256': digest(CALL1_SYSTEM_PROMPT if call == 1 else CALL2_SYSTEM_PROMPT),
+                'implementation_sha256': fingerprint}
+
+    def cached(path, inputs, kind, curve=None):
+        if not path.is_file():
+            return None
+        try:
+            doc = read_json(path)
+            if not isinstance(doc, dict):
+                return None
+            if (doc.get('input_sha256') != inputs or doc.get('code_version') != CODE_VERSION or
+                    doc.get('code_fingerprint') != fingerprint or doc.get('episode_id') != parent.episode_id):
+                return None
+            if kind == 'values':
+                validate_values(doc.get('values'), parent.turns)
+            else:
+                validate_hypotheses(doc.get('hypotheses'), curve)
+            return doc
+        except (L2Error, ValueError, TypeError, KeyError):
+            return None
+
+    call1_outputs = {}
+    deferred = []
+    for spec in parsed_specs:
+        v_path = l2_dir / 'values' / _safe_filename(spec['id'])
+        inputs = binding(spec, 1)
+        doc = cached(v_path, inputs, 'values')
+        if doc is None and spec['kind'] == 'llm' and not execute:
+            deferred.append(spec['id'])
+            continue
+        if doc is None:
+            if spec['kind'] == 'rules':
+                result = predict_values_rules(facts, parent.turns, p0, float(plan['terminal_outcome']))
+            elif spec['kind'] == 'reference':
+                result = predict_values_reference(facts, parent.turns, p0, float(plan['terminal_outcome']), reference_snapshot_scores)
+            else:
+                result = predict_values_llm(parent, p0, spec['config']['model'], facts,
+                                            include_facts=spec['include_facts'], llm_caller=llm_caller)
+            validate_values(result['values'], parent.turns)
+            doc = with_header(inputs, {**result, 'episode_id': parent.episode_id, 'code_fingerprint': fingerprint})
+            preserve_previous(v_path)
+            write_json(v_path, doc)
+        bindings['values'][spec['id']] = inputs
         call1_outputs[spec['id']] = doc
 
     if not execute:
         rep_text = render_report_md(plan, None, None)
+        preserve_previous(l2_dir / 'report.md')
         (l2_dir / 'report.md').write_text(rep_text, encoding='utf-8')
         return {
             'episode_id': parent.episode_id,
@@ -194,6 +237,8 @@ def run_episode(
             'executed': False,
             'plan': plan,
             'values': call1_outputs,
+            'deferred_analysts': deferred,
+            'baseline': baseline,
         }
 
     # 4. Execute two-stage value curve (idempotent branch reuse)
@@ -202,9 +247,9 @@ def run_episode(
         l2_dir,
         plan,
         resume_fn=resume_fn,
+        rpm=rpm, tpm=tpm,
         max_concurrency=max_concurrency,
     )
-    curve_sha = sha_file(l2_dir / 'curve.json')
 
     # 5. Analyst Call 2: Propose Predicate Hypotheses (only on concentrated_*)
     hyps_dir = l2_dir / 'hypotheses'
@@ -214,17 +259,12 @@ def run_episode(
         for spec in parsed_specs:
             fname = _safe_filename(spec['id'])
             h_path = hyps_dir / fname
-            in_sha = {
-                'parent_index_sha256': parent.index_sha256,
-                'facts_sha256': facts_sha,
-                'curve_sha256': curve_sha,
-                'p0_sha256': digest(round(float(p0), 8)),
-            }
-            if h_path.is_file():
-                existing = read_json(h_path)
-                if existing.get('input_sha256') == in_sha:
-                    call2_outputs[spec['id']] = existing
-                    continue
+            in_sha = binding(spec, 2, curve_doc)
+            bindings['hypotheses'][spec['id']] = in_sha
+            existing = cached(h_path, in_sha, 'hypotheses', curve_doc)
+            if existing is not None:
+                call2_outputs[spec['id']] = existing
+                continue
 
             if spec['kind'] in ('rules', 'reference'):
                 hyps = propose_hypotheses_rules(facts, curve_doc)
@@ -240,13 +280,17 @@ def run_episode(
                     include_facts=spec['include_facts'],
                     llm_caller=llm_caller,
                 )
-            doc = with_header(in_sha, {'analyst': spec['id'], 'hypotheses': hyps})
+            validate_hypotheses(hyps, curve_doc)
+            doc = with_header(in_sha, {'analyst': spec['id'], 'hypotheses': hyps,
+                                      'episode_id': parent.episode_id, 'code_fingerprint': fingerprint})
+            preserve_previous(h_path)
             write_json(h_path, doc)
             call2_outputs[spec['id']] = doc
 
     # 6. Score value predictions and test predicate hypotheses
-    scores_doc = score_episode(l2_dir, p0=p0, alpha=alpha)
+    scores_doc = score_episode(l2_dir, p0=p0, alpha=alpha, active_analysts=list(call1_outputs), expected_input_bindings=bindings)
     rep_text = render_report_md(plan, curve_doc, scores_doc)
+    preserve_previous(l2_dir / 'report.md')
     (l2_dir / 'report.md').write_text(rep_text, encoding='utf-8')
 
     return {

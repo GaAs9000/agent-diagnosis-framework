@@ -5,9 +5,15 @@ import math
 import random
 from statistics import NormalDist
 from typing import Any, Callable, Sequence
-from .io import digest
+from .io import L2Error, digest
 
 _NORM = NormalDist()
+
+
+def _bounded_sample(vals: Sequence[float]) -> list[float]:
+    if any(type(v) not in (int, float, bool) or not math.isfinite(v) or not 0 <= v <= 1 for v in vals):
+        raise L2Error('Statistical outcomes must be finite numbers in [0, 1]')
+    return sorted(float(v) for v in vals)
 
 
 def _is_boolean_sample(vals: Sequence[float]) -> bool:
@@ -16,6 +22,7 @@ def _is_boolean_sample(vals: Sequence[float]) -> bool:
 
 def wilson_bounds(vals: Sequence[float], alpha: float = 0.05, *, one_sided: bool = True) -> tuple[float, float]:
     """Wilson score interval for boolean/proportion data in [0, 1]."""
+    vals = _bounded_sample(vals)
     n = len(vals)
     if n == 0:
         return 0.0, 1.0
@@ -29,14 +36,19 @@ def wilson_bounds(vals: Sequence[float], alpha: float = 0.05, *, one_sided: bool
 
 
 def upper(vals: Sequence[float], alpha: float = 0.05, *, seed: str = 'l2-v03-upper') -> float:
-    """One-sided (1 - alpha) upper confidence bound for V(c_k)."""
+    """One-sided upper bound for V(c_k).
+
+    Continuous scores use a percentile bootstrap, whose finite-sample coverage
+    is approximate; the requested level is not a universal coverage guarantee.
+    """
+    vals = _bounded_sample(vals)
     n = len(vals)
     if n == 0:
         return 1.0
     if _is_boolean_sample(vals):
         _, hi = wilson_bounds(vals, alpha=alpha, one_sided=True)
         return hi
-    rng = random.Random(int(digest({'seed': seed, 'vals': [ round(float(x), 8) for x in vals ], 'alpha': alpha})[:16], 16))
+    rng = random.Random(int(digest({'seed': seed, 'vals': sorted(round(float(x), 8) for x in vals), 'alpha': alpha})[:16], 16))
     n_boot = 2000
     means = sorted(sum(rng.choice(vals) for _ in range(n)) / n for _ in range(n_boot))
     idx = min(n_boot - 1, max(0, int(math.floor((1.0 - alpha) * (n_boot - 1)))))
@@ -58,6 +70,7 @@ def lower_drop(
       `vals_after` is the deterministic terminal state Y).
     - Uses bootstrap one-sided lower bound for bounded continuous scores in [0, 1].
     """
+    vals_before = _bounded_sample(vals_before)
     n1 = len(vals_before)
     if n1 == 0:
         return -1.0
@@ -68,14 +81,14 @@ def lower_drop(
         if _is_boolean_sample(vals_before):
             lo1, _ = wilson_bounds(vals_before, alpha=alpha, one_sided=True)
             return lo1 - y_term
-        rng = random.Random(int(digest({'seed': seed, 'b': [round(float(x), 8) for x in vals_before], 'y': y_term, 'a': alpha})[:16], 16))
+        rng = random.Random(int(digest({'seed': seed, 'b': sorted(round(float(x), 8) for x in vals_before), 'y': y_term, 'a': alpha})[:16], 16))
         n_boot = 2000
         means = sorted((sum(rng.choice(vals_before) for _ in range(n1)) / n1) - y_term for _ in range(n_boot))
         idx = min(n_boot - 1, max(0, int(math.floor(alpha * (n_boot - 1)))))
         lo_w, _ = wilson_bounds(vals_before, alpha=alpha, one_sided=True)
         return min(means[idx], lo_w - y_term)
 
-    after_list = [float(x) for x in vals_after]  # type: ignore[arg-type]
+    after_list = _bounded_sample(vals_after)  # type: ignore[arg-type]
     n2 = len(after_list)
     if n2 == 0:
         return -1.0
@@ -89,7 +102,7 @@ def lower_drop(
         return (p1 - p2) - delta
 
     rng = random.Random(
-        int(digest({'seed': seed, 'b': [round(float(x), 8) for x in vals_before], 'a': [round(float(x), 8) for x in after_list], 'alpha': alpha})[:16], 16)
+        int(digest({'seed': seed, 'b': sorted(round(float(x), 8) for x in vals_before), 'a': sorted(round(float(x), 8) for x in after_list), 'alpha': alpha})[:16], 16)
     )
     n_boot = 2000
     diffs = sorted(
@@ -110,10 +123,13 @@ def fisher_exact_one_sided(y_p: Sequence[float], y_not_p: Sequence[float], *, di
     """One-sided Fisher exact test p-value for binary outcomes in P vs not-P.
     When direction < 0, tests H_1: E[Y | P] < E[Y | not P].
     """
+    y_p, y_not_p = _bounded_sample(y_p), _bounded_sample(y_not_p)
     n1 = len(y_p)
     n2 = len(y_not_p)
     if n1 == 0 or n2 == 0:
         return 1.0
+    if not _is_boolean_sample(y_p) or not _is_boolean_sample(y_not_p):
+        raise L2Error('Fisher exact inference requires binary outcomes')
     k1 = sum(1 for x in y_p if float(x) >= 0.5)
     k2 = sum(1 for x in y_not_p if float(x) >= 0.5)
     total_k = k1 + k2
@@ -141,6 +157,7 @@ def permutation_one_sided(
     seed: str = 'l2-v03-perm',
 ) -> float:
     """One-sided permutation test p-value (exact Fisher test when boolean, exact/MC permutation for scores)."""
+    y_p, y_not_p = _bounded_sample(y_p), _bounded_sample(y_not_p)
     n1 = len(y_p)
     n2 = len(y_not_p)
     if n1 == 0 or n2 == 0:
@@ -148,7 +165,7 @@ def permutation_one_sided(
     if _is_boolean_sample(y_p) and _is_boolean_sample(y_not_p):
         return fisher_exact_one_sided(y_p, y_not_p, direction=direction)
 
-    combined = [float(x) for x in y_p] + [float(x) for x in y_not_p]
+    combined = sorted(float(x) for x in [*y_p, *y_not_p])
     total_n = n1 + n2
     total_sum = sum(combined)
     obs_diff = (sum(float(x) for x in y_p) / n1) - (sum(float(x) for x in y_not_p) / n2)
@@ -165,7 +182,7 @@ def permutation_one_sided(
                 extreme += 1
         return extreme / n_comb
 
-    rng = random.Random(int(digest({'seed': seed, 'p': [round(float(x), 8) for x in y_p], 'np': [round(float(x), 8) for x in y_not_p]})[:16], 16))
+    rng = random.Random(int(digest({'seed': seed, 'p': sorted(round(float(x), 8) for x in y_p), 'np': sorted(round(float(x), 8) for x in y_not_p)})[:16], 16))
     extreme = 1
     pool = list(combined)
     for _ in range(n_perm):
@@ -180,6 +197,8 @@ def permutation_one_sided(
 
 def holm_adjust(p_values: Sequence[float]) -> list[float]:
     """Holm-Bonferroni step-down adjusted p-values."""
+    if any(not math.isfinite(p) or not 0 <= p <= 1 for p in p_values):
+        raise L2Error('Invalid hypothesis p-value')
     m = len(p_values)
     if m == 0:
         return []
@@ -194,33 +213,34 @@ def holm_adjust(p_values: Sequence[float]) -> list[float]:
 
 
 def mantel_haenszel_pool(strata: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Pools predicate effect across trajectories (Mantel-Haenszel weighted difference and 95% CI)."""
+    """Descriptive MH-weighted mean difference; family-cluster CI on supported strata.
+
+    This effect is not an odds ratio or a fabricated MH significance test. A CI
+    requires retained outcomes, >=4 observations per group and >=2 families.
+    """
     valid = [s for s in strata if s.get('n_p', 0) > 0 and s.get('n_not_p', 0) > 0]
-    if not valid:
-        return {'status': 'untestable', 'strata_count': 0, 'pooled_effect': None, 'ci_95': [None, None]}
-    num = 0.0
-    den = 0.0
-    var_num = 0.0
-    for s in valid:
-        n1 = float(s['n_p'])
-        n0 = float(s['n_not_p'])
-        nt = n1 + n0
-        m1 = max(0.0, min(1.0, float(s['mean_p'])))
-        m0 = max(0.0, min(1.0, float(s['mean_not_p'])))
-        w = (n1 * n0) / nt
-        num += w * (m1 - m0)
-        den += w
-        v1 = max(0.01, m1 * (1.0 - m1))
-        v0 = max(0.01, m0 * (1.0 - m0))
-        var_num += (w * w) * (v1 / max(1.0, n1) + v0 / max(1.0, n0))
-    pooled = num / den
-    se = math.sqrt(var_num) / den if den > 0 else 0.0
-    z = _NORM.inv_cdf(0.975)
+
+    def effect(rows):
+        weights = [(r['n_p'] * r['n_not_p']) / (r['n_p'] + r['n_not_p']) for r in rows]
+        return (sum(w * (r['mean_p'] - r['mean_not_p']) for w, r in zip(weights, rows)) / sum(weights)) if weights else None
+
+    eligible = [s for s in valid if s.get('family_id') and s['n_p'] >= 4 and s['n_not_p'] >= 4
+                and len(s.get('y_p', [])) == s['n_p'] and len(s.get('y_not_p', [])) == s['n_not_p']]
+    observed = []
+    for row in eligible:
+        yp, ynp = _bounded_sample(row['y_p']), _bounded_sample(row['y_not_p'])
+        observed.append({**row, 'mean_p': sum(yp) / len(yp), 'mean_not_p': sum(ynp) / len(ynp)})
+    ci = clustered_bootstrap(observed, effect, seed='l2-v03-predicate-effect')
     return {
-        'status': 'evaluated',
+        'status': 'evaluated' if ci['ci_95'][0] is not None else ('descriptive_only' if valid else 'untestable'),
         'strata_count': len(valid),
-        'pooled_effect': pooled,
-        'ci_95': [max(-1.0, pooled - z * se), min(1.0, pooled + z * se)],
+        'eligible_strata_count': len(eligible),
+        'family_count': ci['family_count'],
+        'pooled_effect': effect(valid),
+        'ci_effect_estimate': ci['estimate'],
+        'ci_95': ci['ci_95'],
+        'inference_method': 'family_cluster_bootstrap',
+        'p_value': None,
     }
 
 

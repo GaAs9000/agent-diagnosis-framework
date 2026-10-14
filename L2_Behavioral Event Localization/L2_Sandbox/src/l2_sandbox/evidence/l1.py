@@ -32,6 +32,7 @@ class L1Package:
         self.root = Path(root).resolve()
         if not (self.root / 'manifest.json').is_file():
             raise L2Error(f'Missing manifest.json in L1 package: {self.root}')
+        self._validate_declared_index()
         self.manifest = read_json(self.root / 'manifest.json')
         self.episode_id: str = self.manifest['episode_id']
         self.version: str = self.manifest.get('schema_version', '0.2.0')
@@ -49,7 +50,7 @@ class L1Package:
             if e.get('kind') == 'state.snapshot':
                 snap_ref = (e['data'].get('snapshot') or {}).get('path')
                 if snap_ref and (self.root / snap_ref).is_file():
-                    s = read_json(self.root / snap_ref)
+                    s = self.json(snap_ref)
                     self.snapshots[s['snapshot_id']] = s
 
         # Turn offset: root runs start at 0 (so first model turn is 1);
@@ -57,6 +58,29 @@ class L1Package:
         self.start_turn: int = self._resolve_start_turn()
         self.local_turns: int = sum(1 for e in self.events if e.get('kind') == 'model.request')
         self.turns: int = self.start_turn + self.local_turns
+
+    def _validate_declared_index(self) -> None:
+        index_path = self.root / 'evidence_index.json'
+        if not index_path.is_file():
+            if read_json(self.root / 'manifest.json').get('recording_mode') == 'live':
+                raise IntegrityError('Live L1 package is missing evidence index')
+            return  # Minimal offline fixtures have no declared seal to validate.
+        index = read_json(index_path)
+        files = index.get('files')
+        if not isinstance(files, list):
+            raise IntegrityError('L1 evidence index lacks file inventory')
+        actual = []
+        for path in sorted(self.root.rglob('*')):
+            if path.is_symlink():
+                raise IntegrityError('Symlink in L1 evidence package')
+            if path.is_dir() or path == index_path:
+                continue
+            actual.append({'path': path.relative_to(self.root).as_posix(),
+                           'sha256': sha_file(path), 'size_bytes': path.stat().st_size})
+        if actual != sorted(files, key=lambda row: row['path']):
+            raise IntegrityError('L1 evidence index file inventory mismatch')
+        if index.get('episode_id') != read_json(self.root / 'manifest.json').get('episode_id'):
+            raise IntegrityError('L1 evidence index episode mismatch')
 
     def _resolve_start_turn(self) -> int:
         lineage = self.manifest.get('lineage') or {}
@@ -132,14 +156,56 @@ class L1Package:
                     'checkpoint_id': cp_id,
                     'path': row['path'],
                     'sha256': sha_file(self.root / row['path']),
-                    'eligible': bool((cp.get('qualification') or {}).get('eligible', row.get('eligible', True))),
+                    'eligible': (cp.get('qualification') or {}).get('eligible') is True,
                     'snapshot_id': cp.get('snapshot_id'),
                     'budget_used': cp.get('budget_used') or {},
                     'config_sha256': cp.get('config_sha256'),
                 }
         return out
 
+    def content_identity(self) -> str:
+        return digest({p.relative_to(self.root).as_posix(): sha_file(p)
+                       for p in sorted(self.root.rglob('*')) if p.is_file()})
+
+    def validate_resume_checkpoint(self, k: int) -> dict:
+        cp = self.checkpoints().get(k)
+        if cp is None or not cp['eligible']:
+            raise IntegrityError(f'Checkpoint {k} is absent or unqualified')
+        cfg = self.json('raw/resolved_config.json')
+        if cp['config_sha256'] != digest(cfg):
+            raise IntegrityError(f'Checkpoint {k} config identity mismatch')
+        obj = self.json(cp['path'])
+        if obj.get('checkpoint_id') != cp['checkpoint_id']:
+            raise IntegrityError(f'Checkpoint {k} identity mismatch')
+        budget, used = cfg.get('budget', {}), cp['budget_used']
+        for limit, counter in (('max_model_requests', 'model_requests'),
+                               ('max_tool_calls', 'tool_calls'),
+                               ('wall_time_seconds', 'agent_seconds'),
+                               ('max_total_tokens', 'known_total_tokens')):
+            if budget.get(limit) is not None and float(used.get(counter, 0)) >= float(budget[limit]):
+                raise IntegrityError(f'Checkpoint {k} has no remaining {limit}')
+        return cp
+
+    def validate_branch(self, parent: 'L1Package', k: int) -> None:
+        cp = parent.validate_resume_checkpoint(k)
+        expected = {'parent_episode_id': parent.episode_id,
+                    'parent_checkpoint_id': cp['checkpoint_id'],
+                    'parent_index_sha256': parent.index_sha256,
+                    'parent_checkpoint_sha256': cp['sha256']}
+        lineage = self.manifest.get('lineage') or {}
+        if any(lineage.get(key) != value for key, value in expected.items()):
+            raise IntegrityError(f'Branch parent lineage mismatch: {self.root}')
+        if self.json('raw/resolved_config.json') != parent.json('raw/resolved_config.json'):
+            raise IntegrityError(f'Branch actor config mismatch: {self.root}')
+        if self.start_turn != k or self.family_id != parent.family_id:
+            raise IntegrityError(f'Branch checkpoint/task mismatch: {self.root}')
+
     def model_version(self) -> str | None:
+        for e in self.events:
+            if e.get('kind') == 'model.parsed':
+                mv = e['data'].get('reported_model_version')
+                if isinstance(mv, str) and mv:
+                    return mv
         for e in self.events:
             if e.get('kind') == 'model.response':
                 d = e['data']

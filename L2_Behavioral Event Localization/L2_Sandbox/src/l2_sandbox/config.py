@@ -23,6 +23,8 @@ DEFAULTS: dict[str, Any] = {
         'stride': 4,
         'alpha': 0.05,
         'max_concurrency': 4,
+        'rpm': None,
+        'tpm': None,
         'max_invalid_rate': 0.05,
         'max_retries_per_slot': 2,
         'cost_per_branch_usd': 0.01,
@@ -63,6 +65,10 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     timeout = m.get('timeout_seconds', 120)
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
         raise L2Error('model.timeout_seconds must be a positive finite number')
+    for key in ('rpm', 'tpm'):
+        value = (config.get('curve') or {}).get(key)
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
+            raise L2Error(f'curve.{key} must be positive and finite')
     return config
 
 

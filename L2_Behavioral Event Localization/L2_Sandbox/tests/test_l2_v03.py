@@ -162,13 +162,14 @@ def test_statistical_calibration_under_null_and_alternative():
             s2_runner_or_map=lambda s2_turns: {
                 k: [1.0 if rng.random() < v_uniform[k] else 0.0 for _ in range(N2)] for k in s2_turns
             },
-            alpha=0.04,
+            alpha=0.05,
         )
         if res['verdict'] in ('concentrated_interval', 'concentrated_turn'):
             interval_fp += 1
         if res['verdict'] == 'concentrated_turn':
             turn_fp += 1
 
+    print(f'curve calibration alpha=.05: interval FP={interval_fp}/{n_trials}, turn FP={turn_fp}/{n_trials}')
     assert interval_fp / n_trials <= 0.07, f'Uniform interval FP too high: {interval_fp / n_trials:.3f}'
     assert turn_fp / n_trials <= 0.02, f'Uniform turn FP too high: {turn_fp / n_trials:.3f}'
 
@@ -194,6 +195,7 @@ def test_statistical_calibration_under_null_and_alternative():
         if res['verdict'] == 'concentrated_turn' and res['turn'] == j_star:
             turn_hits += 1
 
+    print(f'curve alternative power={turn_hits}/{n_trials}')
     assert turn_hits / n_trials >= 0.65, f'Single-turn detection power too low: {turn_hits / n_trials:.3f}'
 
     # (C) Permutation / Fisher test false positive rate under null hypothesis (Y_P ~ Y_not_P)
@@ -204,6 +206,7 @@ def test_statistical_calibration_under_null_and_alternative():
         pval = permutation_one_sided(y_p, y_np, direction=-1.0)
         if pval <= 0.05 and (sum(y_p) / 12 - sum(y_np) / 12) < 0:
             perm_fp += 1
+    print(f'Fisher null FP={perm_fp}/300')
     assert perm_fp / 300 <= 0.06
 
 
@@ -313,7 +316,7 @@ def test_idempotent_run_and_hypothesis_testing_end_to_end(tmp_path):
     out_dir = tmp_path / 'l2_out'
 
     # Step 1: Dry run without --execute (only writes facts.jsonl, values/, plan.json, report.md)
-    dry_res = run_episode(parent_dir, output_dir=out_dir, analysts=['rules', 'reference'], execute=False, p0=0.75, n1=6, n2=12, stride=2)
+    dry_res = run_episode(parent_dir, output_dir=out_dir, analysts=['rules'], execute=False, p0=0.75, n1=8, n2=16, stride=2, max_concurrency=2)
     assert dry_res['executed'] is False
     assert (out_dir / 'facts.jsonl').is_file()
     assert (out_dir / 'plan.json').is_file()
@@ -343,6 +346,7 @@ def test_idempotent_run_and_hypothesis_testing_end_to_end(tmp_path):
             branch_dir,
             num_turns=4,
             resume_from_k=k,
+            parent_pkg=parent_pkg,
             is_docx=True,
             turn_actions={k + 1: act},
             terminal_case='scored' if succ else 'failed_zero',
@@ -404,6 +408,7 @@ def test_idempotent_run_and_hypothesis_testing_end_to_end(tmp_path):
     assert llm_hyps[0]['status'] == 'confirmed'
     assert llm_hyps[1]['status'] == 'inconsistent'
 
+    first_outcomes = read_jsonl(out_dir / 'outcomes.jsonl')
     # Step 3: Idempotent re-run! All existing valid branches in branches/<trial>/ must be skipped!
     rerun_res = run_episode(
         parent_dir,
@@ -420,7 +425,7 @@ def test_idempotent_run_and_hypothesis_testing_end_to_end(tmp_path):
     )
     assert resume_calls['count'] == first_call_count, 'Idempotent re-run must not re-execute existing valid branches!'
     outcomes = read_jsonl(out_dir / 'outcomes.jsonl')
-    assert all(r['reused'] is True for r in outcomes)
+    assert outcomes == first_outcomes, 'Reuse must preserve the original attempt ledger and outcome bindings'
     assert rerun_res['scores']['analysts']['rules@1'] == scores['analysts']['rules@1']
 
     # Step 4: Test `l2 summarize` across 2 task families via CLI
@@ -468,9 +473,9 @@ def test_invalid_branch_rerun_and_trajectory_exclusion(tmp_path):
         cnt = attempts.get(base, 0)
         attempts[base] = cnt + 1
         if cnt == 0 and k == 0 and base.endswith('i00'):
-            make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, terminal_case='execution_invalid')
+            make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, parent_pkg=parent_pkg, terminal_case='execution_invalid')
         else:
-            make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, terminal_case='scored', completion_rate=0.5)
+            make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, parent_pkg=parent_pkg, terminal_case='scored', completion_rate=0.5)
 
     out_flaky = tmp_path / 'l2_flaky'
     write_json(out_flaky / 'plan.json', plan)
@@ -479,7 +484,7 @@ def test_invalid_branch_rerun_and_trajectory_exclusion(tmp_path):
     assert (out_flaky / 'branches/k000-s1-i00-r1/manifest.json').is_file()
 
     def always_bad_resume(parent_pkg: L1Package, k: int, branch_dir: Path) -> None:
-        make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, terminal_case='scorer_crash')
+        make_l1_episode(branch_dir, num_turns=4, resume_from_k=k, parent_pkg=parent_pkg, terminal_case='scorer_crash')
 
     out_bad = tmp_path / 'l2_bad'
     write_json(out_bad / 'plan.json', plan)

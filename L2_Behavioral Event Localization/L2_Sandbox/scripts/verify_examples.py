@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Verify every L2 example; nested L1 branch receipts are checked by their parent."""
+"""List historical examples; v0.1 verification is unavailable in v0.3."""
 from pathlib import Path
-import argparse,json
-from l2_sandbox.io import read_json
-from l2_sandbox.package import verify
+import argparse
+import json
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('directory',type=Path,nargs='?',default=Path('examples'));a=p.parse_args()
-    rows=[]
-    for idx in sorted(a.directory.rglob('evidence_index.json')):
-        if read_json(idx).get('schema_version')!='l2-0.1.0':continue
-        result=verify(idx.parent);rows.append({'package':str(idx.parent),**result})
-    print(json.dumps({'packages':len(rows),'all_verified':bool(rows) and all(r['verified'] for r in rows),'results':rows},ensure_ascii=False,indent=2))
-    return 0 if rows and all(r['verified'] for r in rows) else 2
-if __name__=='__main__':raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('directory', type=Path, nargs='?', default=Path('examples'))
+    args = parser.parse_args()
+    print(json.dumps({'status': 'historical_examples_not_verified',
+                      'reason': 'v0.1 package verifier is not part of lean v0.3',
+                      'directory': str(args.directory)}, indent=2))
+    return 2
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 from ..predicates import RULE_VOCABULARY, eval_predicate_on_turn
-from . import Hypothesis, Values
+from . import Hypothesis, Values, probability
 
 RULES_ANALYST_ID = 'rules@1'
 REFERENCE_ANALYST_ID = 'reference@1'
@@ -13,8 +13,8 @@ def linear_decay_values(num_turns: int, p0: float, terminal_y: float) -> list[fl
     """Linear decay baseline from p_0 at k=0 toward Y at k=T, evaluated for k = 0 .. T-1."""
     if num_turns <= 0:
         return []
-    p0_f = max(0.0, min(1.0, float(p0)))
-    y_f = max(0.0, min(1.0, float(terminal_y)))
+    p0_f = probability(p0, 'p0')
+    y_f = probability(terminal_y, 'terminal_y')
     return [
         max(0.0, min(1.0, p0_f - (k / float(num_turns)) * (p0_f - y_f)))
         for k in range(num_turns)
@@ -31,8 +31,8 @@ def predict_values_rules(
     First-anomaly step function: predicts p_0 before the first `tool_execution_anomaly` turn,
     and Y from that turn onward. If no anomaly occurs, predicts linear decay from p_0 to Y.
     """
-    p0_f = max(0.0, min(1.0, float(p0)))
-    y_f = max(0.0, min(1.0, float(terminal_y)))
+    p0_f = probability(p0, 'p0')
+    y_f = probability(terminal_y, 'terminal_y')
     anomaly_pred = RULE_VOCABULARY['tool_execution_anomaly']
 
     first_anomaly_turn: int | None = None
@@ -91,18 +91,10 @@ def predict_values_reference(
     terminal_y: float,
     checkpoint_snapshot_scores: dict[int, float] | None = None,
 ) -> Values:
-    """Call 1 for Reference Analyst `reference@1` (Group R, Section 5):
-    Uses official scores of intermediate submission snapshots when available, otherwise rules@1.
-    """
-    if not checkpoint_snapshot_scores:
-        base = predict_values_rules(facts, num_turns, p0, terminal_y)
-        return {'analyst': REFERENCE_ANALYST_ID, 'values': base['values']}
-
-    p0_f = max(0.0, min(1.0, float(p0)))
-    vals = []
-    for k in range(num_turns):
-        if k in checkpoint_snapshot_scores:
-            vals.append(max(0.0, min(1.0, float(checkpoint_snapshot_scores[k]))))
-        else:
-            vals.append(p0_f)
-    return {'analyst': REFERENCE_ANALYST_ID, 'values': vals}
+    """R requires official scores of every supplied intermediate snapshot; no proxy fallback."""
+    probability(p0, 'p0')
+    if not checkpoint_snapshot_scores or set(checkpoint_snapshot_scores) != set(range(num_turns)):
+        from ..io import Unsupported
+        raise Unsupported('Reference analyst unavailable: official snapshot scores required for checkpoints 0..T-1')
+    return {'analyst': REFERENCE_ANALYST_ID,
+            'values': [probability(checkpoint_snapshot_scores[k], 'snapshot score') for k in range(num_turns)]}

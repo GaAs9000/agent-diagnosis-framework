@@ -38,6 +38,8 @@ def make_l1_episode(
     completion_rate: float = 0.0,
     passed: bool = False,
     model_version: str = 'gemini-2.5-flash-lite-preview-06-17',
+    parent_pkg=None,
+    model_parameters: dict | None = None,
 ) -> Path:
     """Creates a minimal, self-consistent L1 episode directory (parent or resumed branch).
 
@@ -53,6 +55,8 @@ def make_l1_episode(
     root.mkdir(parents=True, exist_ok=True)
     eid = 'ep_' + uuid.uuid4().hex[:12]
     turn_actions = turn_actions or {}
+    if parent_pkg is not None:
+        benchmark, task_id = parent_pkg.benchmark, parent_pkg.task_id
 
     ext = '.docx' if is_docx else '.xlsx'
     old_data = docx_bytes(empty_row=True, black=False) if is_docx else b'XLSX_OLD'
@@ -101,6 +105,10 @@ def make_l1_episode(
         'budget': {'max_model_requests': 35, 'max_tool_calls': 50, 'wall_time_seconds': 3600},
         'model': {'adapter': 'gemini', 'model': model_version, 'parameters': {'temperature': 1.0}},
     }
+    if model_parameters is not None:
+        cfg['model']['parameters'] = copy.deepcopy(model_parameters)
+    if parent_pkg is not None:
+        cfg = parent_pkg.json('raw/resolved_config.json')
     write_json(root / 'raw/resolved_config.json', cfg)
     write_json(
         root / 'benchmark/public_task.json',
@@ -112,6 +120,12 @@ def make_l1_episode(
         if resume_from_k > 0
         else None
     )
+    if parent_pkg is not None:
+        parent_cp = parent_pkg.checkpoints()[resume_from_k]
+        lineage = {'parent_episode_id': parent_pkg.episode_id,
+                   'parent_checkpoint_id': parent_cp['checkpoint_id'],
+                   'parent_index_sha256': parent_pkg.index_sha256,
+                   'parent_checkpoint_sha256': parent_cp['sha256']}
     if lineage:
         emit('episode.restored', lineage)
 
@@ -227,6 +241,7 @@ def make_l1_episode(
     write_json(root / 'official_grade.json', {'official_raw': raw, 'projection': proj, 'status': 'ok' if eval_valid == 'valid' else 'error'})
     manifest = {
         'schema_version': '0.2.0',
+        'recording_mode': 'test_fixture',
         'episode_id': eid,
         'task': {'benchmark': benchmark, 'task_id': task_id},
         'model': {'model_version': model_version},
@@ -240,4 +255,10 @@ def make_l1_episode(
     }
     write_json(root / 'manifest.json', manifest)
     write_jsonl(root / 'trajectory.jsonl', events)
+    from l2_sandbox.io import sha_file
+    files = [{'path': path.relative_to(root).as_posix(), 'sha256': sha_file(path),
+              'size_bytes': path.stat().st_size} for path in sorted(root.rglob('*'))
+             if path.is_file() and path.name != 'evidence_index.json']
+    write_json(root / 'evidence_index.json', {'schema_version': '0.2.0', 'episode_id': eid,
+                                           'files': files, 'trust_scope': 'SYNTHETIC TEST FIXTURE'})
     return root

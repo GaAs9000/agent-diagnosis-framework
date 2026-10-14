@@ -1,4 +1,8 @@
-# L2 0.1 实现与设计合同
+# L2 0.1 实现与设计合同（历史档案）
+
+本文保留 v0.1 的实现记录，其中旧命令、Schema、封装与实验状态机不再适用于 v0.3。
+当前实现、安装与两个 CLI 命令见 [README](../README.md)；设计见
+[DESIGN_INPUT_v0.3.md](DESIGN_INPUT_v0.3.md)，研究边界见 [RESEARCH_PROTOCOL.md](RESEARCH_PROTOCOL.md)。
 
 ## 模块
 

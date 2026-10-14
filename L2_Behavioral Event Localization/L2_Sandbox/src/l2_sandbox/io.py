@@ -98,3 +98,23 @@ def with_header(input_sha256: dict[str, str] | str, payload: dict[str, Any]) -> 
         'code_version': CODE_VERSION,
         **payload,
     }
+
+
+def code_fingerprint() -> str:
+    """Content identity of the installed L2 implementation, independent of timestamps."""
+    root = Path(__file__).parent
+    return digest({p.relative_to(root).as_posix(): sha_file(p) for p in sorted(root.rglob('*.py'))})
+
+
+def validate_output_location(source: Path, output: Path) -> None:
+    """Keep generated artifacts disjoint from immutable input, including symlink aliases."""
+    source, output = Path(source).resolve(), Path(output).absolute()
+    resolved = output.resolve()
+    if resolved.is_relative_to(source) or source.is_relative_to(resolved):
+        raise IntegrityError('L2 output and L1 source must be disjoint')
+    # System temp-directory aliases are fine; artifact paths themselves must not redirect writes.
+    if output.is_symlink() or (output.exists() and any(p.is_symlink() for p in output.rglob('*'))):
+        raise IntegrityError('Symlink in L2 output artifact tree')
+    for ancestor in output.parents:
+        if ancestor.is_symlink() and str(ancestor) not in ('/tmp', '/var'):
+            raise IntegrityError('L2 output redirects into L1 source')
