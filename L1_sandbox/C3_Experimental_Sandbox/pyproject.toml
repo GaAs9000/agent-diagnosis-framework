@@ -22,9 +22,13 @@ c3-l1 = "c3_sandbox.l1.cli:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/l1", "tests/l1_live"]
 pythonpath = ["src"]
-markers = ["docker: explicit local Docker integration checks", "live_api: explicit paid API integration checks"]
+markers = [
+    "docker: explicit local Docker integration checks",
+    "live_api: explicit paid API integration checks",
+    "live: live or external-asset integration checks",
+]
 
 
 [tool.setuptools.package-data]

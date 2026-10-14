@@ -11,7 +11,13 @@ from c3_sandbox.l1.evaluation.registry import registry as eval_registry
 from .conftest import ScriptedGemini, gemini_call, gemini_done, ROOT
 
 
+def _require_lhtb_assets():
+    if not (ROOT / 'benchmarks/lhtb/data/sokoban/instruction.md').exists():
+        pytest.skip('LHTB task data not present in this checkout')
+
+
 def test_lhtb_task_load_and_provenance():
+    _require_lhtb_assets()
     reg = benchmark_registry()
     adapter = reg.create('lhtb-native', {'data_dir': str(ROOT / 'benchmarks/lhtb/data')})
     tasks = adapter.list_tasks()
@@ -28,6 +34,7 @@ def test_lhtb_task_load_and_provenance():
 
 
 def test_lhtb_evaluator_scoring_matrix(tmp_path):
+    _require_lhtb_assets()
     bench_reg = benchmark_registry()
     eval_reg = eval_registry()
     adapter = bench_reg.create('lhtb-native', {'data_dir': str(ROOT / 'benchmarks/lhtb/data')})
@@ -56,6 +63,7 @@ def test_lhtb_evaluator_scoring_matrix(tmp_path):
 
 
 def test_lhtb_end_to_end_docker_execution(tmp_path):
+    _require_lhtb_assets()
     out = (tmp_path / 'episode').resolve()
     cfg = resolve(ROOT / 'configs/l1/lhtb_sokoban.gemini-35lite.json')
 

@@ -87,11 +87,15 @@ class FixtureEvaluator:
 
 @pytest.fixture
 def components(config):
+    if not (BUNDLE/'manifest.json').exists():
+        pytest.skip('Retained bundle runs/integrated-delivery-001/bundle not present in this checkout')
     return {'model':ScriptedGemini(config['model']),'benchmark':BundleOfficeVal(config['benchmark']),
             'runtime':TrustedFixtureRuntime(),'evaluation':FixtureEvaluator()}
 
 @pytest.fixture
 def native_source(tmp_path,config):
+    if not (BUNDLE/'verifiers/officeval_003_verifier.py').exists():
+        pytest.skip('Retained bundle runs/integrated-delivery-001/bundle not present in this checkout')
     src=tmp_path/'source'; src.mkdir()
     (src/'verifiers').mkdir()
     shutil.copyfile(BUNDLE/'verifiers/officeval_003_verifier.py',src/'verifiers/officeval_003_verifier.py')

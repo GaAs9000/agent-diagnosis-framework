@@ -187,3 +187,94 @@ def test_execution_contract_budget_prompt_consistency(tmp_path, config, componen
     else:
         actual_prompt = model_req['messages'][0]['content']
     assert actual_prompt == prompt
+
+
+def test_p0_1_system_prompt_preserves_guidance_and_legacy_idempotence():
+    """Verifies P0-1: guidance after budget sentence is retained, function is idempotent,
+    legacy truncated prompts stay identical on resume, and unformatted placeholders fail closed.
+    """
+    from c3_sandbox.l1.core.config import resolve
+    cfg = resolve(ROOT / 'configs/l1/officeval.gemini-35lite.t1.json')
+    p1 = build_execution_contract_prompt(cfg)
+    assert 'Do not make dozens of exploratory shell calls.' in p1
+    assert 'conclude your work promptly.' in p1
+    assert 'You operate under a strict execution budget' not in p1
+
+    # Idempotence
+    cfg2 = copy.deepcopy(cfg)
+    cfg2['agent']['system_prompt'] = p1
+    assert build_execution_contract_prompt(cfg2) == p1
+
+    # Legacy truncated prompt remains identical on resume
+    legacy_cfg = copy.deepcopy(cfg)
+    legacy_prompt = (
+        "You are the tested agent in an execution-and-evidence sandbox. Complete the user's task.\n\n"
+        "[SANDBOX EXECUTION CONTRACT & RUNTIME CONSTRAINTS]\n"
+        "- Model Request Budget: At most 35 model requests.\n"
+        "- Tool Execution Budget: At most 50 tool invocations.\n"
+        "- Wall Clock Limit: 3600 seconds timeout.\n"
+        "- Workspace Boundary: /workspace is persistent; create intermediate scripts and output files here.\n"
+        "- Final Submission: Place ONLY final deliverables in /workspace/submission with required filenames.\n"
+        "- Stateless Tools: Shell executions run in fresh, isolated Linux containers without network; env/tmp do not persist.\n"
+        "- Autonomous Verification: No grader or test rubric is accessible. Conclude promptly once deliverables are verified."
+    )
+    legacy_cfg['agent']['system_prompt'] = legacy_prompt
+    assert build_execution_contract_prompt(legacy_cfg) == legacy_prompt
+
+    # Unformatted placeholder elsewhere in prompt raises ConfigurationError
+    bad_cfg = copy.deepcopy(cfg)
+    bad_cfg['agent']['system_prompt'] = "Custom prompt with leftover {max_model_requests} placeholder."
+    with pytest.raises(ConfigurationError, match='Unformatted budget placeholder'):
+        build_execution_contract_prompt(bad_cfg)
+
+
+def test_p0_2_explicit_retry_429_then_200_and_4x_503(tmp_path, config, components):
+    """Verifies P0-2: 429 -> 200 records 2 attempt receipts and 1 accepted response;
+    4x 503 terminates with model_transport_error and retains 4 attempt receipts.
+    """
+    from c3_sandbox.l1.core.contracts import HTTPResult
+    from c3_sandbox.l1.storage import utc_now
+
+    cfg = copy.deepcopy(config)
+    cfg['model']['retry'] = {
+        'max_attempts': 4,
+        'retry_on_status': [429, 500, 502, 503, 504],
+        'retry_on_transport_error': True,
+        'backoff_seconds': [0.0, 0.0, 0.0],
+        'honor_retry_after': True,
+    }
+
+    r429 = HTTPResult(429, b'{"error":{"code":429,"message":"rate limit"}}', {
+        'started_at': utc_now(), 'finished_at': utc_now(), 'duration_seconds': 0.01,
+        'status_code': 429, 'headers': {'retry-after': '0'}, 'transport_error': None,
+        'body_truncated': False, 'attempts': 1, 'auth_recorded': False
+    })
+    comp1 = copy.deepcopy(components)
+    comp1['model'] = ScriptedGemini(cfg['model'], [r429, gemini_call(), gemini_done()])
+    out1 = tmp_path / 'retry_ok'
+    res1 = run(cfg, out1, injected=comp1)
+    assert res1['verification']['verified'], res1['verification']
+    m1 = read_json(out1 / 'manifest.json')
+    assert m1['counts']['model_requests'] == 2
+    assert m1['counts']['model_responses'] == 2
+    assert (out1 / 'raw/model/r000000/attempt_01/response.bin').is_file()
+    assert (out1 / 'raw/model/r000000/attempt_02/response.bin').is_file()
+    assert not (out1 / 'raw/model/r000000/attempt_03/response.bin').exists()
+    events1 = scan(out1 / 'trajectory.jsonl')['events']
+    assert sum(1 for e in events1 if e['kind'] == 'model.retry') == 1
+
+    r503 = HTTPResult(503, b'{"error":{"code":503,"message":"unavailable"}}', {
+        'started_at': utc_now(), 'finished_at': utc_now(), 'duration_seconds': 0.01,
+        'status_code': 503, 'headers': {}, 'transport_error': None,
+        'body_truncated': False, 'attempts': 1, 'auth_recorded': False
+    })
+    comp2 = copy.deepcopy(components)
+    comp2['model'] = ScriptedGemini(cfg['model'], [r503, r503, r503, r503])
+    out2 = tmp_path / 'retry_exhausted'
+    res2 = run(cfg, out2, injected=comp2)
+    assert res2['verification']['verified'], res2['verification']
+    assert res2['status']['termination'] == 'model_transport_error'
+    for k in range(1, 5):
+        assert (out2 / f'raw/model/r000000/attempt_{k:02d}/response.bin').is_file()
+    events2 = scan(out2 / 'trajectory.jsonl')['events']
+    assert sum(1 for e in events2 if e['kind'] == 'model.retry') == 3

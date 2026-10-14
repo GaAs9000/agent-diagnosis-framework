@@ -84,7 +84,11 @@
             "restoration_observed",
             "state_stability",
             "object_structure_attention",
-            "other_evidence_bounded_event"
+            "other_evidence_bounded_event",
+            "concentrated_turn",
+            "concentrated_interval",
+            "diffuse_loss",
+            "out_of_reach"
           ]
         },
         "granularity": {
@@ -241,7 +245,8 @@
                 "enum": [
                   "provide_public_state_summary",
                   "generic_reminder",
-                  "resume_unchanged"
+                  "resume_unchanged",
+                  "value_curve"
                 ]
               },
               "control_template": {
@@ -277,6 +282,16 @@
               "uncertainty"
             ]
           }
+        },
+        "target_behavior": {
+          "enum": [
+            "tool_execution_anomaly",
+            "submission_modified",
+            "assistant_finished_turn",
+            "submission_readback",
+            "object_structure_changed",
+            null
+          ]
         },
         "abstention_reason": {
           "type": [
@@ -332,7 +347,11 @@
                   "restoration_observed",
                   "state_stability",
                   "object_structure_attention",
-                  "other_evidence_bounded_event"
+                  "other_evidence_bounded_event",
+                  "concentrated_turn",
+                  "concentrated_interval",
+                  "diffuse_loss",
+                  "out_of_reach"
                 ]
               },
               "granularity": {
@@ -492,7 +511,8 @@
                       "enum": [
                         "provide_public_state_summary",
                         "generic_reminder",
-                        "resume_unchanged"
+                        "resume_unchanged",
+                        "value_curve"
                       ]
                     },
                     "control_template": {
@@ -529,6 +549,16 @@
                   ]
                 }
               },
+              "target_behavior": {
+                "enum": [
+                  "tool_execution_anomaly",
+                  "submission_modified",
+                  "assistant_finished_turn",
+                  "submission_readback",
+                  "object_structure_changed",
+                  null
+                ]
+              },
               "abstention_reason": {
                 "type": [
                   "string",
@@ -563,6 +593,52 @@
           "items": {
             "type": "string"
           }
+        },
+        "value_predictions": {
+          "type": "object",
+          "patternProperties": {
+            "^cp[0-9]{6}$": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            }
+          },
+          "additionalProperties": false
+        },
+        "predicted_loss_intervals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "start_checkpoint": {
+                "type": "string",
+                "pattern": "^cp[0-9]{6}$"
+              },
+              "end_checkpoint": {
+                "type": "string",
+                "pattern": "^cp[0-9]{6}$"
+              },
+              "turn": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+              }
+            },
+            "required": [
+              "start_checkpoint",
+              "end_checkpoint",
+              "confidence"
+            ]
+          },
+          "maxItems": 3
         }
       },
       "required": [
@@ -584,7 +660,10 @@
             "diagnosis",
             "experiment_plan",
             "experiment_execution",
-            "experiment_validation"
+            "experiment_validation",
+            "value_curve_plan",
+            "value_curve_execution",
+            "value_curve_results"
           ]
         },
         "analysis_id": {

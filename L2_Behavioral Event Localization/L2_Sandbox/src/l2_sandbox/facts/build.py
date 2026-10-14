@@ -15,6 +15,7 @@ class FactBuilder:
         self.facts = []; self.objects = {}; self.events = []
         self.checkpoints = []; self.coverage = []
         self._by_id = {}; self.document_versions = {}; self.calls = {}
+        self.turn_tags = []
 
     def add(self, kind, value, refs, *, event_ids=None, origin='recorded', scope=None,
             availability='present', derivation=None, coverage=None):
@@ -130,6 +131,7 @@ class FactBuilder:
             safe_cp['source_path'] = item['path']
             self.checkpoints.append(safe_cp)
         if self.config['objects']['enabled']: self._objects()
+        self.turn_tags = extract_turn_tags(r, self.facts)
         self.coverage.extend([
             {'area': 'analysis', 'status': 'retrospective', 'reason': 'Original outcome visible; intervention validation branches are not read'},
             {'area': 'object_scope', 'status': 'limited', 'reason': 'Version-scoped direct DOCX XML only; rendering, inherited styles and semantic identity unknown'},
@@ -188,4 +190,115 @@ class FactBuilder:
                          coverage={'basis': 'legacy_record_projection', 'does_not_prove': 'complete_live_capture'})
             self.events.append({'event_id': e['event_id'], 'seq': e['seq'], 'kind': e['kind'],
                                 'observed_at': None, 'links': {}, 'fact_ids': [f['fact_id'] for f in self.facts[before:]]})
+        self.turn_tags = []
         return self
+
+
+def is_docx_episode(reader: L1Reader) -> bool:
+    """Returns True if initial/public task or snapshots involve .docx files."""
+    if 'benchmark/public_task.json' in reader.files:
+        pub = reader.json('benchmark/public_task.json')
+        assets = pub.get('assets') or []
+        if assets:
+            return any(str(a.get('name', '')).lower().endswith('.docx') for a in assets)
+        prompt = str(pub.get('prompt', '')).lower()
+        if '.xlsx' in prompt or '.pptx' in prompt or 'sokoban' in prompt:
+            return '.docx' in prompt
+    for snap in reader.snapshots.values():
+        for f in snap.get('files', []):
+            if str(f.get('path', '')).lower().endswith('.docx'):
+                return True
+    return False
+
+
+def extract_turn_tags(reader: L1Reader, facts: list[dict] | None = None) -> list[dict]:
+    """Deterministically extracts turn-level behavioral tags (Section 4) for every model turn."""
+    if reader.version == '0.1.0':
+        return []
+    docx_task = is_docx_episode(reader)
+    events = reader.events
+    req_indices = [i for i, e in enumerate(events) if e['kind'] == 'model.request']
+    if not req_indices:
+        return []
+
+    obj_change_events = set()
+    if facts is not None:
+        for f in facts:
+            if f.get('fact_type') == 'object_structure_change':
+                obj_change_events.update(f.get('event_ids') or ())
+    else:
+        doc_hashes = {}
+        probe_cfg = {
+            'max_docx_versions': 20,
+            'max_zip_uncompressed_bytes': 33554432,
+            'max_xml_bytes': 8388608,
+            'max_objects': 400,
+        }
+        for snap in reader.snapshots.values():
+            for f in snap.get('files', []):
+                if f['path'].lower().endswith('.docx') and f['sha256'] not in doc_hashes:
+                    parsed = probe(reader.read(f['blob']), probe_cfg)
+                    doc_hashes[f['sha256']] = parsed.get('summary')
+        for change in reader.jsonl('state_changes.jsonl'):
+            for delta in change.get('changes', []):
+                b = (delta.get('before') or {}).get('sha256')
+                a = (delta.get('after') or {}).get('sha256')
+                if b in doc_hashes and a in doc_hashes and doc_hashes[b] != doc_hashes[a]:
+                    obj_change_events.add(change['event_id'])
+
+    changes_by_event = {c['event_id']: c.get('changes', []) for c in reader.jsonl('state_changes.jsonl')}
+    turns = []
+    for turn_idx, start_i in enumerate(req_indices):
+        end_i = req_indices[turn_idx + 1] if turn_idx + 1 < len(req_indices) else len(events)
+        slice_events = events[start_i:end_i]
+        rid = slice_events[0]['data'].get('request_id')
+        tags = []
+        tool_calls = [e for e in slice_events if e['kind'] == 'tool.call']
+        tool_results = [e for e in slice_events if e['kind'] == 'tool.result']
+        transitions = [e for e in slice_events if e['kind'] == 'state.transition']
+
+        anomaly = False
+        for tr in tool_results:
+            raw = reader.json(tr['data']['result']['path'])
+            obs = raw.get('observation', {})
+            if obs.get('exit_code') not in (0, None) or obs.get('stop_reason') is not None:
+                anomaly = True
+                break
+        if anomaly or any(e['kind'] in ('tool.error', 'tool.rejected') for e in slice_events):
+            tags.append('tool_execution_anomaly')
+
+        sub_mod = False
+        for tr_ev in transitions:
+            for delta in changes_by_event.get(tr_ev['event_id'], []):
+                if str(delta.get('path', '')).startswith('submission/'):
+                    sub_mod = True
+                    break
+        if sub_mod:
+            tags.append('submission_modified')
+
+        if not tool_calls and any(
+            e['kind'] == 'model.parsed' and e['data'].get('finish_reason') in ('STOP', 'stop', None)
+            for e in slice_events
+        ):
+            tags.append('assistant_finished_turn')
+
+        mentions_submission = any(
+            'submission' in canonical(tc['data'].get('arguments', {})).decode('utf-8')
+            for tc in tool_calls
+        )
+        if mentions_submission and not sub_mod:
+            tags.append('submission_readback')
+
+        obj_changed = docx_task and any(tr_ev['event_id'] in obj_change_events for tr_ev in transitions)
+        if obj_changed:
+            tags.append('object_structure_changed')
+
+        turns.append({
+            'turn_index': turn_idx + 1,
+            'request_id': rid,
+            'tags': tags,
+            'object_structure_changed_status': ('present' if obj_changed else 'absent') if docx_task else 'not_applicable',
+            'is_docx_task': docx_task,
+            'event_ids': [e['event_id'] for e in slice_events],
+        })
+    return turns

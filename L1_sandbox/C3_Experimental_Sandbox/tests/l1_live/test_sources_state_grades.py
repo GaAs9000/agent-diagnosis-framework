@@ -125,6 +125,8 @@ def test_invalid_grade_not_quality_failure(key,value):
 
 
 def test_real_retained_official_verifier_worker(tmp_path):
+    if not (BUNDLE/'inputs/officeval_003').exists():
+        pytest.skip('Retained bundle runs/integrated-delivery-001/bundle not present in this checkout')
     # Trusted retained upstream code, real provided input; no new model or Docker.
     submission=tmp_path/'submission';submission.mkdir()
     source=next((BUNDLE/'inputs/officeval_003').glob('*.docx'))

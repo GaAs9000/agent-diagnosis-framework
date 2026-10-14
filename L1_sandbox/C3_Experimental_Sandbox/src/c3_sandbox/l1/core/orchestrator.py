@@ -36,7 +36,8 @@ def build_execution_contract_prompt(config: dict) -> str:
 
     # Clean any previously attached contract or legacy budget phrases to avoid stacking or mismatch
     clean_base = re.sub(r'\[SANDBOX EXECUTION CONTRACT & RUNTIME CONSTRAINTS\].*', '', base, flags=re.DOTALL)
-    clean_base = re.sub(r'You operate under a strict (execution )?budget.*', '', clean_base, flags=re.DOTALL).rstrip()
+    clean_base = re.sub(r'You operate under a strict (?:execution )?budget\b.*?\.(?:\s+|$)', '',
+                        clean_base).rstrip()
     if not clean_base:
         clean_base = SYSTEM.rstrip()
 
@@ -51,7 +52,10 @@ def build_execution_contract_prompt(config: dict) -> str:
         "- Stateless Tools: Shell executions run in fresh, isolated Linux containers without network; env/tmp do not persist.\n"
         "- Autonomous Verification: No grader or test rubric is accessible. Conclude promptly once deliverables are verified."
     )
-    return f"{clean_base}\n\n{contract_block}"
+    prompt = f"{clean_base}\n\n{contract_block}"
+    if re.search(r'\{(max_model_requests|max_tool_calls|wall_time_seconds|max_total_tokens)\}', prompt):
+        raise ConfigurationError('Unformatted budget placeholder left in system prompt')
+    return prompt
 
 
 def components(config):
@@ -250,8 +254,44 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             write_bytes(output,relative,canonical(body))
             request_event=journal.emit('model.request',{'request_id':rid,'body':journal.ref(relative),
                 'parameters_declared':config['model']['parameters']})
-            receipt=model.send(canonical(body),min(remaining,config['model']['timeout_seconds']))
             prefix=relative.removesuffix('request.json')
+            retry_cfg=config['model'].get('retry')
+            if retry_cfg:
+                max_attempts=retry_cfg.get('max_attempts',1)
+                retry_statuses=set(retry_cfg.get('retry_on_status',[429,500,502,503,504]))
+                retry_transport=bool(retry_cfg.get('retry_on_transport_error',True))
+                backoffs=list(retry_cfg.get('backoff_seconds',[2,8,30]))
+                honor_ra=bool(retry_cfg.get('honor_retry_after',True))
+                for attempt in range(1,max_attempts+1):
+                    rem=max(.001,deadline-time.monotonic())
+                    receipt=model.send(canonical(body),min(rem,config['model']['timeout_seconds']))
+                    ap=f'{prefix}attempt_{attempt:02d}/'
+                    write_bytes(output,ap+'response.bin',receipt.body)
+                    write_json(output,ap+'http.json',receipt.metadata)
+                    truncated=bool(receipt.metadata.get('body_truncated'))
+                    terr=bool(receipt.metadata.get('transport_error'))
+                    retryable=not truncated and ((terr and retry_transport) or (not terr and receipt.status in retry_statuses))
+                    if not retryable or attempt>=max_attempts: break
+                    rem_after=deadline-time.monotonic()
+                    if rem_after<=0: break
+                    base_delay=float(backoffs[min(attempt-1,len(backoffs)-1)]) if backoffs else 0.0
+                    jitter=(int(digest({'rid':rid,'attempt':attempt})[:4],16)/65535.0)*(0.25*base_delay) if base_delay>0 else 0.0
+                    delay=base_delay+jitter
+                    if honor_ra:
+                        ra=(receipt.metadata.get('headers') or {}).get('retry-after')
+                        if ra is not None:
+                            try:
+                                ra_val=float(ra)
+                                if ra_val>=0: delay=max(delay,ra_val)
+                            except (ValueError,TypeError): pass
+                    delay=min(delay,max(0.0,rem_after))
+                    journal.emit('model.retry',{'request_id':rid,'attempt':attempt,'status_code':receipt.status,
+                        'transport_error':receipt.metadata.get('transport_error'),'delay_seconds':delay,
+                        'body':journal.ref(ap+'response.bin'),'http':journal.ref(ap+'http.json')},
+                        links={'request':request_event['event_id']})
+                    if delay>0 and (mode=='live' or delay<=0.05): time.sleep(delay)
+            else:
+                receipt=model.send(canonical(body),min(remaining,config['model']['timeout_seconds']))
             write_bytes(output,prefix+'response.bin',receipt.body)
             write_json(output,prefix+'http.json',receipt.metadata)
             response_event=journal.emit('model.response',{'request_id':rid,'body':journal.ref(prefix+'response.bin'),

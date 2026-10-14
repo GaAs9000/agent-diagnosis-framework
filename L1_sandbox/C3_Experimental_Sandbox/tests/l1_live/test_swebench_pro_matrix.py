@@ -14,7 +14,13 @@ TASK1_ID = "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v
 TASK2_ID = "instance_ansible__ansible-0fd88717c953b92ed8a50495d55e630eb5d59166-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5"
 
 
+def _require_swebench_assets():
+    if not (ROOT / f"benchmarks/swebench_pro/data/{TASK1_ID}/instruction.md").exists():
+        pytest.skip("SWE-bench Pro task data not present in this checkout")
+
+
 def test_swebench_pro_task_load_and_provenance():
+    _require_swebench_assets()
     reg = benchmark_registry()
     adapter = reg.create("swebench_pro-native", {"data_dir": str(ROOT / "benchmarks/swebench_pro/data")})
     tasks = adapter.list_tasks()
@@ -38,6 +44,7 @@ def test_swebench_pro_task_load_and_provenance():
 
 
 def test_swebench_pro_evaluator_scoring_matrix(tmp_path):
+    _require_swebench_assets()
     bench_reg = benchmark_registry()
     eval_reg = eval_registry()
     adapter = bench_reg.create("swebench_pro-native", {"data_dir": str(ROOT / "benchmarks/swebench_pro/data")})
@@ -71,6 +78,7 @@ def test_swebench_pro_evaluator_scoring_matrix(tmp_path):
 
 
 def test_swebench_pro_end_to_end_scripted_execution(tmp_path):
+    _require_swebench_assets()
     out = (tmp_path / "episode").resolve()
     cfg = resolve(ROOT / "configs/l1/swebench_pro.gemini-35lite.json")
 

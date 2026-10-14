@@ -29,7 +29,7 @@ DEFAULTS = {
 }
 ALLOWED = {k:set(v) if isinstance(v,dict) else None for k,v in DEFAULTS.items()}
 ALLOWED['benchmark'] |= {'source_dir','data_dir','assets_dir','bundle_dir','data_lock', 'allow_unlocked_data'}
-ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest'}
+ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest','retry'}
 ALLOWED['agent'] |= {'system_prompt'}
 for section in ('benchmark','model','runtime','evaluation'): ALLOWED[section].add('options')
 
@@ -65,6 +65,24 @@ def validate(config: dict) -> dict:
         if type(config[s][k]) is not bool: raise ConfigurationError(f'{s}.{k} must be boolean')
     if config['recording']['objects']: raise ConfigurationError('object-level recording is not implemented; use files or a state plugin')
     if not isinstance(config['model']['parameters'],dict): raise ConfigurationError('model.parameters must be an object')
+    if 'retry' in config['model'] and config['model']['retry'] is not None:
+        import math
+        retry=config['model']['retry']
+        if not isinstance(retry,dict): raise ConfigurationError('model.retry must be an object')
+        allowed_retry={'max_attempts','retry_on_status','retry_on_transport_error','backoff_seconds','honor_retry_after'}
+        if not set(retry)<=allowed_retry: raise ConfigurationError('Unknown keys in model.retry')
+        ma=retry.get('max_attempts')
+        if type(ma) is not int or not 1<=ma<=16: raise ConfigurationError('model.retry.max_attempts must be integer 1..16')
+        statuses=retry.get('retry_on_status',[429,500,502,503,504])
+        if not isinstance(statuses,list) or any(type(s) is not int or not 100<=s<=599 for s in statuses):
+            raise ConfigurationError('model.retry.retry_on_status must be list of HTTP status integers')
+        if 'retry_on_transport_error' in retry and type(retry['retry_on_transport_error']) is not bool:
+            raise ConfigurationError('model.retry.retry_on_transport_error must be boolean')
+        if 'honor_retry_after' in retry and type(retry['honor_retry_after']) is not bool:
+            raise ConfigurationError('model.retry.honor_retry_after must be boolean')
+        backoffs=retry.get('backoff_seconds',[2,8,30])
+        if not isinstance(backoffs,list) or any(type(b) not in (int,float) or not math.isfinite(b) or b<0 for b in backoffs):
+            raise ConfigurationError('model.retry.backoff_seconds must be list of non-negative numbers')
     forbidden={'api_key','apikey','authorization','password','access_token','secret'}
     def check(value):
         if isinstance(value,dict):

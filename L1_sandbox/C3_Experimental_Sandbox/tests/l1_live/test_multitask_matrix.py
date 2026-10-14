@@ -54,6 +54,8 @@ class MultitaskFixtureRuntime:
 
 @pytest.mark.parametrize("task_id,doc_ext,intent", TASKS)
 def test_multitask_config_and_doctor_without_core_modification(task_id, doc_ext, intent, monkeypatch):
+    if not (ROOT / "third_party/OmegaUse-OfficeVal/.git").exists() or not (ROOT / f"benchmarks/officeval/assets/{task_id}").exists():
+        pytest.skip("Native OfficeVal third_party checkout or task assets not present in this checkout")
     monkeypatch.setenv("GEMINI_API_KEY", "test-preflight-key")
     cfg_file = (ROOT / f"configs/l1/officeval_{task_id[-3:]}.gemini-35lite.json"
                 if task_id != "officeval_003"
@@ -81,6 +83,8 @@ def test_multitask_config_and_doctor_without_core_modification(task_id, doc_ext,
 
 @pytest.mark.parametrize("task_id,doc_ext,intent", TASKS)
 def test_multitask_fixture_orchestration(tmp_path, task_id, doc_ext, intent):
+    if not (ROOT / "third_party/OmegaUse-OfficeVal/.git").exists() or not (ROOT / f"benchmarks/officeval/assets/{task_id}").exists():
+        pytest.skip("Native OfficeVal third_party checkout or task assets not present in this checkout")
     cfg_file = (ROOT / f"configs/l1/officeval_{task_id[-3:]}.gemini-35lite.json"
                 if task_id != "officeval_003"
                 else ROOT / "configs/l1/officeval.gemini-35lite.json")
