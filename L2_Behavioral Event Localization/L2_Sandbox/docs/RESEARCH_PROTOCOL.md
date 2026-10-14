@@ -1,53 +1,26 @@
-# 研究验证范围（v0.2.1）
+# 研究验证范围（L2 v0.3 第一性原理精简版）
 
-九份现有 OfficeVal003 记录属于同一个任务家族，主执行、恢复分支、重试不是独立任务。本版使用它们做接口和工程回归，所有规则输出都是明确的 deterministic baseline，不用这些输出宣称 Analyst 定位准确率。
+## 一、四条第一性原理与单一闭环
 
-## 一、先拆解比较问题
+1. **被诊断的是策略 $\pi$**：模型、解码参数、系统提示、工具、预算全程固定，且 $T = 1.0$（无固定 seed）。
+2. **唯一的真值是检查点价值 $V(c_k) = \mathbb{E}[Y \mid \pi \text{ 从 } c_k \text{ 续跑}]$**：直接通过 L1 冷恢复从 $c_k$ 续跑 $N$ 次、用官方评分器打分取平均，无需人工标注。
+3. **每个解释都是关于 $V$ 的可检验预测**：
+   - 「在哪」预测价值曲线在哪一段下跌（调用 1：`Values`）。
+   - 「为什么」预测从 $c_{j-1}$ 重新采样第 $j$ 回合时，满足组合行为谓词 $P$ 的分支结果更差（调用 2：`Hypothesis`）。
+4. **分析器的价值 = 被实验证实的预测 − 成本**：规则分析器 `rules@1` 是基线；LLM 只有在同样信息边界下显著赢过规则分析器才保留。
 
-同一个基础模型，在原始日志、同权限结构化单次视图、受限检索 Analyst 上的差异需分开测量。当前发布 rules / structured-once / analyst；完整 raw-log 等权限比较需在相同读取预算与不截断前提下单独对比。每个方法实际看过哪些事实、读取了多少字节和发生多少截断应保留，不能把更多信息带来的收益全部归于方法。
+由此，L2 只有一个闭环：**程序给事实 → 分析器下注 → 续跑开奖**。
 
-规则事实可作为受控测例的位置参照，但自然轨迹中的错误原因没有自动人工因果标签。故障注入的位置标签不等于其对最终结果的因果贡献。
+## 二、信息边界与两阶段分析器调用
 
-## 二、v0.2 两类可识别对比（无需信息注入接口）
+- **唯一信息边界**：分析器读不到任何分支级结果（哪条分支做了什么、得了几分）。输入构造函数仅接受父轨迹、任务基线 $p_0$（该任务 M2 基线运行不含父轨迹本身的平均终点）以及调用 2 所需的曲线摘要（各检查点 $\hat{V}$ 与判定）。
+- **调用 1（`Values`）**：输入 `(父轨迹, 事实, p_0)`，预测 `values[0..T-1]`。用各采样检查点分支结果的等权 Brier 打分，并报告相对线性衰减（$p_0 \to Y$）的技能分。
+- **调用 2（`Hypothesis`）**：仅对 `concentrated_turn` 或 `concentrated_interval` 判定调用。输出 `(turn, predicate, effect, rationale)`，由程序在父轨迹第 $j$ 回合核验一致性（`inconsistent`），并在 $c_{j-1}$ 的第二阶段分支上按谓词分组（任一组 $<4$ 条记 `untestable`），执行单侧置换检验 / Fisher 精确检验与 Holm 校正（`confirmed` vs `not_confirmed`），报告频率 $\hat{f}$、效应 $\hat{\Delta}_P = \bar{Y}_P - \bar{Y}_{\neg P}$ 与解释份额 $(1-\hat{f})\lvert\hat{\Delta}_P\rvert / \hat{d}_j$。
 
-在同一个非退化采样策略 $\pi$（$T = 1.0$、无固定 seed）和完整检查点状态 $c_k$ 下，不需要修改 L1 注入接口即可识别两类对比：
+## 三、对比组与可证伪判据
 
-1. **跨检查点价值下跌（`evidence_basis: value_curve`，证据等级 E1）**
-   - 比较 $D_{[a,b]} = V(c_a) - V(c_b)$ 与单回合下跌 $d_j = V(c_{j-1}) - V(c_j)$。
-   - **预先声明的两阶段样本拆分规则（替代 v0.1 单阶段的 `no_adaptive_stopping`）**：
-     - 第一阶段在固定步长网格 $c_0, c_s, c_{2s}, \dots$（与 Analyst 预测无关）上各续跑 $N_1 = 12$ 次，仅用于按 `argmax_interval_drop_earliest_tie` 选出下跌最大的网格区间 $[a, b]$。
-     - 第二阶段在选中区间 $[a, b]$ 内的每个合格检查点各全新续跑 $N_2 = 24$ 次。所有统计检验与置信区间**仅使用第二阶段样本**计算，消除“先挑最大值再检验”的选择偏差。
-   - **均匀摊派零假设（Uniform-Share Null）**：只分析失败轨迹时，实际路径每一步平均下跌 $(V(c_0) - Y)/T$。区间检验要求单侧下界超过均匀摊派份额 $\frac{b-a}{T}(\hat{V}_1(c_0) - Y)$；单回合检验要求经 Bonferroni 校正的单侧下界超过 $\delta_{\text{turn}} = \max(0.10, 2\hat{V}_1(c_0)/T)$。
-2. **同一检查点内的同状态行为分层（`evidence_basis: resample_stratified`，证据等级 E1+）**
-   - 在检查点 $c_{j-1}$ 重采样的 $N_2$ 条分支中，按重新采样的第一个回合 $j$ 是否出现预先冻结的 L2a 行为标签 $B$（`tool_execution_anomaly`、`submission_modified`、`assistant_finished_turn`、`submission_readback`、`object_structure_changed`）分组，比较条件期望差 $\Delta_B = \mathbb{E}[Y \mid c_{j-1}, a_j \in B] - \mathbb{E}[Y \mid c_{j-1}, a_j \notin B]$。
-   - 特别地，同一状态下比较 `assistant_finished_turn` 与 `submission_readback` 可量化“不检查直接结束”相对“先回读交付物”的结果差。
-   - 该对比度量同状态下两类动作条件分布的结果差异（E1+），不直接声称动作 $B$ 的独立干预效应（E2）。每类至少 4 条样本，多标签间做 Holm 校正；跨轨迹按任务家族做 Mantel–Haenszel 合并。
-
-## 三、结果判定、缺失上下界与首请求一致性
-
-1. **终点统一读取 L1 `projection`**：OfficeVal 主终点为 `official_completion_rate`（次终点 `official_dim1`，探索性分项为 `dim2` 评分项 `hit`）；LHTB 主终点为 `passed`。
-2. **五类结果判定表**：
-   - Agent 正常或因预算/协议停止且评分有效：按 `projection` 取值。
-   - 执行有效但 `submission/` 为空：记为有效结果 `0.0`（`official_dim1` 记 `False`）。
-   - 执行有效、有交付文件但评分器返回非 ok（文件损坏或缺少预期交付物）：主分析记 `0.0`，损坏无法解析的情形在敏感性分析中改记缺失。
-   - 模型传输失败或执行中断（`execution_validity != valid`）：记为缺失（`infrastructure_invalid`）。
-   - 评分器自身崩溃/超时或未运行（`official_raw` 为空）：记为缺失（`scorer_infrastructure_invalid`）。
-3. **缺失上下界**：缺失分支最多按预声明规则补跑 2 次（保留全部失败回执）；统计复算同时报告缺失全记 `0` 与全记 `1` 的最坏情况上下界，若上下界翻转判定则输出 `not_identifiable`。
-4. **首请求逐字节一致性**：每个续跑分支的第一个模型请求体必须与父轨迹在对应检查点后的同编号请求体逐字节相同，否则中止并记为 `policy_identity_violation`。
-
-5. **父结果与检查点资格**：父终点未定义时禁止冻结曲线计划，不把评测故障补成零分。第一阶段网格及所有可能进入第二阶段的检查点，都必须在冻结前通过资格与剩余预算检查；执行前再次对照原始 L1 包校验。
-   - 本轮统计策略版本为 `0.2.1`；旧统计策略的冻结计划须重新编译，保留其原始证据，不按新规则继续执行旧计划。
-6. **实际请求限流**：L2 的共享限流器由 L1 在每次 HTTP 尝试（含重试）前调用。TPM 使用请求字节量与输出上限作保守预留，成功响应的官方 usage 用于校正；用量未知的尝试保留预留。预留超过容量时明确拒绝。限流和退避等待受墙钟预算约束，传输失败耗尽预算仍记为基础设施无效。
-
-## 四、已提供的指标函数
-
-- `evaluation.metrics.value_prediction_scores` 与 `evaluate_value_predictions_across_cases`：用第一阶段网格续跑分支的观测结果直接对冻结的价值预测计算 Brier / 有界平方误差，并报告相对**线性衰减基线（linear_decay）**的技能分（Skill Score）及按任务家族聚类的 bootstrap 95% 置信区间。
-- `evaluation.metrics.curve_gold` 与 `localization_metrics`：将判定为 `concentrated_turn` 或 `concentrated_interval` 的价值曲线结果映射为 `accepted_event_sets`，评估 Top-k 事件集合精确匹配率；`diffuse_loss`、`out_of_reach` 与 `not_identifiable` 记为 `gold_undefined_not_scored`。
-- `family_partition`：必须输入明确 `family_id`；只有一个 family 时拒绝产出貌似独立的 train/holdout 划分。
-- **身份与预测覆盖**：诊断包保留原任务身份；默认家族为 `benchmark:task_id`，不使用 `analysis_id` 代替。缺少或不完整的 Analyst 预测保持未评分，规则基线独立报告。技能分仅比较双方都已评分的案例；Analyst 和技能分区间分别要求至少两个实际有评分的任务家族。
-- **分层来源**：每条分支的行为标签只取第一个新请求对应的回合，同时保留父轨迹绝对回合与请求 ID；证据包校验从分支重新计算标签，不能用后续回合代替。
-- **探索性分项**：dim2 分项曲线使用真实评分项命中值，终态不假设为零。当前仅报告描述性均值和下跌，不把下跌量转换成 p 值或显著性结论。
-
-## 五、后续 E2 干预实验与 v0.3 范围
-
-强策略接管（$V_{\text{strong}}$）、状态级不可逆点以及显式信息注入/动作替换（E2）留待 v0.3，在 L1 提供经审计的换策略续跑与显式注入接口后启用。在此之前，对应干预模板保持 `blocked`。
+- **A 组（`rules@1`）**：规则分析器 + 事实（首个异常阶跃 + 5 个词表谓词）。
+- **B 组（`llm_raw`）**：LLM + 原始轨迹视图（不含结构化事实）。
+- **C 组（`llm`）**：LLM + 原始轨迹视图 + 结构化事实。
+- **R 组（`reference@1`）**：规则 + 事实 + 各检查点交付快照的官方评分（参照上限）。
+- **可证伪判据**：提示词仅在训练家族上调整，结果仅在留出家族上按任务家族聚类 bootstrap 报告；若留出家族上 C 组的技能分和解释覆盖均不显著优于 A 组，默认流程即为 `Program-only`。

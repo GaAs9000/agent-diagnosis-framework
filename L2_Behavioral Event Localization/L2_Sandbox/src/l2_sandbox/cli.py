@@ -1,171 +1,71 @@
+"""L2 v0.3 CLI (`l2 run` and `l2 summarize`, Section 7.1)."""
 from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
 from . import __version__
-from .io import L2Error, read_json, read_jsonl, write_json, safe, bytes_read
-from .config import load
+from .io import L2Error, write_json
+from .report import run_episode
+from .score import summarize_runs
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(prog='c3-l2', description='Read-only L1 evidence localization, predictions and explicit experiment plans')
-    p.add_argument('--version', action='version', version=__version__)
-    sub = p.add_subparsers(dest='command', required=True)
-    s = sub.add_parser('inspect'); s.add_argument('source', type=Path); s.add_argument('--require-l1-verifier', action='store_true')
-    for name in ('analyze', 'batch'):
-        s = sub.add_parser(name); s.add_argument('--source', type=Path, required=True); s.add_argument('--config', type=Path)
-        s.add_argument('--output', type=Path, required=True); s.add_argument('--allow-model', action='store_true')
-        if name == 'batch': s.add_argument('--pattern', default='0*/*/manifest.json')
-    s = sub.add_parser('verify'); s.add_argument('package', type=Path); s.add_argument('--source', type=Path); s.add_argument('--expected-index-sha256')
-    s = sub.add_parser('show-fact'); s.add_argument('package', type=Path); s.add_argument('--fact', required=True)
-    s = sub.add_parser('doctor'); s.add_argument('--config', type=Path, required=True)
-    s = sub.add_parser('plan'); s.add_argument('--analysis', type=Path, required=True); s.add_argument('--source', type=Path, required=True)
-    s.add_argument('--checkpoint', required=True); s.add_argument('--hypothesis'); s.add_argument('--template', default='resume_unchanged')
-    s.add_argument('--replicates', type=int, default=3); s.add_argument('--endpoint', default='submission_present'); s.add_argument('--output', type=Path, required=True)
-    s = sub.add_parser('execute'); s.add_argument('--plan', type=Path, required=True); s.add_argument('--source', type=Path, required=True)
-    s.add_argument('--output', type=Path, required=True); s.add_argument('--allow-execution', action='store_true')
-    s = sub.add_parser('validate'); s.add_argument('--analysis', type=Path, required=True); s.add_argument('--receipts', type=Path, required=True); s.add_argument('--output', type=Path, required=True)
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        prog='l2',
+        description='L2 v0.3 Behavioral Event Localization: value curves, predicate hypotheses, and scoring.',
+    )
+    parser.add_argument('--version', action='version', version=__version__)
+    sub = parser.add_subparsers(dest='command', required=True)
 
-    # v0.2 Two-Stage Sparse Value Curve CLI commands
-    s = sub.add_parser('curve-plan')
-    s.add_argument('--analysis', type=Path, required=True)
-    s.add_argument('--source', type=Path, required=True)
-    s.add_argument('--output', type=Path, required=True)
-    s.add_argument('--stride', type=int, default=4)
-    s.add_argument('--stage1-replicates', type=int, default=12)
-    s.add_argument('--stage2-replicates', type=int, default=24)
-    s.add_argument('--alpha', type=float, default=0.05)
-    s.add_argument('--endpoint', default=None)
-    s.add_argument('--max-concurrency', type=int, default=4)
-    s.add_argument('--max-replacements', type=int, default=2)
-    s.add_argument('--require-value-predictions', action='store_true')
+    run_p = sub.add_parser('run', help='Run L2 on an L1 parent package (idempotent)')
+    run_p.add_argument('l1_run', type=Path, help='Path to parent L1 package directory')
+    run_p.add_argument('--analysts', default='rules', help='Comma-separated analysts, e.g. rules,llm:config.json')
+    run_p.add_argument('--execute', action='store_true', help='Execute L1 continuations to measure the value curve')
+    run_p.add_argument('--output', type=Path, default=None, help='Output directory (defaults to l2/<episode_id>/)')
+    run_p.add_argument('--p0', type=float, default=0.5, help='Task baseline outcome p_0 (excluding parent trajectory)')
+    run_p.add_argument('--n1', type=int, default=12, help='Stage 1 replicates per grid checkpoint')
+    run_p.add_argument('--n2', type=int, default=24, help='Stage 2 replicates per selected interval checkpoint')
+    run_p.add_argument('--stride', type=int, default=4, help='Stage 1 checkpoint grid stride')
+    run_p.add_argument('--alpha', type=float, default=0.05, help='One-sided significance level')
+    run_p.add_argument('--max-concurrency', type=int, default=4, help='Bounded thread pool concurrency (4..8)')
 
-    s = sub.add_parser('curve-execute')
-    s.add_argument('--plan', type=Path, required=True)
-    s.add_argument('--source', type=Path, required=True)
-    s.add_argument('--output', type=Path, required=True)
-    s.add_argument('--allow-execution', action='store_true')
-    s.add_argument('--max-concurrency', type=int, default=None)
-    s.add_argument('--rpm', type=float, default=None)
-    s.add_argument('--tpm', type=float, default=None)
+    sum_p = sub.add_parser('summarize', help='Summarize and pool scores across L2 episode directories')
+    sum_p.add_argument('l2_dirs', type=Path, nargs='+', help='One or more l2/<episode_id> directories')
+    sum_p.add_argument('--output', type=Path, default=None, help='Optional path to write summary JSON')
 
-    s = sub.add_parser('curve-report')
-    s.add_argument('--analysis', type=Path, required=True)
-    s.add_argument('--execution', type=Path, required=True)
-    s.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args(argv)
 
-    s = sub.add_parser('eval-values')
-    s.add_argument('--reports', type=Path, nargs='+', required=True)
-    s.add_argument('--output', type=Path, default=None)
+    def emit(obj):
+        print(json.dumps(obj, ensure_ascii=False, indent=2))
 
-    s = sub.add_parser('pack'); s.add_argument('package', type=Path); s.add_argument('--output', type=Path, required=True)
-    s = sub.add_parser('unpack'); s.add_argument('archive', type=Path); s.add_argument('--output', type=Path, required=True); s.add_argument('--repair-utf8-names', action='store_true')
-    s = sub.add_parser('evaluate'); s.add_argument('--predictions', type=Path, required=True); s.add_argument('--gold', type=Path, required=True); s.add_argument('--top-k', type=int, default=3)
-    args = p.parse_args(argv)
-
-    def emit(v): print(json.dumps(v, ensure_ascii=False, indent=2))
     try:
-        if args.command == 'inspect':
-            from .evidence.l1 import inspect
-            r = inspect(args.source, require_l1=args.require_l1_verifier); emit(r); return 0 if r['verified'] else 2
-        if args.command in ('analyze', 'batch'):
-            from .pipeline import analyze
-            config = load(args.config)
-            if args.command == 'analyze':
-                r = analyze(args.source, args.output, config, allow_model=args.allow_model); emit(r)
-                return 0 if r['verification']['verified'] and r['status'].startswith('completed') else 2
-            if config['mode'] != 'rules' and not args.allow_model: raise L2Error('Batch model calls need explicit --allow-model')
-            paths = sorted(args.source.glob(args.pattern))
-            if not paths: raise L2Error('No matching source manifests')
-            args.output.mkdir(parents=True, exist_ok=False, mode=0o700); rows = []
-            for i, mp in enumerate(paths):
-                try:
-                    r = analyze(mp.parent, args.output / f'analysis_{i:03d}', config, allow_model=args.allow_model)
-                    rows.append({'source_relative': str(mp.parent.relative_to(args.source)), **r})
-                except Exception as exc: rows.append({'source_relative': str(mp.parent.relative_to(args.source)), 'error': type(exc).__name__ + ': ' + str(exc)})
-            result = {'mode': config['mode'], 'input_cases': len(paths), 'results': rows, 'research_accuracy_claimed': False,
-                      'note': 'Sibling episodes from one task are one task family, not independent test cases'}
-            write_json(args.output, 'batch_receipt.json', result); emit(result)
-            return 0 if all(r.get('verification', {}).get('verified') and r.get('status', '').startswith('completed') for r in rows) else 2
-        if args.command == 'verify':
-            from .package import verify
-            r = verify(args.package, source=args.source, expected_index=args.expected_index_sha256); emit(r); return 0 if r['verified'] else 2
-        if args.command == 'show-fact':
-            from .package import verify
-            from .evidence.references import select
-            if not verify(args.package)['verified']: raise L2Error('Package verification failed')
-            f = next((f for f in read_jsonl(args.package / 'facts.jsonl') if f['fact_id'] == args.fact), None)
-            if f is None: raise L2Error('Unknown fact ID')
-            refs = {r['ref_id']: r for r in read_json(args.package / 'references.json')}
-            emit({'fact': f, 'sources': [{'reference': refs[x], 'selected_value': select(bytes_read(safe(args.package, refs[x]['local_blob'])), refs[x]['selector'])} for x in f['source_ref_ids']]}); return 0
-        if args.command == 'doctor':
-            from .analyst.backend import doctor
-            r = doctor(load(args.config)); emit(r); return 0 if r['ready'] else 2
-        if args.command == 'plan':
-            from .experiments.plans import compile_plan
-            r = compile_plan(args.analysis, args.source, args.checkpoint, args.output, hypothesis_id=args.hypothesis,
-                             template=args.template, replicates=args.replicates, endpoint=args.endpoint); emit(r)
-            return 0 if r['plan']['plan_state'] == 'frozen' else 2
-        if args.command == 'execute':
-            from .experiments.controller import execute
-            r = execute(args.plan, args.source, args.output, allow_execution=args.allow_execution); emit(r)
-            return 0 if r['verification']['verified'] and r['results']['plan_state'] == 'completed' else 2
-        if args.command == 'validate':
-            from .experiments.controller import import_receipts
-            r = import_receipts(args.analysis, args.receipts, args.output); emit(r); return 0 if r['verified'] else 2
-        if args.command == 'curve-plan':
-            from .experiments.plans import compile_curve_plan
-            r = compile_curve_plan(
-                args.analysis, args.source, args.output,
+        if args.command == 'run':
+            analyst_list = [x.strip() for x in args.analysts.split(',') if x.strip()]
+            res = run_episode(
+                args.l1_run,
+                output_dir=args.output,
+                analysts=analyst_list,
+                execute=args.execute,
+                p0=args.p0,
+                n1=args.n1,
+                n2=args.n2,
                 stride=args.stride,
-                stage1_replicates=args.stage1_replicates,
-                stage2_replicates=args.stage2_replicates,
                 alpha=args.alpha,
-                endpoint=args.endpoint,
                 max_concurrency=args.max_concurrency,
-                max_replacements=args.max_replacements,
-                require_value_predictions=args.require_value_predictions,
             )
-            emit(r)
-            return 0 if r['plan']['plan_state'] == 'frozen' else 2
-        if args.command == 'curve-execute':
-            from .experiments.controller import execute_curve
-            r = execute_curve(
-                args.plan, args.source, args.output,
-                allow_execution=args.allow_execution,
-                max_concurrency=args.max_concurrency,
-                rpm=args.rpm,
-                tpm=args.tpm,
-            )
-            emit(r)
-            return 0 if r['verification']['verified'] and r['results']['plan_state'] == 'completed' else 2
-        if args.command == 'curve-report':
-            from .experiments.controller import report_curve
-            r = report_curve(args.analysis, args.execution, args.output)
-            emit(r)
-            return 0 if r['verified'] else 2
-        if args.command == 'eval-values':
-            from .evaluation.metrics import evaluate_value_predictions_across_cases
-            cases = []
-            for p_item in args.reports:
-                target = p_item / 'value_evaluation.json' if p_item.is_dir() else p_item
-                cases.append(read_json(target))
-            res = evaluate_value_predictions_across_cases(cases)
-            if args.output:
-                write_json(args.output.parent, args.output.name, res)
             emit(res)
             return 0
-        if args.command == 'pack':
-            from .portable import pack
-            emit(pack(args.package, args.output)); return 0
-        if args.command == 'unpack':
-            from .portable import unpack
-            emit(unpack(args.archive, args.output, repair_utf8_names=args.repair_utf8_names)); return 0
-        if args.command == 'evaluate':
-            from .evaluation.metrics import localization_metrics
-            emit(localization_metrics(read_json(args.predictions), read_json(args.gold), args.top_k)); return 0
+        if args.command == 'summarize':
+            res = summarize_runs(args.l2_dirs)
+            if args.output:
+                write_json(args.output, res)
+            emit(res)
+            return 0
     except (L2Error, OSError, ValueError, KeyError, TypeError) as exc:
-        emit({'ok': False, 'error_type': type(exc).__name__, 'error': str(exc)}); return 2
+        emit({'ok': False, 'error_type': type(exc).__name__, 'error': str(exc)})
+        return 2
     return 2
 
-if __name__ == '__main__': raise SystemExit(main())
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,185 +1,243 @@
-"""Synthetic source and model fixtures. Never evidence of real L1/model execution."""
+"""Synthetic L1 v0.2 package fixtures for L2 v0.3 tests."""
 from __future__ import annotations
 import copy
 import io
-import json
-from pathlib import Path
-from types import SimpleNamespace
 import uuid
 import zipfile
-import pytest
-from l2_sandbox.io import canonical,digest,sha_bytes,inventory,write_json,write_jsonl,write_new,now,loads
-from l2_sandbox.evidence.l1 import diff_snapshots,L1Reader
-from l2_sandbox.config import load
+from pathlib import Path
+from l2_sandbox.evidence.l1 import L1Package, diff_snapshots
+from l2_sandbox.io import digest, sha_bytes, write_json, write_jsonl
 
 
-def docx_bytes(*,empty_row=True,black=False,style=False,entity=False):
-    row='<w:tr><w:tc><w:p><w:r><w:t>text</w:t></w:r></w:p></w:tc></w:tr>'
-    if empty_row:row+='<w:tr><w:tc><w:p/></w:tc></w:tr>'
-    borders='<w:tblBorders><w:bottom w:val="single" w:color="000000" w:sz="8"/></w:tblBorders>' if black else ''
-    st='<w:tblStyle w:val="CustomStyle"/>' if style else ''
-    xml=f'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tblPr>{borders}{st}</w:tblPr>{row}</w:tbl><w:p><w:r><w:t>meeting content</w:t></w:r></w:p></w:body></w:document>'
-    if entity:xml='<!DOCTYPE x [<!ENTITY secret SYSTEM "file:///etc/passwd">]>'+xml
-    out=io.BytesIO()
-    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:z.writestr('word/document.xml',xml)
+def docx_bytes(*, empty_row: bool = True, black: bool = False) -> bytes:
+    row = '<w:tr><w:tc><w:p><w:r><w:t>text</w:t></w:r></w:p></w:tc></w:tr>'
+    if empty_row:
+        row += '<w:tr><w:tc><w:p/></w:tc></w:tr>'
+    borders = '<w:tblBorders><w:bottom w:val="single" w:color="000000" w:sz="8"/></w:tblBorders>' if black else ''
+    xml = (
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:body><w:tbl><w:tblPr>{borders}</w:tblPr>{row}</w:tbl>'
+        '<w:p><w:r><w:t>content</w:t></w:r></w:p></w:body></w:document>'
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('word/document.xml', xml)
     return out.getvalue()
 
 
-def make_source(root:Path,*,recording_mode='test_fixture',lineage=None,missing_submission=False,protocol_error=False,tool_exit=0):
-    root.mkdir(parents=True,exist_ok=False);eid='ep_'+uuid.uuid4().hex
-    source_config={'budget':{'max_model_requests':5,'max_tool_calls':10,'wall_time_seconds':600,'max_total_tokens':None},
-        'model':{'adapter':'gemini','kind':'api','model':'SYNTHETIC_TEST_MODEL','base_url':'https://generativelanguage.googleapis.com/v1beta','parameters':{'temperature':0}},
-        'agent':{'system_prompt':'Fixture only'},'runtime':{'adapter':'test-only'}}
-    write_json(root,'raw/resolved_config.json',source_config)
-    public={'benchmark':'officeval','task_id':'officeval_003','prompt':'Remove empty rows in the supplied document.','assets':[]}
-    write_json(root,'benchmark/public_task.json',public)
-    write_json(root,'benchmark/rubric.json',{'PRIVATE_RUBRIC_SENTINEL':'Do not expose through Analyst tools'})
-    write_new(root,'benchmark/source/private.py',b'raise RuntimeError("NEVER EXECUTE THIS VERIFIER")\n')
-    old=docx_bytes();new=docx_bytes(empty_row=False,black=True)
-    def sf(path,data):
-        sha=sha_bytes(data);blob='states/blobs/'+sha
-        if not (root/blob).exists():write_new(root,blob,data)
-        return {'path':path,'blob':blob,'sha256':sha,'size_bytes':len(data),'mode':0o644}
-    initial=[sf('input/测试.docx',old)]
-    final=[sf('input/测试.docx',new)]
-    if not missing_submission:final.append(sf('submission/结果.docx',new))
-    dirs=[{'path':'input','mode':0o755},{'path':'submission','mode':0o755}]
-    snaps=[]
-    for i,ff in enumerate([initial,final]):
-        s={'snapshot_id':f's{i:06d}','label':'fixture','scope':'workspace_files_and_directories','files':ff,'directories':dirs,
-           'total_bytes':sum(f['size_bytes'] for f in ff),'content_sha256':digest({'files':ff,'directories':dirs})}
-        write_json(root,f"states/snapshots/{s['snapshot_id']}.json",s);snaps.append(s)
-    def ref(path):
-        b=(root/path).read_bytes();return {'path':path,'sha256':sha_bytes(b),'size_bytes':len(b)}
-    events=[]
-    def ev(kind,data,links=None):
-        x={'schema_version':'0.2.0','episode_id':eid,'event_id':f'{eid}:e{len(events):06d}','seq':len(events),'kind':kind,
-           'data':data,'links':links or {},'observed_at':now(),'previous_sha256':events[-1]['sha256'] if events else None}
-        x['sha256']=digest(x);events.append(x);return x
-    ev('episode.started',{'config':ref('raw/resolved_config.json')})
-    ev('state.snapshot',{'snapshot_id':'s000000','snapshot':ref('states/snapshots/s000000.json')})
-    conversation={'systemInstruction':{'parts':[{'text':'Fixture only'}]},'contents':[{'role':'user','parts':[{'text':public['prompt']}]}]}
-    cp={'schema_version':'0.2.0','episode_id':eid,'checkpoint_id':'cp000000','snapshot_id':'s000000','conversation':copy.deepcopy(conversation),
-        'pending_calls':[],'pending_observations':[],'budget_used':{'model_requests':0,'tool_calls':0,'agent_seconds':0,'known_total_tokens':0},
-        'qualification':{'eligible':True,'image_id':'sha256:'+'a'*64,'scopes':['workspace_files','native_conversation']},'config_sha256':digest(source_config)}
-    write_json(root,'checkpoints/cp000000.json',cp)
-    ev('checkpoint.created',{'checkpoint':ref('checkpoints/cp000000.json')})
-    rid=eid+':r000000';cid=rid+':c0'
-    write_json(root,'raw/model/r000000/request.json',conversation)
-    req=ev('model.request',{'request_id':rid,'body':ref('raw/model/r000000/request.json')})
-    call={'name':'run','args':{'command':'TEST-AUTHORED, NOT EXECUTED'},'id':'native0'}
-    response={'candidates':[{'content':{'role':'model','parts':[{'functionCall':call,'thoughtSignature':'opaque-native-signature'}]},'finishReason':'STOP'}]}
-    write_json(root,'raw/model/r000000/response.bin',response)
-    write_json(root,'raw/model/r000000/http.json',{'status_code':200,'fixture':True})
-    resp=ev('model.response',{'request_id':rid,'body':ref('raw/model/r000000/response.bin'),'http':ref('raw/model/r000000/http.json'),'status_code':200},{'request':req['event_id']})
-    ev('model.parsed',{'request_id':rid})
-    tc=ev('tool.call',{'request_id':rid,'call_id':cid,'native_id':'native0','name':'run','arguments':call['args']},{'response':resp['event_id']})
-    obs={'exit_code':tool_exit,'stdout':'fixture stdout\n','stderr':'fixture error\n' if tool_exit else '', 'output_complete':True,'stop_reason':None}
-    write_json(root,'raw/tools/result.json',{'call_id':cid,'observation':obs,'provenance':{'test_fixture':True}})
-    write_new(root,'raw/tools/stdout.bin',obs['stdout'].encode());write_new(root,'raw/tools/stderr.bin',obs['stderr'].encode())
-    result=ev('tool.result',{'call_id':cid,'result':ref('raw/tools/result.json'),'stdout':ref('raw/tools/stdout.bin'),'stderr':ref('raw/tools/stderr.bin')},{'call':tc['event_id']})
-    ev('state.snapshot',{'snapshot_id':'s000001','snapshot':ref('states/snapshots/s000001.json')},{'tool_result':result['event_id']})
-    change=ev('state.transition',{'before':'s000000','after':'s000001'},{'tool_result':result['event_id']})
-    write_jsonl(root,'state_changes.jsonl',[{'episode_id':eid,'event_id':change['event_id'],'before_snapshot_id':'s000000','after_snapshot_id':'s000001','changes':diff_snapshots(*snaps)}])
-    cp1={**cp,'checkpoint_id':'cp000001','snapshot_id':'s000001','budget_used':{'model_requests':1,'tool_calls':1,'agent_seconds':1,'known_total_tokens':3}}
-    cp1['conversation']=copy.deepcopy(conversation)
-    cp1['conversation']['contents'] += [response['candidates'][0]['content'],{'role':'user','parts':[{'functionResponse':{'id':'native0','name':'run','response':obs}}]}]
-    write_json(root,'checkpoints/cp000001.json',cp1);ev('checkpoint.created',{'checkpoint':ref('checkpoints/cp000001.json')})
-    write_json(root,'checkpoints/index.json',{'checkpoints':[{'checkpoint_id':'cp000000','path':'checkpoints/cp000000.json','eligible':True},{'checkpoint_id':'cp000001','path':'checkpoints/cp000001.json','eligible':True}]})
-    rid2=eid+':r000001';write_json(root,'raw/model/r000001/request.json',cp1['conversation'])
-    req2=ev('model.request',{'request_id':rid2,'body':ref('raw/model/r000001/request.json')})
-    response2={'candidates':[{'content':{'role':'model','parts':[{'text':'fixture done'}]},'finishReason':'MALFORMED_FUNCTION_CALL' if protocol_error else 'STOP'}]}
-    write_json(root,'raw/model/r000001/response.bin',response2);write_json(root,'raw/model/r000001/http.json',{'status_code':200,'fixture':True})
-    ev('model.response',{'request_id':rid2,'body':ref('raw/model/r000001/response.bin'),'http':ref('raw/model/r000001/http.json'),'status_code':200},{'request':req2['event_id']})
-    write_json(root,'observations/tool0.json',obs)
-    ev('observation.delivered',{'call_id':cid,'request_id':rid2,'native_id':'native0','observation':ref('observations/tool0.json')},{'request':req2['event_id'],'result':result['event_id']})
-    if protocol_error:ev('episode.error',{'code':'protocol_error','message':'fixture malformed response'})
-    else:ev('model.parsed',{'request_id':rid2})
-    rawgrade={'status':'error' if missing_submission else 'ok','error':'missing' if missing_submission else None,'id':'003','file_name':'结果.docx',
-              'dim1_pass':not missing_submission,'dim1_reason':'','dim2_items':[],'total_score':0,'max_score':0 if missing_submission else 15}
-    projection={'evaluation_validity':'invalid' if missing_submission else 'valid','task_outcome':'unknown'}
-    write_json(root,'official_grade.json',{'official_raw':rawgrade,'projection':projection})
-    art=[]
-    if not missing_submission:
-        write_new(root,'artifacts/submission/结果.docx',new)
-        f=final[-1];art=[{'path':'结果.docx','sha256':f['sha256'],'size_bytes':f['size_bytes']}]
-    write_json(root,'artifacts/inventory.json',{'episode_id':eid,'snapshot_id':'s000001','files':art})
-    status={'termination':'protocol_error' if protocol_error else 'assistant_finished','execution_validity':'invalid' if protocol_error else 'valid',
-            'protocol_validity':'invalid' if protocol_error else 'valid','evaluation_validity':projection['evaluation_validity'],
-            'task_outcome':'unknown','evidence_completeness':'complete'}
-    ev('episode.finished',{'status':status})
-    m={'schema_version':'0.2.0','episode_id':eid,'recording_mode':recording_mode,
-       'created_at':now(),'finished_at':now(),
-       'task':{'benchmark':'officeval','task_id':'officeval_003','prompt':public['prompt']},
-       'agent':{'identity':{'adapter':'gemini','requested_model':'SYNTHETIC_TEST_MODEL'},'model_configuration':{'adapter':'gemini','model':'SYNTHETIC_TEST_MODEL'}},
-       'coverage':[{'code':'test_fixture','detail':'synthetic fixture'}],
-       'usage':{'all_requests_have_usage':True,'known_total_tokens_including_parent':3},
-       'status':status,'config_sha256':digest(source_config),'runtime':{'image_id':'sha256:'+'a'*64},'capabilities':{'test_fixture':True},
-       'counts':{'events':len(events),'model_requests':2,'model_responses':2,'tool_calls':1,'tool_results':1,'observations_delivered':1,'snapshots':2},'lineage':lineage}
-    write_json(root,'manifest.json',m);write_jsonl(root,'trajectory.jsonl',events)
-    write_json(root,'evidence_index.json',{'schema_version':'0.2.0','episode_id':eid,'files':inventory(root),
-        'event_count':len(events),'trajectory_head_sha256':events[-1]['sha256'],'trust_scope':'SYNTHETIC FIXTURE'})
-    assert L1Reader(root).report['verified']
+def make_l1_episode(
+    root: Path,
+    *,
+    num_turns: int = 8,
+    resume_from_k: int = 0,
+    benchmark: str = 'officeval',
+    task_id: str = 'officeval_003',
+    is_docx: bool = True,
+    turn_actions: dict[int, str] | None = None,
+    terminal_case: str = 'failed_zero',
+    completion_rate: float = 0.0,
+    passed: bool = False,
+    model_version: str = 'gemini-2.5-flash-lite-preview-06-17',
+) -> Path:
+    """Creates a minimal, self-consistent L1 episode directory (parent or resumed branch).
+
+    `turn_actions` maps 1-based global turn index `t` to one of:
+      - `'normal'`: exit_code=0 shell command without touching submission/
+      - `'anomaly'`: exit_code=1 shell command (`tool_execution_anomaly`)
+      - `'truncated_output'`: exit_code=0 but `output_complete=False` (`tool_exit.ok == False`)
+      - `'readback'`: `ls submission/...` without modifying submission/ (`submission_readback`)
+      - `'modify_submission'`: modifies `submission/out.*` (and changes `.docx` structure if `is_docx=True`)
+      - `'finish'`: no tool call, finishes turn (`assistant_finished_turn`)
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    eid = 'ep_' + uuid.uuid4().hex[:12]
+    turn_actions = turn_actions or {}
+
+    ext = '.docx' if is_docx else '.xlsx'
+    old_data = docx_bytes(empty_row=True, black=False) if is_docx else b'XLSX_OLD'
+    new_data = docx_bytes(empty_row=False, black=True) if is_docx else b'XLSX_NEW'
+
+    def write_blob(rel_path: str, raw: bytes) -> dict:
+        sha = sha_bytes(raw)
+        blob = f'states/blobs/{sha}'
+        blob_file = root / blob
+        if not blob_file.exists():
+            blob_file.parent.mkdir(parents=True, exist_ok=True)
+            blob_file.write_bytes(raw)
+        return {'path': rel_path, 'blob': blob, 'sha256': sha, 'size_bytes': len(raw), 'mode': 0o644}
+
+    dirs = [{'path': 'input', 'mode': 0o755}, {'path': 'submission', 'mode': 0o755}]
+    snaps: list[dict] = []
+
+    def add_snap(files: list[dict]) -> dict:
+        sid = f's{len(snaps):06d}'
+        s = {
+            'snapshot_id': sid,
+            'files': files,
+            'directories': dirs,
+            'total_bytes': sum(f['size_bytes'] for f in files),
+            'content_sha256': digest({'files': files, 'directories': dirs}),
+        }
+        write_json(root / f'states/snapshots/{sid}.json', s)
+        snaps.append(s)
+        return s
+
+    events: list[dict] = []
+
+    def emit(kind: str, data: dict) -> dict:
+        ev = {
+            'schema_version': '0.2.0',
+            'episode_id': eid,
+            'event_id': f'{eid}:e{len(events):06d}',
+            'seq': len(events),
+            'kind': kind,
+            'data': data,
+        }
+        events.append(ev)
+        return ev
+
+    cfg = {
+        'budget': {'max_model_requests': 35, 'max_tool_calls': 50, 'wall_time_seconds': 3600},
+        'model': {'adapter': 'gemini', 'model': model_version, 'parameters': {'temperature': 1.0}},
+    }
+    write_json(root / 'raw/resolved_config.json', cfg)
+    write_json(
+        root / 'benchmark/public_task.json',
+        {'benchmark': benchmark, 'task_id': task_id, 'prompt': f'Edit input/doc{ext}', 'assets': [{'name': f'doc{ext}'}]},
+    )
+
+    lineage = (
+        {'parent_checkpoint_id': f'cp{resume_from_k:06d}'}
+        if resume_from_k > 0
+        else None
+    )
+    if lineage:
+        emit('episode.restored', lineage)
+
+    cur_files = [write_blob(f'input/doc{ext}', old_data), write_blob(f'submission/out{ext}', old_data)]
+    s0 = add_snap(cur_files)
+    emit('state.snapshot', {'snapshot_id': s0['snapshot_id'], 'snapshot': {'path': f"states/snapshots/{s0['snapshot_id']}.json"}})
+
+    cp_rows = []
+    state_changes = []
+
+    for k in range(resume_from_k, num_turns):
+        turn = k + 1
+        cp_id = f'cp{k:06d}'
+        cp_obj = {
+            'checkpoint_id': cp_id,
+            'snapshot_id': snaps[-1]['snapshot_id'],
+            'budget_used': {'model_requests': k, 'tool_calls': k, 'agent_seconds': k},
+            'qualification': {'eligible': True},
+            'config_sha256': digest(cfg),
+        }
+        write_json(root / f'checkpoints/{cp_id}.json', cp_obj)
+        cp_rows.append({'checkpoint_id': cp_id, 'path': f'checkpoints/{cp_id}.json', 'eligible': True})
+
+        rid = f'{eid}:r{k:06d}'
+        emit('model.request', {'request_id': rid})
+        emit('model.response', {'request_id': rid, 'model_version': model_version})
+
+        action = turn_actions.get(turn, 'finish' if k == num_turns - 1 else 'normal')
+        if action == 'finish':
+            emit('model.parsed', {'request_id': rid, 'text': 'Done.', 'finish_reason': 'STOP'})
+            continue
+
+        emit('model.parsed', {'request_id': rid})
+        cmd = (
+            f'ls -la submission/out{ext}' if action == 'readback' else
+            f'cp input/doc{ext} submission/out{ext}' if action == 'modify_submission' else
+            f'echo turn {turn}'
+        )
+        cid = f'{rid}:c0'
+        emit('tool.call', {'request_id': rid, 'call_id': cid, 'name': 'run', 'arguments': {'command': cmd}})
+
+        exit_code = 1 if action == 'anomaly' else 0
+        output_complete = False if action == 'truncated_output' else True
+        obs = {
+            'exit_code': exit_code,
+            'stop_reason': None,
+            'output_complete': output_complete,
+            'stdout': f'stdout {turn}\n',
+            'stderr': 'error\n' if exit_code else '',
+        }
+        res_rel = f'raw/tools/r{k:06d}.json'
+        write_json(root / res_rel, {'call_id': cid, 'observation': obs})
+        emit('tool.result', {'call_id': cid, 'result': {'path': res_rel}})
+
+        before_snap = snaps[-1]
+        if action == 'modify_submission':
+            next_files = [write_blob(f'input/doc{ext}', old_data), write_blob(f'submission/out{ext}', new_data)]
+        else:
+            next_files = list(before_snap['files'])
+        after_snap = add_snap(next_files)
+        emit('state.snapshot', {'snapshot_id': after_snap['snapshot_id'], 'snapshot': {'path': f"states/snapshots/{after_snap['snapshot_id']}.json"}})
+        tr_ev = emit('state.transition', {'before': before_snap['snapshot_id'], 'after': after_snap['snapshot_id']})
+        state_changes.append({
+            'episode_id': eid,
+            'event_id': tr_ev['event_id'],
+            'before_snapshot_id': before_snap['snapshot_id'],
+            'after_snapshot_id': after_snap['snapshot_id'],
+            'changes': diff_snapshots(before_snap, after_snap),
+        })
+
+    write_json(root / 'checkpoints/index.json', {'checkpoints': cp_rows})
+    write_jsonl(root / 'state_changes.jsonl', state_changes)
+
+    if terminal_case == 'empty_submission':
+        write_json(root / 'artifacts/inventory.json', {'episode_id': eid, 'files': []})
+    else:
+        write_json(root / 'artifacts/inventory.json', {'episode_id': eid, 'files': [{'path': f'out{ext}', 'sha256': 'abc', 'size_bytes': 10}]})
+
+    exec_valid = 'valid'
+    eval_valid = 'valid'
+    if terminal_case == 'scored':
+        raw = {'status': 'ok', 'dim1_pass': completion_rate > 0, 'total_score': completion_rate * 10, 'max_score': 10}
+        proj = {
+            'evaluation_validity': 'valid',
+            'completion_rate': float(completion_rate),
+            'official_dimensions': {'dim1_pass': completion_rate > 0, 'passed': bool(passed)},
+        }
+    elif terminal_case == 'empty_submission':
+        raw = {'status': 'error', 'error': 'FileNotFoundError: submission empty'}
+        proj = {'evaluation_validity': 'invalid', 'completion_rate': None}
+        eval_valid = 'invalid'
+    elif terminal_case == 'non_ok_grade':
+        raw = {'status': 'parse_error', 'error': 'BadZipFile'}
+        proj = {'evaluation_validity': 'invalid', 'completion_rate': None}
+        eval_valid = 'invalid'
+    elif terminal_case == 'scorer_crash':
+        raw = None
+        proj = {'evaluation_validity': 'invalid'}
+        eval_valid = 'invalid'
+    elif terminal_case == 'execution_invalid':
+        raw = None
+        proj = {'evaluation_validity': 'invalid'}
+        exec_valid = 'invalid'
+        eval_valid = 'invalid'
+    else:  # 'failed_zero'
+        raw = {'status': 'ok', 'dim1_pass': False, 'total_score': 0, 'max_score': 10}
+        proj = {
+            'evaluation_validity': 'valid',
+            'completion_rate': 0.0,
+            'official_dimensions': {'dim1_pass': False, 'passed': False},
+        }
+
+    write_json(root / 'official_grade.json', {'official_raw': raw, 'projection': proj, 'status': 'ok' if eval_valid == 'valid' else 'error'})
+    manifest = {
+        'schema_version': '0.2.0',
+        'episode_id': eid,
+        'task': {'benchmark': benchmark, 'task_id': task_id},
+        'model': {'model_version': model_version},
+        'status': {
+            'termination': 'assistant_finished' if exec_valid == 'valid' else 'model_transport_error',
+            'execution_validity': exec_valid,
+            'evaluation_validity': eval_valid,
+        },
+        'counts': {'model_requests': sum(1 for e in events if e['kind'] == 'model.request')},
+        'lineage': lineage,
+    }
+    write_json(root / 'manifest.json', manifest)
+    write_jsonl(root / 'trajectory.jsonl', events)
     return root
-
-@pytest.fixture
-def source(tmp_path):return make_source(tmp_path/'source')
-
-@pytest.fixture
-def config():return load()
-
-
-def diagnosis_from_tool_results(body):
-    fs=[]
-    for message in body.get('contents',[]):
-        for part in message.get('parts',[]):
-            fr=part.get('functionResponse',{})
-            fs += [x for x in fr.get('response',{}).get('items',[]) if 'fact_id' in x and 'value' in x]
-    task=next((f for f in fs if f['fact_type']=='task_instruction'),None)
-    fact=next(f for f in fs if f['fact_type']=='tool_exit')
-    loc={'localization_id':'loc_fixture','category':'tool_execution_anomaly','granularity':'event','event_ids':fact['event_ids'],
-         'statement':'A tool exit was recorded; fixture analysis only.','object_scope':{},'before_version':None,'after_version':None,
-         'supporting_fact_ids':[fact['fact_id']],'counterevidence_fact_ids':[],
-         'task_relation':{'requirement_fact_id':task['fact_id'] if task else None,'interpretation':'Execution observation only.','origin':'analyst_interpretation'},
-         'uncertainty':['No causal experiment.']}
-    hyp={'hypothesis_id':'hyp_fixture','localization_ids':['loc_fixture'],'mechanism_statement':'The contribution of this tool return remains unknown.',
-         'supporting_fact_ids':[fact['fact_id']],'counterevidence_fact_ids':[],'alternatives':['Independent later issue.','Observed operation may be irrelevant.'],
-         'assumptions':['Only the supplied evidence is considered.'],'unobserved_requirements':['Controlled results missing.'],
-         'predictions':[{'intervention_template':'generic_reminder','control_template':'resume_unchanged','direction':'unknown',
-                         'proximal_prediction':'Measure a subsequent action.','endpoint_prediction':'No success guaranteed.','uncertainty':'Untested.'}],
-         'abstention_reason':'Cannot determine mechanism.','verdict':'untested','scope':'this_episode_and_explicit_future_protocol_only'}
-    return {'summary':'TEST FIXTURE ANALYST, not a live model.','localizations':[loc],'hypotheses':[hyp],'abstentions':['No verified cause.']}
-
-
-class FixtureBackend:
-    """Exercises the L1 port, not a replacement production HTTP implementation."""
-    def __init__(self,responses=None):self.responses=list(responses or []);self.requests=[]
-    def identity(self):return {'adapter':'fixture','kind':'test','requested_model':'TEST-NOT-A-MODEL'}
-    def initial(self,system,prompt):return {'systemInstruction':{'parts':[{'text':system}]},'contents':[{'role':'user','parts':[{'text':prompt}]}]}
-    def request(self,conversation,tools):return {**copy.deepcopy(conversation),'tools':[{'functionDeclarations':tools}]}
-    def send(self,body,timeout):
-        request=loads(body);self.requests.append(request)
-        if self.responses:
-            item=self.responses.pop(0);response=item(request) if callable(item) else item
-        elif len(self.requests)==1:
-            response={'calls':[{'name':'get_requirement_evidence','args':{'start':0,'limit':30}}]}
-        else:
-            response={'calls':[{'name':'submit_diagnosis','args':{'diagnosis_json':canonical(diagnosis_from_tool_results(request)).decode()}}]}
-        if isinstance(response,Exception):raise response
-        if isinstance(response,bytes):native=response
-        else:
-            parts=[{'functionCall':{'name':c['name'],'args':c.get('args',{}),'id':f'test-{len(self.requests)}-{i}'},'thoughtSignature':'test-signature'} for i,c in enumerate(response.get('calls',[]))]
-            if 'text' in response:parts.append({'text':response['text']})
-            native=canonical({'candidates':[{'content':{'role':'model','parts':parts},'finishReason':'STOP'}],'modelVersion':'TEST-FIXTURE','usageMetadata':{'totalTokenCount':10}})
-        return SimpleNamespace(status=200,body=native,metadata={'test_fixture':True,'body_truncated':False,'transport_error':None})
-    def parse(self,body,request_id):
-        v=loads(body);content=v['candidates'][0]['content'];calls=[];text=[]
-        for i,p in enumerate(content['parts']):
-            if 'functionCall' in p:
-                f=p['functionCall'];calls.append(SimpleNamespace(call_id=request_id+':c'+str(i),native_id=f.get('id'),name=f['name'],arguments=f['args']))
-            if 'text' in p:text.append(p['text'])
-        return SimpleNamespace(calls=calls,native_message=content,usage=v.get('usageMetadata'),model_version=v.get('modelVersion'),finish_reason='STOP',text='\n'.join(text) or None)
-    def accept(self,conversation,reply,results):
-        c=copy.deepcopy(conversation);c['contents'].append(reply.native_message)
-        if results:c['contents'].append({'role':'user','parts':[{'functionResponse':{'name':call.name,'id':call.native_id,'response':r.observation}} for call,r in results]})
-        return c

@@ -1,316 +1,246 @@
-"""Read-only L1 adapters, byte integrity and conservative semantic consistency.
-
-The built-in v0.2 checks are explicitly named. They do not execute benchmark
-verifiers, model code, plugins, Docker or commands from the episode. An installed
-L1 verifier may additionally be required; it is not silently substituted.
-"""
+"""Read-only L1 package reader: events, checkpoints, snapshots, and grading projection (L2 v0.3)."""
 from __future__ import annotations
 import copy
+import re
 from pathlib import Path
 from typing import Any
-from ..io import (IntegrityError, Unsupported, bytes_read, canonical, digest, inventory,
-                  loads, pointer, read_json, read_jsonl, relative, safe, sha_bytes, sha_file)
-
-
-def refs(value):
-    if isinstance(value, dict):
-        if set(value) == {'path', 'sha256', 'size_bytes'}:
-            yield value
-        else:
-            for item in value.values(): yield from refs(item)
-    elif isinstance(value, list):
-        for item in value: yield from refs(item)
-
-
-def native_calls(body: dict, request_id: str) -> list[dict]:
-    result = []
-    if 'candidates' in body:
-        candidates = body.get('candidates') or []
-        parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
-        for i, part in enumerate(parts):
-            if 'functionCall' not in part: continue
-            call = part['functionCall']
-            result.append({'request_id': request_id, 'call_id': f'{request_id}:c{i}',
-                           'native_id': call.get('id'), 'name': call['name'], 'arguments': call.get('args', {})})
-    elif 'choices' in body:
-        choices = body.get('choices') or []
-        message = choices[0].get('message', {}) if choices else {}
-        for i, call in enumerate(message.get('tool_calls') or []):
-            f = call['function']
-            args = loads(f['arguments'])
-            result.append({'request_id': request_id, 'call_id': f'{request_id}:c{i}',
-                           'native_id': call.get('id'), 'name': f['name'], 'arguments': args})
-    return result
-
-
-def last_observation_turn(body: dict) -> list[dict]:
-    if 'contents' in body: return body['contents'][-1:]
-    messages = body.get('messages', [])
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get('role') == 'assistant': return messages[i + 1:]
-    return messages
-
-
-def observation_present(body: dict, observation: Any, native_id, name: str) -> bool:
-    for item in last_observation_turn(body):
-        for part in item.get('parts', []):
-            f = part.get('functionResponse')
-            if f and f.get('id') == native_id and f.get('name') == name and f.get('response') == observation:
-                return True
-        if item.get('role') == 'tool' and item.get('tool_call_id') == native_id:
-            try:
-                if loads(item['content']) == observation: return True
-            except IntegrityError: pass
-    return False
+from ..io import IntegrityError, L2Error, digest, loads, read_json, read_jsonl, sha_bytes, sha_file
 
 
 def diff_snapshots(before: dict, after: dict) -> list[dict]:
     result = []
     for field in ('files', 'directories'):
-        b = {x['path']: x for x in before[field]}; a = {x['path']: x for x in after[field]}
+        b = {x['path']: x for x in before.get(field, [])}
+        a = {x['path']: x for x in after.get(field, [])}
         for p in sorted(set(a) | set(b)):
-            if a.get(p) == b.get(p): continue
-            change = ('directory_changed' if field == 'directories' else
-                      'created' if p not in b else 'deleted' if p not in a else 'modified')
+            if a.get(p) == b.get(p):
+                continue
+            change = (
+                'directory_changed' if field == 'directories' else
+                'created' if p not in b else
+                'deleted' if p not in a else
+                'modified'
+            )
             result.append({'path': p, 'change': change, 'before': b.get(p), 'after': a.get(p)})
     return result
 
 
-class L1Reader:
-    def __init__(self, root: Path, *, expected_index: str | None = None, require_l1: bool = False):
-        self.root = Path(root).absolute()
-        safe(self.root, 'manifest.json')
-        self.index = read_json(self.root / 'evidence_index.json')
-        self.index_sha256 = sha_file(self.root / 'evidence_index.json')
-        if expected_index and expected_index != self.index_sha256: raise IntegrityError('External source index SHA256 differs')
+class L1Package:
+    """Lightweight read-only view of an L1 episode package (root trajectory or resumed branch)."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root).resolve()
+        if not (self.root / 'manifest.json').is_file():
+            raise L2Error(f'Missing manifest.json in L1 package: {self.root}')
         self.manifest = read_json(self.root / 'manifest.json')
-        self.version = self.manifest.get('schema_version')
-        self.episode_id = self.manifest.get('episode_id')
-        self.files = {}
-        for row in self.index.get('files', []):
-            if not isinstance(row, dict) or set(row) != {'path', 'sha256', 'size_bytes'}: raise IntegrityError('Bad source index entry')
-            relative(row['path'])
-            if row['path'] in self.files or row['path'] == 'evidence_index.json': raise IntegrityError('Duplicate/recursive source index')
-            self.files[row['path']] = row
-        self._cache: dict[str, Any] = {}
-        self.events: list[dict] = []
+        self.episode_id: str = self.manifest['episode_id']
+        self.version: str = self.manifest.get('schema_version', '0.2.0')
+        self.index_sha256: str = (
+            sha_file(self.root / 'evidence_index.json')
+            if (self.root / 'evidence_index.json').is_file()
+            else sha_file(self.root / 'manifest.json')
+        )
+        raw_events = read_jsonl(self.root / 'trajectory.jsonl') if (self.root / 'trajectory.jsonl').is_file() else []
+        self.events = [{**e, 'data': e.get('data', e.get('payload', {}))} for e in raw_events]
+        self.events_by_id = {e['event_id']: e for e in self.events if 'event_id' in e}
+
         self.snapshots: dict[str, dict] = {}
-        self.snapshot_paths: dict[str, str] = {}
-        self.require_l1 = require_l1
-        self.report = self._verify()
-        if not self.report['verified']:
-            raise IntegrityError('Source verification failed: ' + '; '.join(self.report['errors']))
-        self.events_by_id = {e['event_id']: e for e in self.events}
-
-    def read(self, path: str) -> bytes:
-        if path == 'evidence_index.json':
-            data = bytes_read(safe(self.root, path))
-            if sha_bytes(data) != self.index_sha256: raise IntegrityError('Source index changed')
-            return data
-        if path not in self.files: raise IntegrityError('Unindexed source file: ' + path)
-        data = bytes_read(safe(self.root, path))
-        row = self.files[path]
-        if len(data) != row['size_bytes'] or sha_bytes(data) != row['sha256']:
-            raise IntegrityError('Source file content changed: ' + path)
-        return data
-
-    def json(self, path: str):
-        # Revalidate bytes on every entry; parsed content is cached by pinned path.
-        data = self.read(path)
-        if path not in self._cache: self._cache[path] = loads(data)
-        return copy.deepcopy(self._cache[path])
-
-    def jsonl(self, path: str):
-        raw = self.read(path)
-        rows = []
-        for line in raw.splitlines(keepends=True):
-            if not line.endswith(b'\n') or not line.strip(): raise IntegrityError('Incomplete JSONL: ' + path)
-            value = loads(line)
-            if not isinstance(value, dict): raise IntegrityError('Invalid JSONL object')
-            rows.append(value)
-        return rows
-
-    def _verify(self):
-        checks = []; warnings = []; errors = []
-        try:
-            actual = inventory(self.root, {'evidence_index.json'})
-            expected = sorted(self.files.values(), key=lambda x: x['path'])
-            if actual != expected: raise IntegrityError('File set, size or digest differs from source index')
-            checks.append('exact_file_inventory_sha256')
-            if self.episode_id != self.index.get('episode_id'): raise IntegrityError('Episode identity differs')
-            if self.version not in ('0.2.0', '0.1.0'): raise Unsupported('Unsupported L1 contract: ' + str(self.version))
-            raw_events = self.jsonl('trajectory.jsonl')
-            prev = None
-            hash_key = 'sha256' if self.version == '0.2.0' else 'event_sha256'
-            prev_key = 'previous_sha256' if self.version == '0.2.0' else 'prev_event_sha256'
-            # P1 schema declares its previous-hash spelling; accept known explicit alternatives only.
-            if self.version == '0.1.0' and raw_events:
-                prev_key = next((k for k in ('prev_event_sha256', 'previous_event_sha256', 'previous_sha256') if k in raw_events[0]), prev_key)
-            seen = {}
-            for i, e in enumerate(raw_events):
-                if e.get('seq') != i or e.get('episode_id') != self.episode_id or e.get('event_id') != f'{self.episode_id}:e{i:06d}':
-                    raise IntegrityError('Event identity/order invalid')
-                if e.get(prev_key) != prev or e.get(hash_key) != digest({k: v for k, v in e.items() if k != hash_key}):
-                    raise IntegrityError('Event hash chain mismatch')
-                for k, target in e.get('links', {}).items():
-                    if self.version == '0.2.0' or k.endswith('_event_id'):
-                        if target not in seen: raise IntegrityError('Forward or missing event link')
-                seen[e['event_id']] = e
-                prev = e[hash_key]
-                if self.version == '0.2.0':
-                    for r in refs(e):
-                        if self.files.get(r['path']) != r: raise IntegrityError('Event file reference mismatch')
-                self.events.append({**e, 'data': e.get('data', e.get('payload', {}))})
-            if len(raw_events) != self.index.get('event_count') or prev != self.index.get('trajectory_head_sha256'):
-                raise IntegrityError('Event count/head differs from index')
-            checks.append('trajectory_chain_event_links')
-            if self.version == '0.2.0':
-                self._semantic_v02()
-                checks += ['native_call_projection', 'raw_tool_observation', 'observation_delivery',
-                           'snapshot_blobs_content', 'state_diff_recompute', 'artifact_snapshot_mapping', 'config_status_bindings']
-            else:
-                warnings += ['legacy_v01_limited_fact_mapping', 'legacy_capture_gaps_are_not_repaired']
-            extra = None
-            is_fixture = self.manifest.get('recording_mode') == 'test_fixture' or (self.manifest.get('capabilities') or {}).get('test_fixture')
-            try:
-                from c3_sandbox.l1.package import verify_package
-            except ImportError:
-                if self.require_l1 or self.version == '0.1.0':
-                    raise Unsupported('Install existing L1 package for official v0.1 compatibility or required L1 verifier')
-                warnings.append('upstream_l1_verifier_not_installed_builtin_checks_used')
-            else:
-                if not is_fixture or self.require_l1:
-                    extra = verify_package(self.root, expected_index_sha256=self.index_sha256)
-                    if not extra.get('verified'): raise IntegrityError('Installed L1 verifier rejected source: ' + str(extra.get('errors')))
-                    checks.append('installed_l1_verifier')
-                else:
-                    warnings.append('fixture_source_internal_verification_used')
-            return {'verified': True, 'schema_version': self.version, 'episode_id': self.episode_id,
-                    'index_sha256': self.index_sha256, 'file_count': len(self.files), 'checks': checks,
-                    'warnings': warnings, 'errors': [], 'installed_l1_verifier': extra,
-                    'trust_scope': 'Self-consistency against source index; no independent historical execution attestation'}
-        except (KeyError, TypeError, ValueError, OSError, IntegrityError, Unsupported) as exc:
-            errors.append(type(exc).__name__ + ': ' + str(exc))
-            return {'verified': False, 'checks': checks, 'warnings': warnings, 'errors': errors}
-
-    def _semantic_v02(self):
-        requests = {}; responses = {}; calls = {}; results = {}; delivered = set(); parsed = set()
         for e in self.events:
-            d = e['data']; kind = e['kind']
-            if kind == 'model.request':
-                rid = d['request_id']
-                if rid in requests: raise IntegrityError('Duplicate request')
-                requests[rid] = self.json(d['body']['path'])
-            elif kind == 'model.response':
-                rid = d['request_id']
-                if rid not in requests or rid in responses: raise IntegrityError('Response pairing invalid')
-                try: responses[rid] = self.json(d['body']['path'])
-                except IntegrityError: responses[rid] = None  # invalid native bytes remain recorded
-            elif kind == 'model.parsed': parsed.add(d['request_id'])
-            elif kind == 'tool.call':
-                cid = d['call_id']
-                if cid in calls or d['request_id'] not in responses: raise IntegrityError('Tool call pairing invalid')
-                calls[cid] = d
-            elif kind == 'tool.result':
-                cid = d['call_id']
-                if cid not in calls or cid in results: raise IntegrityError('Tool result pairing invalid')
-                r = self.json(d['result']['path'])
-                if r.get('call_id') != cid: raise IntegrityError('Result ID mismatch')
-                for k in ('stdout', 'stderr'):
-                    if k in r.get('observation', {}) and isinstance(r['observation'][k], str):
-                        if self.read(d[k]['path']).decode('utf-8', 'replace') != r['observation'][k]:
-                            raise IntegrityError('Tool output projection mismatch')
-                results[cid] = d
-            elif kind == 'observation.delivered':
-                cid = d['call_id']
-                if cid not in results or cid in delivered or d['request_id'] not in requests:
-                    raise IntegrityError('Observation delivery pairing invalid')
-                obs = self.json(d['observation']['path'])
-                body = requests[d['request_id']]
-                if not observation_present(body, obs, d.get('native_id'), calls[cid]['name']):
-                    raise IntegrityError('Delivered Observation not present in actual next request')
-                if 'image' in results[cid]:
-                    import base64
-                    encoded = base64.b64encode(self.read(results[cid]['image']['path'])).decode('ascii')
-                    if encoded not in canonical(last_observation_turn(body)).decode('utf-8'):
-                        raise IntegrityError('Delivered image missing in request')
-                delivered.add(cid)
-            elif kind == 'state.snapshot':
-                s = self.json(d['snapshot']['path']); sid = s['snapshot_id']
-                if sid in self.snapshots or sid != d['snapshot_id']: raise IntegrityError('Snapshot ID mismatch')
-                names = set(); total = 0
-                for f in s['files']:
-                    relative(f['path'])
-                    if f['path'] in names: raise IntegrityError('Duplicate snapshot path')
-                    names.add(f['path']); total += f['size_bytes']
-                    if self.files.get(f['blob'], {}).get('sha256') != f['sha256'] or self.files[f['blob']]['size_bytes'] != f['size_bytes']:
-                        raise IntegrityError('Snapshot blob mismatch')
-                for directory in s['directories']:
-                    relative(directory['path'])
-                    if directory['path'] in names: raise IntegrityError('Duplicate snapshot path')
-                    names.add(directory['path'])
-                if s['total_bytes'] != total or s['content_sha256'] != digest({'files': s['files'], 'directories': s['directories']}):
-                    raise IntegrityError('Snapshot content digest mismatch')
-                self.snapshots[sid] = s; self.snapshot_paths[sid] = d['snapshot']['path']
-        for rid in parsed:
-            if rid not in responses or not isinstance(responses[rid], dict): raise IntegrityError('Parsed reply has no valid native response')
-            expected = native_calls(responses[rid], rid)
-            observed = [d for d in calls.values() if d['request_id'] == rid]
-            if expected != observed: raise IntegrityError('Native/normalized tool call projection mismatch')
-        expected_changes = []
+            if e.get('kind') == 'state.snapshot':
+                snap_ref = (e['data'].get('snapshot') or {}).get('path')
+                if snap_ref and (self.root / snap_ref).is_file():
+                    s = read_json(self.root / snap_ref)
+                    self.snapshots[s['snapshot_id']] = s
+
+        # Turn offset: root runs start at 0 (so first model turn is 1);
+        # branches resumed from cp{k:06d} start at k (so first resampled turn is k + 1).
+        self.start_turn: int = self._resolve_start_turn()
+        self.local_turns: int = sum(1 for e in self.events if e.get('kind') == 'model.request')
+        self.turns: int = self.start_turn + self.local_turns
+
+    def _resolve_start_turn(self) -> int:
+        lineage = self.manifest.get('lineage') or {}
+        cp_id = lineage.get('parent_checkpoint_id')
+        if isinstance(cp_id, str):
+            m = re.fullmatch(r'cp([0-9]{6})', cp_id)
+            if m:
+                return int(m.group(1))
         for e in self.events:
-            if e['kind'] == 'state.transition':
+            if e.get('kind') == 'episode.restored':
+                rcp = (e.get('data') or {}).get('parent_checkpoint_id') or (e.get('data') or {}).get('checkpoint_id')
+                if isinstance(rcp, str) and re.fullmatch(r'cp[0-9]{6}', rcp):
+                    return int(rcp[2:])
+        return 0
+
+    def read(self, rel_path: str) -> bytes:
+        p = (self.root / rel_path).resolve()
+        if not p.is_relative_to(self.root) or not p.is_file():
+            raise IntegrityError(f'Missing or unsafe L1 file: {rel_path}')
+        return p.read_bytes()
+
+    def json(self, rel_path: str) -> Any:
+        return loads(self.read(rel_path))
+
+    def jsonl(self, rel_path: str) -> list[dict]:
+        p = (self.root / rel_path).resolve()
+        if not p.is_relative_to(self.root) or not p.is_file():
+            return []
+        return read_jsonl(p)
+
+    @property
+    def benchmark(self) -> str:
+        task = self.manifest.get('task') or {}
+        if task.get('benchmark'):
+            return str(task['benchmark']).lower()
+        if (self.root / 'benchmark/public_task.json').is_file():
+            pub = self.json('benchmark/public_task.json')
+            if pub.get('benchmark'):
+                return str(pub['benchmark']).lower()
+        return 'officeval'
+
+    @property
+    def task_id(self) -> str:
+        task = self.manifest.get('task') or {}
+        if task.get('task_id'):
+            return str(task['task_id'])
+        if (self.root / 'benchmark/public_task.json').is_file():
+            pub = self.json('benchmark/public_task.json')
+            if pub.get('task_id'):
+                return str(pub['task_id'])
+        return 'unknown_task'
+
+    @property
+    def family_id(self) -> str:
+        return f'{self.benchmark}:{self.task_id}'
+
+    @property
+    def is_boolean_endpoint(self) -> bool:
+        return self.benchmark == 'lhtb'
+
+    def checkpoints(self) -> dict[int, dict]:
+        if not (self.root / 'checkpoints/index.json').is_file():
+            return {}
+        idx = self.json('checkpoints/index.json')
+        out: dict[int, dict] = {}
+        for row in idx.get('checkpoints', []):
+            cp_id = row.get('checkpoint_id', '')
+            if re.fullmatch(r'cp[0-9]{6}', cp_id) and (self.root / row['path']).is_file():
+                k = int(cp_id[2:])
+                cp = self.json(row['path'])
+                out[k] = {
+                    'k': k,
+                    'checkpoint_id': cp_id,
+                    'path': row['path'],
+                    'sha256': sha_file(self.root / row['path']),
+                    'eligible': bool((cp.get('qualification') or {}).get('eligible', row.get('eligible', True))),
+                    'snapshot_id': cp.get('snapshot_id'),
+                    'budget_used': cp.get('budget_used') or {},
+                    'config_sha256': cp.get('config_sha256'),
+                }
+        return out
+
+    def model_version(self) -> str | None:
+        for e in self.events:
+            if e.get('kind') == 'model.response':
                 d = e['data']
-                b = self.snapshots[d['before']]; a = self.snapshots[d['after']]
-                expected_changes.append({'episode_id': self.episode_id, 'event_id': e['event_id'],
-                    'before_snapshot_id': d['before'], 'after_snapshot_id': d['after'], 'changes': diff_snapshots(b, a)})
-        if self.jsonl('state_changes.jsonl') != expected_changes: raise IntegrityError('State change projection mismatch')
-        cfg = self.json('raw/resolved_config.json')
-        if digest(cfg) != self.manifest['config_sha256']: raise IntegrityError('Config digest mismatch')
-        counts = {'events': len(self.events), 'model_requests': len(requests), 'model_responses': len(responses),
-                  'tool_calls': len(calls), 'tool_results': len(results), 'observations_delivered': len(delivered), 'snapshots': len(self.snapshots)}
-        if self.manifest['counts'] != counts: raise IntegrityError('Manifest count mismatch')
-        ended = [e for e in self.events if e['kind'] == 'episode.finished']
-        if ended and ended[-1]['data'].get('status') != self.manifest['status']: raise IntegrityError('Final status mismatch')
-        artifacts = self.json('artifacts/inventory.json')
-        sid = artifacts.get('snapshot_id')
-        if sid is not None:
-            expected = [{'path': x['path'][len('submission/'):], 'sha256': x['sha256'], 'size_bytes': x['size_bytes']}
-                        for x in self.snapshots[sid]['files'] if x['path'].startswith('submission/')]
-            if expected != artifacts['files']: raise IntegrityError('Artifact inventory not bound to final snapshot')
-            for f in expected:
-                if self.files.get('artifacts/submission/' + f['path']) != {**f, 'path': 'artifacts/submission/' + f['path']}:
-                    raise IntegrityError('Artifact bytes differ from final snapshot')
-        cp_index = self.json('checkpoints/index.json')
-        for item in cp_index['checkpoints']:
-            cp = self.json(item['path'])
-            if cp['snapshot_id'] not in self.snapshots or cp['pending_calls'] or cp['config_sha256'] != self.manifest['config_sha256']:
-                raise IntegrityError('Checkpoint state/config invalid')
-            if cp['qualification']['eligible'] and cp['qualification'].get('image_id') != (self.manifest.get('runtime') or {}).get('image_id'):
-                raise IntegrityError('Checkpoint image mismatch')
-        grade = self.json('official_grade.json')
-        if grade.get('projection'):
-            for k in ('evaluation_validity', 'task_outcome'):
-                if grade['projection'].get(k) != self.manifest['status'].get(k): raise IntegrityError('Grade status mismatch')
-        if grade.get('official_raw_sha256'):
-            p = 'grading/worker-output/official.json'
-            if self.files[p]['sha256'] != grade['official_raw_sha256'] or self.json(p) != grade['official_raw']:
-                raise IntegrityError('Official raw projection mismatch')
+                if isinstance(d.get('model_version'), str) and d['model_version']:
+                    return d['model_version']
+                body_path = (d.get('body') or {}).get('path')
+                if body_path and (self.root / body_path).is_file():
+                    try:
+                        body = self.json(body_path)
+                        if isinstance(body, dict):
+                            mv = body.get('modelVersion') or body.get('model')
+                            if isinstance(mv, str) and mv:
+                                return mv
+                    except Exception:
+                        pass
+        return (self.manifest.get('model') or {}).get('model_version')
 
-    def source_record(self) -> dict:
-        return {'episode_id': self.episode_id, 'schema_version': self.version, 'index_sha256': self.index_sha256,
-                'recording_mode': self.manifest.get('recording_mode', 'legacy_import'), 'verification': self.report}
+    def outcome(self) -> dict[str, Any]:
+        """Evaluates outcome y according to v0.3 Section 3.1:
+        - Agent-caused results are scored (valid=True):
+          * execution_validity == 'valid' & scorer ok -> L1 projection (`completion_rate` for OfficeVal, `passed` for LHTB)
+          * execution_validity == 'valid' & (empty submission OR scorer status != ok) -> 0.0
+        - Infrastructure failures (execution_validity != 'valid' OR scorer crashed / official_raw missing) -> valid=False, y=None
+        """
+        status = self.manifest.get('status') or {}
+        exec_valid = status.get('execution_validity') == 'valid'
+        eval_valid = status.get('evaluation_validity') == 'valid'
+        mv = self.model_version()
 
-    def verify_unchanged(self) -> bool:
-        return sha_file(self.root / 'evidence_index.json') == self.index_sha256 and inventory(self.root, {'evidence_index.json'}) == sorted(self.files.values(), key=lambda x: x['path'])
+        if not exec_valid:
+            return {'valid': False, 'y': None, 'reason': 'execution_invalid', 'modelVersion': mv}
+
+        inv = self.json('artifacts/inventory.json') if (self.root / 'artifacts/inventory.json').is_file() else {'files': []}
+        has_files = bool(inv.get('files'))
+        if not has_files:
+            return {'valid': True, 'y': 0.0, 'reason': 'empty_submission_zero', 'modelVersion': mv}
+
+        if not (self.root / 'official_grade.json').is_file():
+            return {'valid': False, 'y': None, 'reason': 'missing_official_grade', 'modelVersion': mv}
+
+        g = self.json('official_grade.json')
+        raw = g.get('official_raw')
+        proj = g.get('projection') if isinstance(g.get('projection'), dict) else {}
+        err_text = str(g.get('error') or (raw if isinstance(raw, dict) else {}).get('error') or '')
+
+        # Scorer crash / infrastructure failure
+        infra_markers = (
+            'TimeoutExpired', 'TimeoutError', 'Docker', 'Container', 'ModuleNotFoundError',
+            'ImportError', 'ConnectionError', 'MemoryError', 'PermissionError', 'SubprocessError',
+            'scorer_crash', 'infra_error',
+        )
+        if (
+            raw is None
+            or g.get('status') in ('infra_error', 'timeout')
+            or g.get('error_kind') == 'infrastructure'
+            or any(m in err_text for m in infra_markers)
+        ):
+            return {'valid': False, 'y': None, 'reason': 'scorer_exception', 'modelVersion': mv}
+
+        # Execution valid, scorer returned non-ok (e.g., damaged or unparseable submission) -> 0.0
+        raw_status = raw.get('status') if isinstance(raw, dict) else g.get('status')
+        if not eval_valid or (raw_status is not None and raw_status != 'ok'):
+            return {'valid': True, 'y': 0.0, 'reason': 'non_ok_grade_zero', 'modelVersion': mv}
+
+        if self.benchmark == 'lhtb':
+            dims = proj.get('official_dimensions') if isinstance(proj.get('official_dimensions'), dict) else {}
+            passed = dims.get('passed') if 'passed' in dims else proj.get('passed')
+            if isinstance(passed, bool):
+                return {'valid': True, 'y': 1.0 if passed else 0.0, 'reason': 'scored', 'modelVersion': mv}
+            return {'valid': False, 'y': None, 'reason': 'projection_passed_missing', 'modelVersion': mv}
+
+        cr = proj.get('completion_rate')
+        if isinstance(cr, (int, float)) and not isinstance(cr, bool):
+            return {'valid': True, 'y': max(0.0, min(1.0, float(cr))), 'reason': 'scored', 'modelVersion': mv}
+        # Fallback if legacy fixture only put total_score/max_score in official_raw
+        if isinstance(raw, dict) and isinstance(raw.get('total_score'), (int, float)) and isinstance(raw.get('max_score'), (int, float)) and raw['max_score'] > 0:
+            if raw.get('dim1_pass') is False:
+                return {'valid': True, 'y': 0.0, 'reason': 'scored', 'modelVersion': mv}
+            return {'valid': True, 'y': max(0.0, min(1.0, float(raw['total_score']) / float(raw['max_score']))), 'reason': 'scored', 'modelVersion': mv}
+        return {'valid': False, 'y': None, 'reason': 'projection_completion_rate_missing', 'modelVersion': mv}
+
+    def is_failed_trajectory(self) -> bool:
+        """Section 3: Only failed trajectories are analyzed (OfficeVal dim1 failed or LHTB not passed, or y < 1.0)."""
+        out = self.outcome()
+        if not out['valid'] or out['y'] is None:
+            return False
+        if (self.root / 'official_grade.json').is_file():
+            g = self.json('official_grade.json')
+            proj = g.get('projection') if isinstance(g.get('projection'), dict) else {}
+            dims = proj.get('official_dimensions') if isinstance(proj.get('official_dimensions'), dict) else {}
+            raw = g.get('official_raw') if isinstance(g.get('official_raw'), dict) else {}
+            if self.benchmark == 'lhtb':
+                passed = dims.get('passed', proj.get('passed'))
+                if isinstance(passed, bool):
+                    return not passed
+            else:
+                dim1 = dims.get('dim1_pass', proj.get('dim1_pass', raw.get('dim1_pass')))
+                if isinstance(dim1, bool):
+                    return not dim1
+        return float(out['y']) < 1.0
 
 
-def inspect(root: Path, **kwargs) -> dict:
-    try:
-        r = L1Reader(root, **kwargs)
-        return {'verified': True, 'source': r.source_record(), 'task': r.manifest.get('task'),
-                'status': r.manifest.get('status'), 'event_count': len(r.events),
-                'scope': 'Controller inspection; not the restricted Analyst view'}
-    except (IntegrityError, Unsupported, OSError, KeyError, TypeError) as e:
-        return {'verified': False, 'error_type': type(e).__name__, 'error': str(e),
-                'action': 'Use a complete decoded Evidence Package; no partial source is silently accepted'}
+# Alias for compatibility
+L1Reader = L1Package

@@ -4,23 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "l2-evidence-analyst"
-version = "0.1.0"
-description = "Read-only behavioral localization and frozen intervention predictions over L1 evidence"
+version = "0.3.0"
+description = "L2 v0.3 Behavioral Event Localization: value curves, predicate hypotheses, and scoring over L1 evidence"
 requires-python = ">=3.11"
-dependencies = ["jsonschema>=4.20,<5", "lxml>=5,<7"]
+dependencies = ["lxml>=5,<7"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]
 
 [project.scripts]
-c3-l2 = "l2_sandbox.cli:main"
 l2 = "l2_sandbox.cli:main"
+c3-l2 = "l2_sandbox.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-l2_sandbox = ["schemas/*.json", "analyst/*.txt"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
