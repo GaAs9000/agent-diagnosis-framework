@@ -77,7 +77,9 @@ class L1Package:
                 continue
             actual.append({'path': path.relative_to(self.root).as_posix(),
                            'sha256': sha_file(path), 'size_bytes': path.stat().st_size})
-        if actual != sorted(files, key=lambda row: row['path']):
+        # pathlib orders by path components; the wire inventory orders full
+        # POSIX strings (e.g. rubrics-en/ sorts before rubrics/).
+        if sorted(actual, key=lambda row: row['path']) != sorted(files, key=lambda row: row['path']):
             raise IntegrityError('L1 evidence index file inventory mismatch')
         if index.get('episode_id') != read_json(self.root / 'manifest.json').get('episode_id'):
             raise IntegrityError('L1 evidence index episode mismatch')
