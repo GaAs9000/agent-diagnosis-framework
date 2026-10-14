@@ -4,7 +4,6 @@ Follows L1 benchmark isolation: no verifiers imported in controller,
 hidden tests are private files only, strictly pinned source commit.
 """
 from __future__ import annotations
-import os
 from pathlib import Path
 from ...core.contracts import Asset, Task, EvaluationSpec, ConfigurationError
 from ...storage import confined, read_json, file_digest, regular_file, safe_relative
@@ -33,7 +32,7 @@ class NativeLHTB:
         return out
 
     def load(self, task_id: str) -> Task:
-        task_dir = self.tasks_dir / task_id
+        task_dir = confined(self.tasks_dir, task_id)
         if not task_dir.is_dir():
             raise ConfigurationError(f'Unknown LHTB task: {task_id}')
 
@@ -58,13 +57,31 @@ class NativeLHTB:
                         size_bytes=p.stat().st_size
                     ))
 
-        # Check data lock if present
+        # A lock claim requires checking every declared file and all task files.
         lock_path = self.data / 'data.lock.json'
         lock_status = 'unlocked'
         if lock_path.is_file():
-            lock = read_json(lock_path)
-            if task_id in lock.get('tasks', {}):
+            try:
+                lock = read_json(lock_path)
+                if lock.get('source_commit') != self.config.get('source_commit', PIN):
+                    raise ValueError('source_commit mismatch')
+                entries = lock.get('tasks', {}).get(task_id)
+                if not isinstance(entries, dict) or not entries:
+                    raise ValueError('task missing from data lock')
+                actual = {p.relative_to(task_dir).as_posix()
+                          for p in task_dir.rglob('*') if p.is_file()}
+                if actual != set(entries):
+                    raise ValueError('task file set differs from data lock')
+                for relative, expected in entries.items():
+                    path = confined(task_dir, relative)
+                    regular_file(path)
+                    if (not isinstance(expected, dict)
+                            or file_digest(path) != expected.get('sha256')
+                            or path.stat().st_size != expected.get('size_bytes')):
+                        raise ValueError(f'locked file mismatch: {relative}')
                 lock_status = 'sha256_locked'
+            except (ValueError, OSError, TypeError, AttributeError) as exc:
+                raise ConfigurationError(f'Invalid LHTB data lock: {exc}') from exc
 
         # Private files: hidden tests, verifier scripts, task config
         private = {}
@@ -102,7 +119,8 @@ class NativeLHTB:
             source_root=task_dir,
             entrypoint='tests/test_outputs.py',
             task_id=task_id,
-            metadata={'image': image}
+            metadata={'image': image, 'source_commit': provenance['source_commit'],
+                      'data_lock_status': lock_status}
         )
 
         return Task(

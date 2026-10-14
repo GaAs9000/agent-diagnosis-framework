@@ -12,7 +12,7 @@ from .conftest import ScriptedGemini, gemini_call, gemini_done, ROOT
 
 
 def _require_lhtb_assets():
-    if not (ROOT / 'benchmarks/lhtb/data/sokoban/instruction.md').exists():
+    if not (ROOT / 'benchmarks/lhtb/data/tasks/sokoban/instruction.md').exists():
         pytest.skip('LHTB task data not present in this checkout')
 
 
@@ -45,7 +45,13 @@ def test_lhtb_evaluator_scoring_matrix(tmp_path):
     sub_neg = tmp_path / 'sub_neg'; sub_neg.mkdir()
     out_neg = tmp_path / 'out_neg'
     (sub_neg / 'moves.log').write_text('')
+    before_neg = (sub_neg / 'moves.log').stat()
     grade_neg = evaluator.evaluate(task.evaluation, sub_neg, out_neg)
+    assert (sub_neg / 'moves.log').read_bytes() == b''
+    assert (sub_neg / 'moves.log').stat().st_mtime_ns == before_neg.st_mtime_ns
+    assert grade_neg['official_raw']['raw_reward'] is None
+    assert grade_neg['official_raw']['scoring_case'] == 'official_no_moves'
+    assert grade_neg['official_raw']['protocol']['pytest_exit'] == 1
     assert grade_neg['projection']['evaluation_validity'] == 'valid'
     assert grade_neg['projection']['task_outcome'] == 'failure'
     assert grade_neg['official_raw']['band'] == 0
@@ -55,7 +61,10 @@ def test_lhtb_evaluator_scoring_matrix(tmp_path):
     out_pos = tmp_path / 'out_pos'
     seq = 'DLURRRDLULLDDRULURUULDRDDRR' + 'ULDLUU'
     (sub_pos / 'moves.log').write_text('\n'.join(seq) + '\n')
+    before_pos = (sub_pos / 'moves.log').read_bytes()
     grade_pos = evaluator.evaluate(task.evaluation, sub_pos, out_pos)
+    assert (sub_pos / 'moves.log').read_bytes() == before_pos
+    assert grade_pos['official_raw']['protocol']['pytest_exit'] == 0
     assert grade_pos['projection']['evaluation_validity'] == 'valid'
     assert grade_pos['projection']['task_outcome'] == 'success'
     assert grade_pos['official_raw']['band'] == 1

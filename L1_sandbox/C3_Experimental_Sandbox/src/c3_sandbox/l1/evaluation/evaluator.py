@@ -29,11 +29,24 @@ class DockerEvaluator:
         raw_path=grade_dir/'official.json'
         if raw_path.exists():
             regular_file(raw_path)
-            if raw_path.stat().st_size>16777216: raise ValueError('grader JSON size limit')
-            try: raw=read_json(raw_path)
+            try:
+                if raw_path.stat().st_size>16777216: raise ValueError('grader JSON size limit')
+                raw=read_json(raw_path)
             except (ValueError,UnicodeError): raw=None
         projection=interpret(raw,spec.task_id,self.config['outcome_policy'])
-        if process['container_exit_code']!=0 or process['stop_reason'] is not None:
-            projection.update(evaluation_validity='invalid',task_outcome='unknown',reason=process['stop_reason'] or 'grader_process_failed')
-        return {'projection':projection,'official_raw':raw,'process':process,'runtime':provenance,
+        infrastructure_error=None
+        if process.get('stop_reason') is not None:
+            infrastructure_error=process['stop_reason']
+        elif process.get('container_exit_code')!=0:
+            infrastructure_error='grader_process_failed'
+        elif process.get('oom_killed') or process.get('output_complete') is False:
+            infrastructure_error='incomplete_verifier_execution'
+        elif projection['reason']=='malformed_official_result':
+            infrastructure_error='malformed_official_result'
+        if infrastructure_error:
+            projection.update(evaluation_validity='invalid',task_outcome='unknown',reason=infrastructure_error)
+        result={'projection':projection,'official_raw':raw,'process':process,'runtime':provenance,
                 'official_raw_sha256':file_digest(raw_path) if raw_path.is_file() else None}
+        if infrastructure_error:
+            result.update(status='infra_error',error_kind='infrastructure',error=infrastructure_error)
+        return result
