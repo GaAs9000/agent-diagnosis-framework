@@ -592,14 +592,11 @@ def test_statistical_calibration_ci():
             k: [{'outcome': {'endpoint_defined': True, 'value': 1.0 if rng.random() < v_uniform[k] else 0.0}} for _ in range(N2)]
             for k in range(a, b + 1) if k < T
         }
-        res = evaluate_curve(grid_turns, s1, s2, T, 0.0, alpha=0.04)
+        res = evaluate_curve(grid_turns, s1, s2, T, 0.0)
         if res['curve_verdict'] in ('concentrated_interval', 'concentrated_turn'):
             interval_fp += 1
         if res['curve_verdict'] == 'concentrated_turn':
             turn_fp += 1
-
-    assert interval_fp / n_trials <= 0.07, f'Uniform interval FP too high: {interval_fp / n_trials:.3f}'
-    assert turn_fp / n_trials <= 0.02, f'Uniform turn FP too high: {turn_fp / n_trials:.3f}'
 
     turn_hits = 0
     for trial in range(n_trials):
@@ -621,10 +618,13 @@ def test_statistical_calibration_ci():
             k: [{'outcome': {'endpoint_defined': True, 'value': 1.0 if rng.random() < v_true[k] else 0.0}} for _ in range(N2)]
             for k in range(a, b + 1) if k < T
         }
-        res = evaluate_curve(grid_turns, s1, s2, T, 0.0, alpha=0.05)
+        res = evaluate_curve(grid_turns, s1, s2, T, 0.0)
         if res['curve_verdict'] == 'concentrated_turn' and res['selected_turn'] == j_star:
             turn_hits += 1
 
+    print(f'Calibration alpha=0.05 seed=20261014 trials={n_trials}: interval_fp={interval_fp}/{n_trials}, turn_fp={turn_fp}/{n_trials}, turn_hits={turn_hits}/{n_trials}')
+    assert interval_fp / n_trials <= 0.07, f'Uniform interval FP too high: {interval_fp / n_trials:.3f}'
+    assert turn_fp / n_trials <= 0.02, f'Uniform turn FP too high: {turn_fp / n_trials:.3f}'
     assert turn_hits / n_trials >= 0.65, f'Concentrated turn power too low: {turn_hits / n_trials:.3f}'
 
 
@@ -724,7 +724,9 @@ def test_end_to_end_synthetic_value_curve_and_integrity_gates(tmp_path):
     val_eval_fam2['case_id'] = 'case_fam2'
     val_eval_fam2['family_id'] = 'officeval_033'
     cluster_res = evaluate_value_predictions_across_cases([val_eval, val_eval_fam2], n_boot=200)
-    assert cluster_res['status'] == 'completed' and cluster_res['family_count'] == 2
+    assert cluster_res['status'] == 'incomplete_analyst_predictions' and cluster_res['family_count'] == 2
+    assert val_eval['scores']['analyst']['brier_or_mse'] is None
+    assert cluster_res['skill_score_vs_linear_decay'] is None
 
     # Gate 4: Out-of-order branch_receipts.jsonl MUST STILL PASS verification
     receipts = read_jsonl(exec_dir / 'branch_receipts.jsonl')

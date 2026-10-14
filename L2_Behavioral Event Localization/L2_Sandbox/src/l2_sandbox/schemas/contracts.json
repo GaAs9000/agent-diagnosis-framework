@@ -706,6 +706,22 @@
         "config_sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "task": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "benchmark": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "family_id": {
+              "type": "string"
+            }
+          },
+          "required": []
         }
       },
       "required": [

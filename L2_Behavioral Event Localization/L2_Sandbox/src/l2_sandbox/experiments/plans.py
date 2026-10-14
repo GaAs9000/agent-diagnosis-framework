@@ -21,6 +21,18 @@ TEMPLATES = {
 ENDPOINTS = ('submission_present', 'official_dim1', 'official_completion_rate', 'passed', 'official_normalized_score')
 
 
+def checkpoint_remaining_budget(cfg: dict, cp: dict) -> dict:
+    budget, used = cfg['budget'], cp['budget_used']
+    remaining = {
+        'model_requests': budget['max_model_requests'] - used['model_requests'],
+        'tool_calls': budget['max_tool_calls'] - used['tool_calls'],
+        'wall_seconds': budget['wall_time_seconds'] - used['agent_seconds'],
+    }
+    if budget.get('max_total_tokens') is not None:
+        remaining['known_total_tokens'] = budget['max_total_tokens'] - used['known_total_tokens']
+    return remaining
+
+
 def compile_plan(analysis: Path, source: Path, checkpoint: str, output: Path, *, hypothesis_id=None,
                  template='resume_unchanged', replicates=3, endpoint='submission_present'):
     from ..package import verify, seal
@@ -115,7 +127,7 @@ def compile_curve_plan(
     if type(stage1_replicates) is not int or not 1 <= stage1_replicates <= 64: raise L2Error('stage1_replicates must be 1..64')
     if type(stage2_replicates) is not int or not 1 <= stage2_replicates <= 64: raise L2Error('stage2_replicates must be 1..64')
     if not 0.0 < alpha < 0.5: raise L2Error('alpha must be in (0, 0.5)')
-    if type(max_concurrency) is not int or not 1 <= max_concurrency <= 16: raise L2Error('max_concurrency must be 1..16')
+    if type(max_concurrency) is not int or not 1 <= max_concurrency <= 8: raise L2Error('max_concurrency must be 1..8')
     if type(max_replacements) is not int or not 0 <= max_replacements <= 8: raise L2Error('max_replacements must be 0..8')
 
     av = verify(analysis)
@@ -151,19 +163,18 @@ def compile_curve_plan(
 
     # Verify all checkpoints in the episode up to num_turns-1 that might be used in stage1 or stage2
     grid_qualifications = {}
-    for cp_id in grid_cps:
+    for cp_id in [f'cp{k:06d}' for k in range(num_turns)]:
         cp = cp_map.get(cp_id)
         if cp is None:
-            blockers.append('grid_checkpoint_ineligible')
+            reason = 'grid_checkpoint_ineligible' if cp_id in grid_cps else 'stage2_checkpoint_ineligible'
+            if reason not in blockers: blockers.append(reason)
+            grid_qualifications[cp_id] = {'checkpoint_id': cp_id, 'eligible': False, 'reason': 'checkpoint_missing'}
             continue
-        rem = {
-            'model_requests': cfg['budget']['max_model_requests'] - cp['budget_used']['model_requests'],
-            'tool_calls': cfg['budget']['max_tool_calls'] - cp['budget_used']['tool_calls'],
-            'wall_seconds': cfg['budget']['wall_time_seconds'] - cp['budget_used']['agent_seconds'],
-        }
+        rem = checkpoint_remaining_budget(cfg, cp)
         eligible = bool(cp['qualification'].get('eligible')) and all(v > 0 for v in rem.values()) and cp['config_sha256'] == digest(cfg)
-        if not eligible and 'grid_checkpoint_ineligible' not in blockers:
-            blockers.append('grid_checkpoint_ineligible')
+        if not eligible:
+            reason = 'grid_checkpoint_ineligible' if cp_id in grid_cps else 'stage2_checkpoint_ineligible'
+            if reason not in blockers: blockers.append(reason)
         grid_qualifications[cp_id] = {
             'checkpoint_id': cp_id,
             'checkpoint_sha256': r.files[f'checkpoints/{cp_id}.json']['sha256'],
@@ -173,11 +184,7 @@ def compile_curve_plan(
             'budget_used': cp['budget_used'],
         }
 
-    all_cp_digests = {
-        item['checkpoint_id']: r.files[item['path']]['sha256']
-        for item in cp_index
-        if item.get('eligible') and int(item['checkpoint_id'][2:]) < num_turns
-    }
+    all_cp_digests = {cp_id: q['checkpoint_sha256'] for cp_id, q in grid_qualifications.items() if q['eligible']}
 
     kinds = list(strata_kinds or STRATA_TAGS)
     if any(k not in STRATA_TAGS for k in kinds):
@@ -189,6 +196,10 @@ def compile_curve_plan(
         r, turn_tags, all_candidate_cps, baseline_rate=baseline_rate, endpoint=resolved_endpoint
     )
     terminal_y = extract_terminal_outcome(r, endpoint=resolved_endpoint)
+    if terminal_y is None:
+        blockers.append('parent_endpoint_undefined')
+    from .controller import outcome
+    parent_outcome = outcome(r, resolved_endpoint, v02_policy=True)
 
     plan = {
         'schema_version': SCHEMA_VERSION,
@@ -203,12 +214,13 @@ def compile_curve_plan(
         'config_sha256': digest(cfg),
         'num_turns': num_turns,
         'terminal_value': terminal_y,
+        'terminal_dim2_hits': parent_outcome.get('dim2_hits', {}),
         'endpoint': {'name': resolved_endpoint, 'source': 'l1_projection'},
         'grid': {
             'rule': 'stride',
             'stride': stride,
             'checkpoints': grid_cps,
-            'terminal': 'exact_parent_grade',
+            'terminal': 'exact_parent_grade' if terminal_y is not None else 'parent_endpoint_undefined',
         },
         'qualified_checkpoint_sha256': all_cp_digests,
         'stage1': {'replicates': stage1_replicates},
@@ -293,10 +305,16 @@ def verify_experiment_package(root, idx, index_hash):
                 raise IntegrityError('Curve plan prediction commitment differs')
             if plan.get('execution_authorized'): raise IntegrityError('Frozen curve plan cannot assert authorized execution')
             quals = read_json(root / 'grid_qualifications.json')
+            potential_cps = [f'cp{k:06d}' for k in range(int(plan['num_turns']))]
             for cp_id in plan['grid']['checkpoints']:
                 if cp_id not in quals: raise IntegrityError('Missing grid checkpoint qualification: ' + cp_id)
             if plan['plan_state'] == 'frozen':
-                if plan['blockers'] or any(not quals[c]['eligible'] for c in plan['grid']['checkpoints']):
+                if plan.get('terminal_value') is None:
+                    raise IntegrityError('parent_endpoint_undefined')
+                if plan['blockers'] or any(not quals.get(c, {}).get('eligible') or
+                        any(v <= 0 for v in quals[c]['remaining_budget'].values()) or
+                        plan['qualified_checkpoint_sha256'].get(c) != quals[c]['checkpoint_sha256']
+                        for c in potential_cps):
                     raise IntegrityError('Blocked or ineligible curve plan cannot be frozen')
             status = plan['plan_state']
         elif kind in ('experiment_execution', 'experiment_validation', 'value_curve_execution', 'value_curve_results'):

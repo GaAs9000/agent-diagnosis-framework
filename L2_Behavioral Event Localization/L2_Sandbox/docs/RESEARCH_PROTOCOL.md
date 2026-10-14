@@ -35,11 +35,18 @@
 3. **缺失上下界**：缺失分支最多按预声明规则补跑 2 次（保留全部失败回执）；统计复算同时报告缺失全记 `0` 与全记 `1` 的最坏情况上下界，若上下界翻转判定则输出 `not_identifiable`。
 4. **首请求逐字节一致性**：每个续跑分支的第一个模型请求体必须与父轨迹在对应检查点后的同编号请求体逐字节相同，否则中止并记为 `policy_identity_violation`。
 
+5. **父结果与检查点资格**：父终点未定义时禁止冻结曲线计划，不把评测故障补成零分。第一阶段网格及所有可能进入第二阶段的检查点，都必须在冻结前通过资格与剩余预算检查；执行前再次对照原始 L1 包校验。
+   - 本轮统计策略版本为 `0.2.1`；旧统计策略的冻结计划须重新编译，保留其原始证据，不按新规则继续执行旧计划。
+6. **实际请求限流**：L2 的共享限流器由 L1 在每次 HTTP 尝试（含重试）前调用。TPM 使用请求字节量与输出上限作保守预留，成功响应的官方 usage 用于校正；用量未知的尝试保留预留。预留超过容量时明确拒绝。限流和退避等待受墙钟预算约束，传输失败耗尽预算仍记为基础设施无效。
+
 ## 四、已提供的指标函数
 
 - `evaluation.metrics.value_prediction_scores` 与 `evaluate_value_predictions_across_cases`：用第一阶段网格续跑分支的观测结果直接对冻结的价值预测计算 Brier / 有界平方误差，并报告相对**线性衰减基线（linear_decay）**的技能分（Skill Score）及按任务家族聚类的 bootstrap 95% 置信区间。
 - `evaluation.metrics.curve_gold` 与 `localization_metrics`：将判定为 `concentrated_turn` 或 `concentrated_interval` 的价值曲线结果映射为 `accepted_event_sets`，评估 Top-k 事件集合精确匹配率；`diffuse_loss`、`out_of_reach` 与 `not_identifiable` 记为 `gold_undefined_not_scored`。
 - `family_partition`：必须输入明确 `family_id`；只有一个 family 时拒绝产出貌似独立的 train/holdout 划分。
+- **身份与预测覆盖**：诊断包保留原任务身份；默认家族为 `benchmark:task_id`，不使用 `analysis_id` 代替。缺少或不完整的 Analyst 预测保持未评分，规则基线独立报告。技能分仅比较双方都已评分的案例；Analyst 和技能分区间分别要求至少两个实际有评分的任务家族。
+- **分层来源**：每条分支的行为标签只取第一个新请求对应的回合，同时保留父轨迹绝对回合与请求 ID；证据包校验从分支重新计算标签，不能用后续回合代替。
+- **探索性分项**：dim2 分项曲线使用真实评分项命中值，终态不假设为零。当前仅报告描述性均值和下跌，不把下跌量转换成 p 值或显著性结论。
 
 ## 五、后续 E2 干预实验与 v0.3 范围
 

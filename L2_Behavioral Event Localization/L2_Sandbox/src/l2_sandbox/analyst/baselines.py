@@ -9,13 +9,13 @@ def _parse_cp_turn(cp_id: str) -> int:
     return int(cp_id[2:])
 
 
-def extract_terminal_outcome(reader, endpoint: str = 'official_completion_rate') -> float:
+def extract_terminal_outcome(reader, endpoint: str = 'official_completion_rate') -> float | None:
     """Extracts the parent episode's terminal value Y in [0, 1] according to Section 3.5 & 3.6."""
     from ..experiments.controller import outcome
-    oc = outcome(reader, endpoint)
+    oc = outcome(reader, endpoint, v02_policy=True)
     if oc.get('endpoint_defined') and oc.get('value') is not None:
         return float(oc['value'])
-    return 0.0
+    return None
 
 
 def constant_baseline(
@@ -138,6 +138,8 @@ def rules_value_predictions(
     """Deterministic rule-based value predictions over checkpoints."""
     num_turns = max(1, len(turn_tags) or reader.manifest.get('counts', {}).get('model_requests', 1))
     terminal_y = extract_terminal_outcome(reader, endpoint=endpoint)
+    if terminal_y is None:
+        return {'value_predictions': {}, 'predicted_loss_intervals': [], 'status': 'parent_endpoint_undefined'}
     first_anom = next(
         (t['turn_index'] for t in turn_tags if 'tool_execution_anomaly' in t.get('tags', ())),
         None,
@@ -174,6 +176,10 @@ def compute_all_baselines(
 ) -> dict[str, dict[str, Any]]:
     num_turns = max(1, len(turn_tags) or reader.manifest.get('counts', {}).get('model_requests', 1))
     terminal_y = extract_terminal_outcome(reader, endpoint=endpoint)
+    if terminal_y is None:
+        unavailable = {'value_predictions': {}, 'predicted_loss_intervals': [], 'status': 'parent_endpoint_undefined'}
+        return {'constant': constant_baseline(checkpoints, baseline_rate=baseline_rate),
+                **{kind: dict(unavailable, baseline_kind=kind) for kind in ('linear_decay', 'first_anomaly', 'rules', 'random_step')}}
     first_anom = next(
         (t['turn_index'] for t in turn_tags if 'tool_execution_anomaly' in t.get('tags', ())),
         None,

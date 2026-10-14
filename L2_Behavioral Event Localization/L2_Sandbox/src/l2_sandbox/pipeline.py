@@ -15,6 +15,28 @@ from .reporting import report
 from .package import seal,verify
 
 
+def task_identity(task: dict | None) -> dict:
+    """Keep only source-provided task identity; never substitute an analysis ID."""
+    task = task or {}
+    identity = {key: task[key] for key in ('benchmark', 'task_id', 'family_id')
+                if isinstance(task.get(key), str) and task[key].strip()}
+    if 'family_id' not in identity and {'benchmark', 'task_id'} <= identity.keys():
+        identity['family_id'] = identity['benchmark'] + ':' + identity['task_id']
+    return identity
+
+
+def resolve_family_id(manifest: dict, facts: list[dict]) -> str:
+    identity = task_identity(manifest.get('task'))
+    if identity.get('family_id'):
+        return identity['family_id']
+    candidates = {task_identity(f.get('value')).get('family_id') for f in facts
+                  if f.get('fact_type') == 'task_instruction' and isinstance(f.get('value'), dict)}
+    candidates.discard(None)
+    if len(candidates) != 1:
+        raise L2Error('Task family identity unavailable or ambiguous in retained diagnosis evidence')
+    return candidates.pop()
+
+
 def analyze(source:Path,output:Path,config:dict,*,allow_model=False,backend=None):
     config=copy.deepcopy(validate(config));source=Path(source).absolute();output=Path(output).absolute()
     if output.resolve().is_relative_to(source.resolve()) or source.resolve().is_relative_to(output.resolve()):
@@ -89,6 +111,7 @@ def analyze(source:Path,output:Path,config:dict,*,allow_model=False,backend=None
             'analyst_tool_results':sum(e['kind']=='tool.result' for e in journal.records),'experiments_executed':0}
     manifest={'schema_version':SCHEMA_VERSION,'package_kind':'diagnosis','analysis_id':aid,'created_at':created,
         'producer':{'name':'l2-evidence-analyst','version':__version__,'code_sha256':digest({str(p.relative_to(Path(__file__).parent)):sha_file(p) for p in sorted(Path(__file__).parent.rglob('*.py'))})},
+        'task':task_identity(reader.manifest.get('task')) if reader else {},
         'source_index_sha256':source_sha,'source_episode_id':reader.episode_id if reader else 'unknown','mode':mode,'status':status,
         'failure':failure,'counts':counts,'claim_guarantees':{'references':'checked','semantic_entailment':'not_certified','causal_validation':'untested','capability_profile':'not_produced'},
         'source_unchanged':unchanged,'config_sha256':digest(config)}

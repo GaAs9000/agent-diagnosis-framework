@@ -13,7 +13,7 @@ from c3_sandbox.l1.core.contracts import ConfigurationError,CapabilityError,Evid
 from c3_sandbox.l1.core.orchestrator import run
 from c3_sandbox.l1.recording.state import StateStore,restore
 from c3_sandbox.l1.evidence.live import validate_snapshot
-from c3_sandbox.l1.storage import read_json,file_digest
+from c3_sandbox.l1.storage import read_json,file_digest,digest
 from c3_sandbox.l1.evaluation.officeval import interpret
 from .conftest import BUNDLE,ROOT,ScriptedGemini,TrustedFixtureRuntime,FixtureEvaluator
 
@@ -143,7 +143,11 @@ def test_real_retained_official_verifier_worker(tmp_path):
 
 
 def test_restore_rejects_special_permission_bits(tmp_path):
-    r=tmp_path/'e';r.mkdir();w=tmp_path/'w';w.mkdir();(w/'special').mkdir();os.chmod(w/'special',0o2755)
+    r=tmp_path/'e';r.mkdir();w=tmp_path/'w';w.mkdir();(w/'special').mkdir()
     snapshot=StateStore(r).capture(w,'special')
+    # Restore validates snapshot metadata even on hosts that strip SGID on chmod.
+    next(d for d in snapshot['directories'] if d['path']=='special')['mode']=0o2755
+    snapshot['content_sha256']=digest({'files':snapshot['files'],'directories':snapshot['directories']})
+    validate_snapshot(r,snapshot)
     with pytest.raises(EvidenceError,match='special permission'):
         restore(r,snapshot,tmp_path/'dest')

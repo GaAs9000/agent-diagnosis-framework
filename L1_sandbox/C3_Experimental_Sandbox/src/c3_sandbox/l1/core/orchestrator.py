@@ -6,6 +6,7 @@ The production registries contain no fixture backend or unrestricted host runtim
 """
 from __future__ import annotations
 import copy
+import json
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -78,7 +79,42 @@ def _copy_tree(source:Path,destination:Path):
         if p.is_file(): copy_file(p,destination,p.relative_to(source).as_posix())
 
 
-def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None)->dict:
+def _request_token_estimate(body: bytes, parameters: dict) -> float:
+    """Admission heuristic: one token per UTF-8 byte, plus maximum output.
+
+    Includes native tools/images in the serialized input. Without an explicit
+    output cap reserve 65,536 output tokens; this is a heuristic, not tokenizer
+    or provider-limit evidence. It never changes the native request parameters.
+    """
+    caps=[parameters.get(k) for k in ('maxOutputTokens','max_completion_tokens','max_tokens')]
+    caps=[v for v in caps if type(v) in (int,float) and v>0]
+    return float(len(body)+max(caps,default=65536))
+
+
+def _receipt_tokens(receipt) -> float | None:
+    """Use successful provider usage, including usage on malformed replies."""
+    if receipt.status is None or not 200<=receipt.status<300 or receipt.metadata.get('transport_error'):
+        return None
+    usage=receipt.metadata.get('usage')
+    if not isinstance(usage,dict):
+        try:
+            value=json.loads(receipt.body)
+        except (ValueError,UnicodeError):
+            return None
+        if not isinstance(value,dict): return None
+        usage=value.get('usageMetadata',value.get('usage'))
+    if not isinstance(usage,dict): return None
+    total=usage.get('totalTokenCount',usage.get('total_tokens'))
+    return float(total) if type(total) is int and total>=0 else None
+
+
+def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None)->dict:
+    """Optionally admit every HTTP attempt via acquire(estimate, timeout)->bool.
+
+    reconcile(estimate, actual) retains unknown usage with actual=None. An
+    admitted attempt that never sends refunds its reservation with actual=0.
+    The limiter is external runtime state and never enters resolved config.
+    """
     config=copy.deepcopy(validate(config)); output=Path(output).absolute()
     config['agent']['system_prompt']=build_execution_contract_prompt(config)
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
@@ -255,6 +291,34 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             request_event=journal.emit('model.request',{'request_id':rid,'body':journal.ref(relative),
                 'parameters_declared':config['model']['parameters']})
             prefix=relative.removesuffix('request.json')
+            request_bytes=canonical(body)
+            estimated_tokens=_request_token_estimate(request_bytes,config['model']['parameters']) if request_limiter is not None else None
+            admission_expired=False
+            transport_attempts=0
+            stop_phase='wall_deadline'
+            def send_attempt():
+                nonlocal admission_expired, transport_attempts, stop_phase
+                rem=deadline-time.monotonic()
+                if rem<=0:
+                    admission_expired=True; return None
+                if request_limiter is not None:
+                    if not request_limiter.acquire(estimated_tokens,timeout=rem):
+                        stop_phase='admission_timeout'
+                        admission_expired=True; return None
+                    rem=deadline-time.monotonic()
+                    if rem<=0:
+                        request_limiter.reconcile(estimated_tokens,0.0)
+                        stop_phase='deadline_after_admission'
+                        admission_expired=True; return None
+                try:
+                    transport_attempts+=1
+                    result=model.send(request_bytes,min(rem,config['model']['timeout_seconds']))
+                except BaseException:
+                    if request_limiter is not None: request_limiter.reconcile(estimated_tokens,None)
+                    raise
+                if request_limiter is not None: request_limiter.reconcile(estimated_tokens,_receipt_tokens(result))
+                return result
+            receipt=None
             retry_cfg=config['model'].get('retry')
             if retry_cfg:
                 max_attempts=retry_cfg.get('max_attempts',1)
@@ -263,8 +327,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 backoffs=list(retry_cfg.get('backoff_seconds',[2,8,30]))
                 honor_ra=bool(retry_cfg.get('honor_retry_after',True))
                 for attempt in range(1,max_attempts+1):
-                    rem=max(.001,deadline-time.monotonic())
-                    receipt=model.send(canonical(body),min(rem,config['model']['timeout_seconds']))
+                    attempt_receipt=send_attempt()
+                    if attempt_receipt is None: break
+                    receipt=attempt_receipt
                     ap=f'{prefix}attempt_{attempt:02d}/'
                     write_bytes(output,ap+'response.bin',receipt.body)
                     write_json(output,ap+'http.json',receipt.metadata)
@@ -273,7 +338,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     retryable=not truncated and ((terr and retry_transport) or (not terr and receipt.status in retry_statuses))
                     if not retryable or attempt>=max_attempts: break
                     rem_after=deadline-time.monotonic()
-                    if rem_after<=0: break
+                    if rem_after<=0:
+                        admission_expired=True; break
                     base_delay=float(backoffs[min(attempt-1,len(backoffs)-1)]) if backoffs else 0.0
                     jitter=(int(digest({'rid':rid,'attempt':attempt})[:4],16)/65535.0)*(0.25*base_delay) if base_delay>0 else 0.0
                     delay=base_delay+jitter
@@ -290,15 +356,35 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                         'body':journal.ref(ap+'response.bin'),'http':journal.ref(ap+'http.json')},
                         links={'request':request_event['event_id']})
                     if delay>0 and (mode=='live' or delay<=0.05): time.sleep(delay)
+                    if time.monotonic()>=deadline:
+                        stop_phase='retry_backoff'
+                        admission_expired=True; break
             else:
-                receipt=model.send(canonical(body),min(remaining,config['model']['timeout_seconds']))
+                receipt=send_attempt()
+            if receipt is None:
+                status['termination']='wall_time_budget'
+                # Admission never produced a model continuation. Preserve the
+                # budget stop reason without qualifying it as valid execution.
+                status['execution_validity']='invalid'
+                journal.emit('model.error',{'request_id':rid,'reason':'wall_time_budget',
+                    'stop_phase':stop_phase,'transport_attempts':transport_attempts},links={'request':request_event['event_id']})
+                break
             write_bytes(output,prefix+'response.bin',receipt.body)
             write_json(output,prefix+'http.json',receipt.metadata)
             response_event=journal.emit('model.response',{'request_id':rid,'body':journal.ref(prefix+'response.bin'),
                 'http':journal.ref(prefix+'http.json'),'status_code':receipt.status},links={'request':request_event['event_id']})
-            if receipt.metadata.get('transport_error') or receipt.metadata.get('body_truncated') or receipt.status is None or not 200<=receipt.status<300:
-                status['termination']='model_transport_error'; status['execution_validity']='invalid'
+            transport_invalid=(receipt.metadata.get('transport_error') or receipt.metadata.get('body_truncated')
+                or receipt.status is None or not 200<=receipt.status<300)
+            if transport_invalid:
+                status['execution_validity']='invalid'
                 if receipt.metadata.get('body_truncated'): missing('model_body_capped','Response prefix preserved; full body unavailable')
+            if admission_expired or time.monotonic()>=deadline:
+                status['termination']='wall_time_budget'
+                journal.emit('model.error',{'request_id':rid,'reason':'wall_time_budget',
+                    'stop_phase':stop_phase,'transport_attempts':transport_attempts},links={'response':response_event['event_id']})
+                break
+            if transport_invalid:
+                status['termination']='model_transport_error'
                 journal.emit('model.error',{'request_id':rid,'reason':status['termination']},links={'response':response_event['event_id']})
                 break
             for observation in pending:
@@ -437,7 +523,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         if not prepared:
             missing('execution_not_prepared','No qualified initial workspace/runtime boundary')
         if mode!='live':
-            status['execution_validity']='unknown'
+            if status['execution_validity']!='invalid': status['execution_validity']='unknown'
             coverage.append({'code':'test_fixture','detail':'Injected components; NOT a real model/Docker qualification'})
         coverage.extend([{'code':'object_state_not_collected','detail':'Only file/directory state is supported'},
                          {'code':'provider_hidden_state_unknown','detail':'No claim of deterministic model response replay'},

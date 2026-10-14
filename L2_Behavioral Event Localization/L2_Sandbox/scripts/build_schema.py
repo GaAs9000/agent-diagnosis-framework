@@ -44,6 +44,8 @@ diagnosis=obj({'summary':S,'localizations':array(local),'hypotheses':array(hyp),
 manifest=obj({'schema_version':{'const':'l2-0.1.0'},'package_kind':enum('diagnosis','experiment_plan','experiment_execution','experiment_validation','value_curve_plan','value_curve_execution','value_curve_results'),
  'analysis_id':S,'created_at':S,'producer':OBJ,'source_index_sha256':sha,'source_episode_id':S,
  'mode':S,'status':S,'failure':{'type':['object','null']},'counts':OBJ,'claim_guarantees':OBJ,'source_unchanged':{'type':'boolean'},'config_sha256':sha})
+# Optional for previously sealed diagnoses; new producers retain source task identity.
+manifest['properties']['task']=obj({'benchmark':S,'task_id':S,'family_id':S},required=[])
 index=obj({'schema_version':{'const':'l2-0.1.0'},'package_kind':S,'files':array(obj({'path':S,'sha256':sha,'size_bytes':{'type':'integer','minimum':0}})),
  'trust_scope':S})
 root={'$schema':'https://json-schema.org/draft/2020-12/schema','$id':'urn:l2:0.1.0', '$defs':{'fact':fact,'localization':local,'hypothesis':hyp,'diagnosis':diagnosis,'manifest':manifest,'index':index}}

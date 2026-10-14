@@ -6,7 +6,7 @@ import random
 from statistics import NormalDist
 from typing import Sequence
 
-STATS_POLICY_VERSION = '0.2.0'
+STATS_POLICY_VERSION = '0.2.1'
 _NORM = NormalDist()
 
 

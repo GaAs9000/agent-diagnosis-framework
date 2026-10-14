@@ -129,12 +129,14 @@ def _score_predictor(pred_map: dict[str, float], active_receipts: list[dict]) ->
     by_cp: dict[str, list[float]] = {}
     for r in active_receipts:
         cp_id = r['checkpoint_id']
+        out = r.get('outcome') or {}
+        defined = bool(out.get('endpoint_defined')) and out.get('value') is not None
+        if not defined:
+            undefined += 1
         if cp_id not in pred_map:
             unpredicted += 1
             continue
-        out = r.get('outcome') or {}
-        if not out.get('endpoint_defined') or out.get('value') is None:
-            undefined += 1
+        if not defined:
             continue
         p = float(pred_map[cp_id])
         y = float(out['value'])
@@ -143,9 +145,14 @@ def _score_predictor(pred_map: dict[str, float], active_receipts: list[dict]) ->
         err = (p - y) ** 2
         sq_errors.append(err)
         by_cp.setdefault(cp_id, []).append(err)
-    mean_loss = sum(sq_errors) / len(sq_errors) if sq_errors else None
+    complete = unpredicted == 0
+    mean_loss = sum(sq_errors) / len(sq_errors) if sq_errors and complete else None
     cp_losses = {cp: sum(v) / len(v) for cp, v in sorted(by_cp.items()) if v}
     return {
+        'status': 'incomplete_predictions' if not complete else ('scored' if sq_errors else 'unscored_no_defined_outcomes'),
+        'n_expected_branches': len(active_receipts),
+        'n_defined_branches': len(active_receipts) - undefined,
+        'prediction_coverage': (len(active_receipts) - unpredicted) / len(active_receipts) if active_receipts else None,
         'n_scored_branches': len(sq_errors),
         'n_undefined_branches': undefined,
         'n_unpredicted_branches': unpredicted,
@@ -168,8 +175,6 @@ def value_prediction_scores(
         active_s1 = [r for r in receipts if not r.get('replaced_by')]
 
     analyst_preds = _normalize_pred_map(diagnosis.get('value_predictions'))
-    if not analyst_preds and 'rules' in (baselines or {}):
-        analyst_preds = _normalize_pred_map(baselines['rules'])
 
     scores = {'analyst': _score_predictor(analyst_preds, active_s1)}
     for name, b_entry in sorted((baselines or {}).items()):
@@ -220,39 +225,55 @@ def evaluate_value_predictions_across_cases(
             for c in subset
             if (c.get('scores', {}).get('linear_decay') or {}).get('brier_or_mse') is not None
         ]
-        if not a_vals:
-            return None, None, None
-        mean_a = sum(a_vals) / len(a_vals)
+        mean_a = sum(a_vals) / len(a_vals) if a_vals else None
         mean_l = sum(l_vals) / len(l_vals) if l_vals else None
-        skill = (1.0 - mean_a / mean_l) if mean_l and mean_l > 1e-12 else None
+        paired = [c for c in subset if all(
+            (c.get('scores', {}).get(name) or {}).get('brier_or_mse') is not None
+            for name in ('analyst', 'linear_decay')
+        )]
+        paired_a = sum(c['scores']['analyst']['brier_or_mse'] for c in paired) / len(paired) if paired else None
+        paired_l = sum(c['scores']['linear_decay']['brier_or_mse'] for c in paired) / len(paired) if paired else None
+        skill = (1.0 - paired_a / paired_l) if paired_l and paired_l > 1e-12 else None
         return mean_a, mean_l, skill
 
     mean_a, mean_l, skill = _agg(cases)
+    coverage = {
+        'analyst_scored_case_count': sum((c.get('scores', {}).get('analyst') or {}).get('brier_or_mse') is not None for c in cases),
+        'analyst_unscored_case_count': sum((c.get('scores', {}).get('analyst') or {}).get('brier_or_mse') is None for c in cases),
+        'paired_scored_case_count': sum(all(
+            (c.get('scores', {}).get(name) or {}).get('brier_or_mse') is not None
+            for name in ('analyst', 'linear_decay')
+        ) for c in cases),
+    }
     fams = sorted(by_family.keys())
-    if len(fams) < 2:
-        return {
-            'status': 'insufficient_independent_families_for_cluster_ci',
-            'family_count': len(fams),
-            'case_count': len(cases),
-            'analyst_brier_or_mse': mean_a,
-            'linear_decay_brier_or_mse': mean_l,
-            'skill_score_vs_linear_decay': skill,
-            'skill_ci_95': [None, None],
-        }
+    analyst_fams = [f for f in fams if any(
+        (c.get('scores', {}).get('analyst') or {}).get('brier_or_mse') is not None
+        for c in by_family[f]
+    )]
+    paired_fams = [f for f in fams if any(all(
+        (c.get('scores', {}).get(name) or {}).get('brier_or_mse') is not None
+        for name in ('analyst', 'linear_decay')
+    ) for c in by_family[f])]
+    coverage.update({
+        'analyst_scored_family_count': len(analyst_fams),
+        'paired_scored_family_count': len(paired_fams),
+    })
 
-    rng = random.Random(int(digest({'seed': seed, 'families': fams})[:16], 16))
-    boot_skills = []
-    boot_analyst = []
-    for _ in range(n_boot):
-        sampled_fams = [rng.choice(fams) for _ in range(len(fams))]
-        sampled_cases = [item for f in sampled_fams for item in by_family[f]]
-        ba, _, bs = _agg(sampled_cases)
-        if ba is not None:
-            boot_analyst.append(ba)
-        if bs is not None:
-            boot_skills.append(bs)
-    boot_skills.sort()
-    boot_analyst.sort()
+    def _bootstrap(eligible_fams: list[str], metric: str, value_index: int) -> list[float]:
+        if len(eligible_fams) < 2:
+            return []
+        rng = random.Random(int(digest({'seed': seed, 'families': eligible_fams, 'metric': metric})[:16], 16))
+        values = []
+        for _ in range(n_boot):
+            sampled_fams = [rng.choice(eligible_fams) for _ in eligible_fams]
+            sampled_cases = [item for f in sampled_fams for item in by_family[f]]
+            value = _agg(sampled_cases)[value_index]
+            if value is not None:
+                values.append(value)
+        return sorted(values)
+
+    boot_analyst = _bootstrap(analyst_fams, 'analyst_brier_or_mse', 0)
+    boot_skills = _bootstrap(paired_fams, 'skill_score_vs_linear_decay', 2)
 
     def _pct(arr: list[float], p: float) -> float | None:
         if not arr:
@@ -261,7 +282,12 @@ def evaluate_value_predictions_across_cases(
         return arr[idx]
 
     return {
-        'status': 'completed',
+        'status': (
+            'insufficient_independent_families_for_cluster_ci' if len(fams) < 2
+            else 'incomplete_analyst_predictions' if coverage['analyst_unscored_case_count']
+            else 'completed'
+        ),
+        **coverage,
         'family_count': len(fams),
         'case_count': len(cases),
         'analyst_brier_or_mse': mean_a,

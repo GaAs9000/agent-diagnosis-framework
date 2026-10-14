@@ -7,50 +7,73 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import inspect
+import math
 import random
 import threading
 import time
 from pathlib import Path
 from ..io import (L2Error, Unsupported, IntegrityError, Journal, digest, now, read_json, read_jsonl,
                   sha_file, safe, write_json, write_jsonl, write_new)
-from .plans import TEMPLATES
+from .plans import TEMPLATES, checkpoint_remaining_budget
 from ..stats.curve import derive_stage2_interval, evaluate_curve
 from ..stats.strata import STRATA_TAGS, evaluate_strata
-from ..stats.intervals import holm_adjust
 
 
 class TokenBucketRateLimiter:
     """Thread-safe token bucket limiter for API requests/min and tokens/min."""
 
     def __init__(self, rpm: float | None = None, tpm: float | None = None):
-        self.rpm = float(rpm) if rpm and rpm > 0 else None
-        self.tpm = float(tpm) if tpm and tpm > 0 else None
+        if rpm is not None and (not math.isfinite(rpm) or rpm < 1):
+            raise L2Error('rpm must be finite and at least 1')
+        if tpm is not None and (not math.isfinite(tpm) or tpm <= 0):
+            raise L2Error('tpm must be finite and positive')
+        self.rpm = float(rpm) if rpm is not None else None
+        self.tpm = float(tpm) if tpm is not None else None
         self._lock = threading.Lock()
         self._req_tokens = self.rpm if self.rpm else 0.0
         self._tok_tokens = self.tpm if self.tpm else 0.0
         self._last = time.monotonic()
 
-    def acquire(self, estimated_tokens: float = 1000.0) -> None:
-        if self.rpm is None and self.tpm is None:
-            return
+    def _refill(self) -> None:
+        now_ts = time.monotonic()
+        elapsed = max(0.0, now_ts - self._last)
+        self._last = now_ts
+        if self.rpm is not None:
+            self._req_tokens = min(self.rpm, self._req_tokens + elapsed * self.rpm / 60.0)
+        if self.tpm is not None:
+            self._tok_tokens = min(self.tpm, self._tok_tokens + elapsed * self.tpm / 60.0)
+
+    def acquire(self, estimated_tokens: float, timeout: float | None = None) -> bool:
+        estimate = float(estimated_tokens)
+        if not math.isfinite(estimate) or estimate < 0:
+            raise L2Error('estimated_tokens must be finite and nonnegative')
+        if self.tpm is not None and estimate > self.tpm:
+            raise L2Error('request token estimate exceeds tpm bucket capacity')
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         while True:
             with self._lock:
-                now_ts = time.monotonic()
-                elapsed = max(0.0, now_ts - self._last)
-                self._last = now_ts
-                if self.rpm is not None:
-                    self._req_tokens = min(self.rpm, self._req_tokens + elapsed * (self.rpm / 60.0))
-                if self.tpm is not None:
-                    self._tok_tokens = min(self.tpm, self._tok_tokens + elapsed * (self.tpm / 60.0))
+                self._refill()
                 req_ok = self.rpm is None or self._req_tokens >= 1.0
-                tok_ok = self.tpm is None or self._tok_tokens >= min(estimated_tokens, self.tpm)
+                tok_ok = self.tpm is None or self._tok_tokens >= estimate
                 if req_ok and tok_ok:
-                    if self.rpm is not None:
-                        self._req_tokens -= 1.0
-                    if self.tpm is not None:
-                        self._tok_tokens -= min(estimated_tokens, self.tpm)
-                    return
-            time.sleep(0.02)
+                    if self.rpm is not None: self._req_tokens -= 1.0
+                    if self.tpm is not None: self._tok_tokens -= estimate
+                    return True
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                return False
+            time.sleep(min(0.02, remaining) if remaining is not None else 0.02)
+
+    def reconcile(self, estimated_tokens: float, actual_tokens: float | None) -> None:
+        # Unknown usage (including 429/transport failure) keeps the reservation.
+        if actual_tokens is None or self.tpm is None:
+            return
+        estimate, actual = float(estimated_tokens), float(actual_tokens)
+        if not all(math.isfinite(v) and v >= 0 for v in (estimate, actual)):
+            raise L2Error('token reconciliation values must be finite and nonnegative')
+        with self._lock:
+            self._refill()
+            self._tok_tokens = min(self.tpm, self._tok_tokens + estimate - actual)
 
 
 _INFRA_ERROR_MARKERS = (
@@ -114,9 +137,11 @@ def check_first_request_identity(parent_reader, branch_reader, checkpoint_id: st
     b_path = b_event['data']['body']['path']
     b_bytes = branch_reader.read(b_path)
 
-    p_path = b_path if b_path in parent_reader.files else (
-        parent_reqs[req_idx]['data']['body']['path'] if req_idx < len(parent_reqs) else None
-    )
+    p_event = next((e for e in parent_reqs
+                    if e['data']['request_id'].split(':')[-1] == f'r{req_idx:06d}'), None)
+    if p_event is None and req_idx < len(parent_reqs):
+        p_event = parent_reqs[req_idx]
+    p_path = p_event['data']['body']['path'] if p_event is not None else None
     if p_path is None or p_path not in parent_reader.files:
         return {'verified': False, 'reason': 'parent_request_missing_at_index', 'request_index': req_idx, 'branch_path': b_path}
     if b_path != p_path:
@@ -124,7 +149,9 @@ def check_first_request_identity(parent_reader, branch_reader, checkpoint_id: st
     p_bytes = parent_reader.read(p_path)
     if b_bytes != p_bytes:
         return {'verified': False, 'reason': 'first_request_bytes_differ', 'request_index': req_idx, 'path': b_path}
-    return {'verified': True, 'reason': None, 'request_index': req_idx, 'path': b_path, 'sha256': branch_reader.files[b_path]['sha256']}
+    return {'verified': True, 'reason': None, 'request_index': req_idx, 'path': b_path, 'sha256': branch_reader.files[b_path]['sha256'],
+            'branch_request_id': b_event['data']['request_id'],
+            'parent_request_id': p_event['data']['request_id']}
 
 
 def outcome(reader, endpoint, *, v02_policy: bool = False):
@@ -457,6 +484,9 @@ def execute_curve(
     plan = read_json(plan_dir / 'plan.json')
     if plan.get('package_kind') != 'value_curve_plan' or plan.get('plan_state') != 'frozen':
         raise Unsupported('Only a frozen value_curve_plan can be executed')
+    from ..stats.intervals import STATS_POLICY_VERSION
+    if plan.get('stats_policy_version') != STATS_POLICY_VERSION:
+        raise Unsupported('stats_policy_version differs; compile a new frozen curve plan')
 
     reader = L1Reader(source, expected_index=plan['source_index_sha256'])
     cfg = reader.json('raw/resolved_config.json')
@@ -468,6 +498,24 @@ def execute_curve(
         if reader.files.get(cp_path, {}).get('sha256') != expected_sha:
             raise IntegrityError(f'Checkpoint {cp_id} differs from frozen plan')
 
+    parent_endpoint = outcome(reader, plan['endpoint'], v02_policy=True)
+    if plan.get('terminal_value') is None or not parent_endpoint['endpoint_defined']:
+        raise Unsupported('parent_endpoint_undefined')
+    if float(parent_endpoint['value']) != plan['terminal_value']:
+        raise IntegrityError('Parent endpoint differs from frozen terminal value')
+    if 'terminal_dim2_hits' in plan and parent_endpoint.get('dim2_hits', {}) != plan['terminal_dim2_hits']:
+        raise IntegrityError('Parent rubric-item hits differ from frozen plan')
+    # Recheck every point Stage 2 could select before spending any Stage 1 budget.
+    for k in range(int(plan['num_turns'])):
+        cp_id = f'cp{k:06d}'
+        cp_path = f'checkpoints/{cp_id}.json'
+        if cp_path not in reader.files or cp_id not in plan['qualified_checkpoint_sha256']:
+            raise Unsupported('stage2_checkpoint_ineligible: ' + cp_id)
+        cp = reader.json(cp_path)
+        remaining = checkpoint_remaining_budget(cfg, cp)
+        if not cp['qualification'].get('eligible') or cp['config_sha256'] != digest(cfg) or any(v <= 0 for v in remaining.values()):
+            raise Unsupported('stage2_checkpoint_ineligible: ' + cp_id)
+
     if _test_runner is None:
         try:
             from c3_sandbox.l1.core.orchestrator import run as runner
@@ -478,9 +526,15 @@ def execute_curve(
     if not {'parent', 'checkpoint_id'} <= set(inspect.signature(runner).parameters):
         raise Unsupported('Installed L1 resume signature differs')
 
-    concurrency = int(max_concurrency or plan['schedule'].get('max_concurrency', 4))
-    if not 1 <= concurrency <= 16:
-        raise L2Error('max_concurrency must be 1..16')
+    planned_concurrency = int(plan['schedule'].get('max_concurrency', 4))
+    concurrency = planned_concurrency if max_concurrency is None else max_concurrency
+    if type(concurrency) is not int or not 1 <= concurrency <= min(8, planned_concurrency):
+        raise L2Error('max_concurrency must be 1..8 and may only lower the frozen plan limit')
+    rate_requested = rpm is not None or tpm is not None
+    params = inspect.signature(runner).parameters
+    if rate_requested and 'request_limiter' not in params:
+        raise Unsupported('Requested rate limiting requires the L1 request_limiter hook')
+    limiter = TokenBucketRateLimiter(rpm=rpm, tpm=tpm) if rate_requested else None
     max_replacements = int(plan['failure_policy'].get('max_replacements', 2))
 
     output = Path(output).absolute()
@@ -500,10 +554,10 @@ def execute_curve(
         'plan_sha256': plan_sha,
         'mode': 'test_fixture' if _test_runner else 'live_l1_bridge',
         'max_concurrency': concurrency,
+        'rpm': rpm, 'tpm': tpm,
         'allowed_templates': ['value_curve'],
     })
 
-    limiter = TokenBucketRateLimiter(rpm=rpm, tpm=tpm)
     journal = Journal(output, 'experiment_trace.jsonl')
     journal_lock = threading.Lock()
     receipts: list[dict] = []
@@ -533,9 +587,10 @@ def execute_curve(
         }
         with journal_lock:
             journal.emit('branch.intent', intent)
-        limiter.acquire()
         try:
-            runner(copy.deepcopy(cfg), output / branch_rel, parent=Path(source), checkpoint_id=cp_id)
+            runner_kwargs = {'parent': Path(source), 'checkpoint_id': cp_id}
+            if limiter is not None: runner_kwargs['request_limiter'] = limiter
+            runner(copy.deepcopy(cfg), output / branch_rel, **runner_kwargs)
             branch = L1Reader(output / branch_rel)
             lineage = branch.manifest.get('lineage') or {}
             if lineage.get('parent_index_sha256') != reader.index_sha256 or lineage.get('parent_checkpoint_sha256') != cp_sha:
@@ -559,7 +614,10 @@ def execute_curve(
                 raise IntegrityError(f'model_version_drift: observed {mv} vs {sorted(observed_model_versions)}')
 
             b_turns = extract_turn_tags(branch)
-            first_turn_entry = next((t for t in b_turns if t['turn_index'] == turn_idx), b_turns[0] if b_turns else None)
+            first_request_id = next(e['data']['request_id'] for e in branch.events if e['kind'] == 'model.request')
+            first_turn_entry = next((t for t in b_turns if t['request_id'] == first_request_id), None)
+            if first_turn_entry is None:
+                raise IntegrityError('First new request has no behavior tag record')
             first_tags = list(first_turn_entry['tags']) if first_turn_entry else []
             row = {
                 **intent,
@@ -570,6 +628,7 @@ def execute_curve(
                 'first_request_identity': id_check,
                 'first_request_identical': True,
                 'first_turn_index': turn_idx,
+                'first_request_id': first_request_id,
                 'first_turn_tags': first_tags,
                 'is_docx_task': parent_docx,
                 'model_version': mv,
@@ -595,6 +654,7 @@ def execute_curve(
                 'first_request_identity': {'verified': False, 'reason': reason},
                 'first_request_identical': reason != 'policy_identity_violation',
                 'first_turn_index': turn_idx,
+                'first_request_id': None,
                 'first_turn_tags': [],
                 'is_docx_task': parent_docx,
                 'model_version': None,
@@ -743,20 +803,19 @@ def summarize_curve(receipts: list[dict], plan: dict, stage2_plan: dict, *, fixt
         [r['outcome'].get('dim2_hits') or {} for r in active_s2 if r['checkpoint_id'] == cp_b and r['outcome']['endpoint_defined']]
         if cp_b else []
     )
+    terminal_hits = plan.get('terminal_dim2_hits') or {}
+    if cp_b is None:
+        b_dim2 = [terminal_hits] if terminal_hits else []
     dim2_keys = sorted({k for d in a_dim2 + b_dim2 for k in d})
     dim2_curves = {}
-    dim2_pvals = []
     for key in dim2_keys:
         va = [d[key] for d in a_dim2 if key in d]
-        vb = [d[key] for d in b_dim2 if key in d] if cp_b else [0.0]
-        mean_a = sum(va) / len(va) if va else 0.0
-        mean_b = sum(vb) / len(vb) if vb else 0.0
-        drop = mean_a - mean_b
-        dim2_curves[key] = {'mean_start': mean_a, 'mean_end': mean_b, 'drop': drop}
-        dim2_pvals.append(max(1e-6, 1.0 - max(0.0, drop)))
-    adj_p = holm_adjust(dim2_pvals) if dim2_pvals else []
-    for key, p_adj in zip(dim2_keys, adj_p):
-        dim2_curves[key]['p_value_holm'] = p_adj
+        vb = [d[key] for d in b_dim2 if key in d]
+        mean_a = sum(va) / len(va) if va else None
+        mean_b = sum(vb) / len(vb) if vb else None
+        drop = mean_a - mean_b if mean_a is not None and mean_b is not None else None
+        dim2_curves[key] = {'mean_start': mean_a, 'mean_end': mean_b, 'drop': drop,
+                            'p_value_holm': None, 'inference_status': 'not_tested'}
 
     return {
         'plan_state': 'completed' if not policy_violations else 'execution_invalid',
@@ -800,6 +859,8 @@ def report_curve(analysis: Path, execution: Path, output: Path) -> dict:
     if plan['analysis_index_sha256'] != av['index_sha256'] or plan['analysis_id'] != am['analysis_id']:
         raise IntegrityError('Value curve execution does not belong to the frozen analysis')
 
+    from ..pipeline import resolve_family_id
+    family_id = resolve_family_id(am, read_jsonl(analysis / 'facts.jsonl'))
     out = Path(output).absolute()
     if out.resolve().is_relative_to(analysis.resolve()) or out.resolve().is_relative_to(execution.resolve()):
         raise L2Error('Use separate curve report output directory')
@@ -823,7 +884,7 @@ def report_curve(analysis: Path, execution: Path, output: Path) -> dict:
     )
     eval_summary = value_prediction_scores(
         case_id=am['analysis_id'],
-        family_id=str((am.get('task') or {}).get('task_id') or am['analysis_id']),
+        family_id=family_id,
         diagnosis=diag,
         baselines=baselines,
         receipts=receipts,
@@ -924,6 +985,11 @@ def check_execution_or_validation(root, kind):
                         raise IntegrityError('Receipt outcome differs from branch recomputation')
                     if branch.manifest['episode_id'] != r['new_episode_id']:
                         raise IntegrityError('Receipt branch episode_id differs')
+                    from ..facts.build import extract_turn_tags
+                    first_id = next(e['data']['request_id'] for e in branch.events if e['kind'] == 'model.request')
+                    tags = next(t['tags'] for t in extract_turn_tags(branch) if t['request_id'] == first_id)
+                    if r.get('first_request_id') != first_id or r['first_turn_tags'] != tags or r['first_turn_index'] != int(r['checkpoint_id'][2:]) + 1:
+                        raise IntegrityError('Receipt first new request/tag binding differs')
             fixture = auth['mode'] == 'test_fixture'
         else:
             fixture = results.get('mode') == 'test_fixture'

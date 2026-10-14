@@ -1,5 +1,6 @@
 """Two-stage sparse value-curve selection, inference, and verdict computation."""
 from __future__ import annotations
+import math
 from typing import Any
 from .intervals import STATS_POLICY_VERSION, wilson_interval, wilson_upper_bound, bounded_score_lower_bound
 from .missing import apply_missing_imputation, missing_bounds
@@ -17,6 +18,11 @@ def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def _validate_terminal_value(value: float) -> None:
+    if value is None or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError('A defined finite parent terminal value in [0, 1] is required')
+
+
 def derive_stage2_interval(
     grid_turns: list[int],
     stage1_defined: dict[int, list[float]],
@@ -24,6 +30,7 @@ def derive_stage2_interval(
     terminal_value: float,
 ) -> dict[str, Any]:
     """Selects [a, b] on the coarse grid maximizing V1(c_a) - V1(c_b), breaking ties by earliest a."""
+    _validate_terminal_value(terminal_value)
     full_grid = sorted(set(grid_turns) | {terminal_turn})
     if len(full_grid) < 2:
         raise ValueError('Grid must contain at least one checkpoint and terminal turn')
@@ -114,7 +121,11 @@ def _infer_once(
     )
     turn_ok = interval_ok and (best_turn_lb > delta_turn)
 
-    if v0_upper_95 < 0.25:
+    reason = None
+    if not v0_samples:
+        verdict = 'not_identifiable'
+        reason = 'initial_value_evidence_missing'
+    elif v0_upper_95 < 0.25:
         verdict = 'out_of_reach'
     elif turn_ok:
         verdict = 'concentrated_turn'
@@ -123,10 +134,12 @@ def _infer_once(
     elif v1_0 > float(terminal_value) + 0.05:
         verdict = 'diffuse_loss'
     else:
-        verdict = 'out_of_reach'
+        verdict = 'not_identifiable'
+        reason = 'initial_value_upper_bound_not_below_0.25_and_loss_not_established'
 
     return {
         'verdict': verdict,
+        'reason': reason,
         'v1_initial': v1_0,
         'v0_upper_95': v0_upper_95,
         'uniform_share_threshold': share,
@@ -154,11 +167,11 @@ def evaluate_curve(
 ) -> dict[str, Any]:
     """Computes full two-stage curve inference, missing-outcome bounds, and final verdict."""
     s1_defined = {
-        k: [float(r['outcome']['value']) for r in rows if r.get('outcome', {}).get('endpoint_defined')]
+        k: [float(r['outcome']['value']) for r in rows if r.get('outcome', {}).get('endpoint_defined') and r['outcome'].get('value') is not None]
         for k, rows in stage1_samples.items()
     }
     s2_defined = {
-        k: [float(r['outcome']['value']) for r in rows if r.get('outcome', {}).get('endpoint_defined')]
+        k: [float(r['outcome']['value']) for r in rows if r.get('outcome', {}).get('endpoint_defined') and r['outcome'].get('value') is not None]
         for k, rows in stage2_samples.items()
     }
     selection = derive_stage2_interval(grid_turns, s1_defined, terminal_turn, terminal_value)
@@ -169,10 +182,10 @@ def evaluate_curve(
     m_info = missing_bounds(stage1_samples, stage2_samples)
 
     # Compute missing-as-0 and missing-as-1 bounds
-    s1_zero = apply_missing_imputation(stage1_samples, 0.0)
-    s2_zero = apply_missing_imputation(stage2_samples, 0.0)
-    s1_one = apply_missing_imputation(stage1_samples, 1.0)
-    s2_one = apply_missing_imputation(stage2_samples, 1.0)
+    s1_zero = apply_missing_imputation(stage1_samples, 0.0, include_unscorable_as_missing=True)
+    s2_zero = apply_missing_imputation(stage2_samples, 0.0, include_unscorable_as_missing=True)
+    s1_one = apply_missing_imputation(stage1_samples, 1.0, include_unscorable_as_missing=True)
+    s2_one = apply_missing_imputation(stage2_samples, 1.0, include_unscorable_as_missing=True)
     inf_zero = _infer_once(s1_zero, s2_zero, a, b, terminal_turn, terminal_value, alpha, turn_test)
     inf_one = _infer_once(s1_one, s2_one, a, b, terminal_turn, terminal_value, alpha, turn_test)
 
@@ -189,6 +202,19 @@ def evaluate_curve(
         and all(len(s2_defined.get(k, [])) > 0 for k in range(a, b + 1) if k < terminal_turn)
     )
     final_verdict = primary['verdict'] if identifiable else 'not_identifiable'
+    reasons = []
+    if primary['reason']:
+        reasons.append(primary['reason'])
+    if not bounds_agree:
+        reasons.append('sensitivity_bounds_change_verdict')
+    if m_info['missing_rate'] > 0.05:
+        reasons.append('missing_rate_exceeds_0.05')
+    if m_info['policy_identity_violations']:
+        reasons.append('first_request_identity_violation')
+    if not m_info['model_version_stable']:
+        reasons.append('model_version_changed')
+    if not all(len(s2_defined.get(k, [])) > 0 for k in range(a, b + 1) if k < terminal_turn):
+        reasons.append('stage2_checkpoint_evidence_missing')
 
     checkpoint_estimates = {}
     for k in sorted(set(s1_defined) | set(s2_defined)):
@@ -208,6 +234,7 @@ def evaluate_curve(
         'stats_policy_version': STATS_POLICY_VERSION,
         'evidence_basis': 'value_curve',
         'curve_verdict': final_verdict,
+        'not_identifiable_reasons': reasons if final_verdict == 'not_identifiable' else [],
         'evidence_level': 'E1' if final_verdict in ('concentrated_turn', 'concentrated_interval') else 'E0',
         'granularity': (
             'event' if final_verdict == 'concentrated_turn'

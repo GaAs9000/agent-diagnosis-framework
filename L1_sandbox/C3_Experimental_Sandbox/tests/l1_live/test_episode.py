@@ -152,6 +152,8 @@ def test_symlink_state_fail_closed(tmp_path,config,components):
 def test_cold_resume_under_setgid_host_directory(tmp_path,config,components):
     import os
     parent_dir=tmp_path/'shared';parent_dir.mkdir();os.chmod(parent_dir,0o2775)
+    if not parent_dir.stat().st_mode & 0o2000:
+        pytest.skip('This filesystem or execution environment does not preserve directory SGID bits')
     first=parent_dir/'p';run(config,first,injected=components)
     components['model']=ScriptedGemini(config['model'])
     result=run(config,parent_dir/'c',injected=components,parent=first,checkpoint_id='cp000001')
@@ -161,6 +163,9 @@ def test_cold_resume_under_setgid_host_directory(tmp_path,config,components):
 
 def test_special_permission_state_not_qualified(tmp_path,config,components):
     import os
+    probe=tmp_path/'sgid-probe';probe.mkdir();os.chmod(probe,0o2755)
+    if not probe.stat().st_mode & 0o2000:
+        pytest.skip('This filesystem or execution environment does not preserve directory SGID bits')
     class SpecialMode(TrustedFixtureRuntime):
         def execute(self,call,workspace,timeout):
             result=super().execute(call,workspace,timeout)

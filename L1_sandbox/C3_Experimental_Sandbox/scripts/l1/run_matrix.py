@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import copy
 import csv
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -38,6 +39,8 @@ COLUMNS = [
     'evaluation_validity',
     'completion_rate',
     'dim1',
+    'score_eligible',
+    'score_classification',
     'model_requests',
     'eligible_checkpoints',
     'wall_seconds',
@@ -50,7 +53,6 @@ COLUMNS = [
 def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
     manifest = read_json(package / 'manifest.json')
     grade = read_json(package / 'official_grade.json') if (package / 'official_grade.json').exists() else {}
-    inv = read_json(package / 'artifacts/inventory.json') if (package / 'artifacts/inventory.json').exists() else {'files': []}
     events = scan(package / 'trajectory.jsonl')['events'] if (package / 'trajectory.jsonl').exists() else []
 
     status = manifest.get('status', {})
@@ -59,16 +61,24 @@ def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
     proj = grade.get('projection') or {}
     raw = grade.get('official_raw') if isinstance(grade.get('official_raw'), dict) else {}
 
-    has_submission = bool(inv.get('files'))
-    if exec_valid == 'valid' and not has_submission:
-        completion_rate = 0.0
-        dim1 = False
-    elif eval_valid == 'valid':
+    # A missing artifact or an error envelope is not an official zero score.
+    # Keep invalid execution/evaluation out of baseline statistics even when a
+    # grader happened to produce a numeric result for the final state.
+    score_eligible = (exec_valid == 'valid' and eval_valid == 'valid'
+                      and proj.get('evaluation_validity') == 'valid'
+                      and bool(raw) and raw.get('status') != 'error' and not raw.get('error'))
+    score_classification = 'official_score' if score_eligible else (
+        'invalid_execution' if exec_valid != 'valid' else 'invalid_official_evaluation')
+    if score_eligible:
         completion_rate = proj.get('completion_rate')
         dim1 = raw.get('dim1_pass') if 'dim1_pass' in raw else (proj.get('official_dimensions') or {}).get('passed')
-    elif exec_valid == 'valid' and raw and raw.get('status') not in (None, 'ok'):
-        completion_rate = 0.0
-        dim1 = False
+        if type(completion_rate) not in (int, float) or not math.isfinite(completion_rate):
+            completion_rate = None
+            dim1 = None
+            score_eligible = False
+            score_classification = 'undefined_official_endpoint'
+        elif completion_rate == 0:
+            score_classification = 'official_zero'
     else:
         completion_rate = None
         dim1 = None
@@ -91,6 +101,8 @@ def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
         'evaluation_validity': eval_valid,
         'completion_rate': completion_rate,
         'dim1': dim1,
+        'score_eligible': score_eligible,
+        'score_classification': score_classification,
         'model_requests': (manifest.get('counts') or {}).get('model_requests', 0),
         'eligible_checkpoints': eligible_cps,
         'wall_seconds': round(float((manifest.get('usage') or {}).get('agent_phase_seconds', 0.0)), 3),

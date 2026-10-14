@@ -1,7 +1,13 @@
 """Missing-outcome imputation bounds (all-0 vs all-1) for sensitivity analysis."""
 from __future__ import annotations
-import copy
 from typing import Any
+
+
+def _outcome_case(outcome: dict[str, Any]) -> str | None:
+    return outcome.get('outcome_case') or {
+        'empty_submission_zero': 'empty_submission',
+        'unscorable_submission_zero': 'unscorable_submission',
+    }.get(outcome.get('disposition'))
 
 
 def apply_missing_imputation(
@@ -16,7 +22,7 @@ def apply_missing_imputation(
         vec: list[float] = []
         for r in rows:
             oc = r.get('outcome', {})
-            if include_unscorable_as_missing and oc.get('disposition') == 'unscorable_submission_zero':
+            if include_unscorable_as_missing and _outcome_case(oc) == 'unscorable_submission':
                 vec.append(float(fill_value))
             elif oc.get('endpoint_defined') and oc.get('value') is not None:
                 vec.append(float(oc['value']))
@@ -35,10 +41,10 @@ def missing_bounds(
         r for rows in stage2_samples.values() for r in rows
     ]
     total = len(all_rows)
-    defined = sum(1 for r in all_rows if r.get('outcome', {}).get('endpoint_defined'))
+    defined = sum(1 for r in all_rows if r.get('outcome', {}).get('endpoint_defined') and r.get('outcome', {}).get('value') is not None)
     missing = total - defined
-    empty_sub = sum(1 for r in all_rows if r.get('outcome', {}).get('disposition') == 'empty_submission_zero')
-    unscorable_sub = sum(1 for r in all_rows if r.get('outcome', {}).get('disposition') == 'unscorable_submission_zero')
+    empty_sub = sum(1 for r in all_rows if _outcome_case(r.get('outcome', {})) == 'empty_submission')
+    unscorable_sub = sum(1 for r in all_rows if _outcome_case(r.get('outcome', {})) == 'unscorable_submission')
     policy_violations = sum(1 for r in all_rows if not r.get('first_request_identical', True))
     model_versions = sorted({
         r.get('outcome', {}).get('model_version')
