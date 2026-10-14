@@ -1,0 +1,92 @@
+{
+  "benchmark": "swebench_pro",
+  "source_repo": "scaleapi/SWE-bench_Pro-os",
+  "split": "v2",
+  "tasks": {
+    "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2": {
+      "environment/Dockerfile": {
+        "sha256": "f183e215094b9c7f55a72c61f7bc2bc4b212c88ff4e5e8843df962f598db5a5b",
+        "size_bytes": 148
+      },
+      "instruction.md": {
+        "sha256": "0574bd29eb64d79bb66a69a45cb7067e9a3e57b39400f9e7e02623913a1502b8",
+        "size_bytes": 2540
+      },
+      "solution/gold_patch.diff": {
+        "sha256": "59a87bfccdfec081873ba2381668e1af6f336a19d3dc64ae10b9ef976c9856a0",
+        "size_bytes": 1906
+      },
+      "solution/solve.sh": {
+        "sha256": "6d7497394937410135791cc64ba2f32ad48a94daf6308f0f4c64c74d24c50f97",
+        "size_bytes": 306
+      },
+      "task.toml": {
+        "sha256": "982947294b1d723dcad38400336709106e6d6738ad50f3d2c3770c054bd8f3f5",
+        "size_bytes": 865
+      },
+      "tests/config.json": {
+        "sha256": "59679673433866339642d4e001d21363c24c1c26a49b4e55b35b857e30a82083",
+        "size_bytes": 1642
+      },
+      "tests/parser.py": {
+        "sha256": "0f4ab63305c466c87689bd5d1581f6601666a4175269db58830014464111f761",
+        "size_bytes": 6089
+      },
+      "tests/run_script.sh": {
+        "sha256": "285a6163b889a7867388525f28f4a8c445f2a9a8adaf7cb7addb8cb7909d3453",
+        "size_bytes": 1926
+      },
+      "tests/test.sh": {
+        "sha256": "b6f26eecd87c1696a3702ee115d31f9d42f4704cf2116419cd879f66b60976d0",
+        "size_bytes": 7864
+      },
+      "tests/test_patch.patch": {
+        "sha256": "7de812e77770f2cf22ffe8441294ec99330dc36a20ac01517d606b5c1caaa99f",
+        "size_bytes": 1230
+      }
+    },
+    "instance_ansible__ansible-0fd88717c953b92ed8a50495d55e630eb5d59166-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5": {
+      "environment/Dockerfile": {
+        "sha256": "15beb7c7dc3f09eef37e53e6f81f45bcad291f45a3d8173e201125500a9ade2b",
+        "size_bytes": 148
+      },
+      "instruction.md": {
+        "sha256": "0bba58bdcd01ae5cb15532e2076db630b389483b86a3367a133ca7c7e3652265",
+        "size_bytes": 1898
+      },
+      "solution/gold_patch.diff": {
+        "sha256": "266fc5e1819fbf9a75a56ed837bb66f4e6131611c93f4e35748648d96a58a7a3",
+        "size_bytes": 6298
+      },
+      "solution/solve.sh": {
+        "sha256": "6d7497394937410135791cc64ba2f32ad48a94daf6308f0f4c64c74d24c50f97",
+        "size_bytes": 306
+      },
+      "task.toml": {
+        "sha256": "e864ae2227216c5568bffe711718016640b494f58969befe468546959372e7bb",
+        "size_bytes": 865
+      },
+      "tests/config.json": {
+        "sha256": "58c350d33a277058876b1766cd8cd5d0f745a73a3915a0b81a014d9df4adc74f",
+        "size_bytes": 2877
+      },
+      "tests/parser.py": {
+        "sha256": "3bb7f471aa61ea90f7c8992cb901f61c14efc2a703dee9a14cd682840006c2dd",
+        "size_bytes": 5631
+      },
+      "tests/run_script.sh": {
+        "sha256": "4194d6f1b638b5475c58b11a36cda2637b7001993d5171233ef11aab6bf726f9",
+        "size_bytes": 1885
+      },
+      "tests/test.sh": {
+        "sha256": "b6f26eecd87c1696a3702ee115d31f9d42f4704cf2116419cd879f66b60976d0",
+        "size_bytes": 7864
+      },
+      "tests/test_patch.patch": {
+        "sha256": "5ec76221760e8c510e6c2a105787125c40fba9980482105ab154ead998b38b3d",
+        "size_bytes": 1893
+      }
+    }
+  },
+  "version": "1.0"
+}

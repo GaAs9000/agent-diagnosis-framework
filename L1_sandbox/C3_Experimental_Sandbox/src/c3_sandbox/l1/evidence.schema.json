@@ -1,0 +1,1253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mirt:l1:evidence:0.1.0",
+  "title": "L1 Evidence Package 0.1.0",
+  "$defs": {
+    "ref": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "json_pointer": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(/.*)?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "json_pointer"
+      ],
+      "additionalProperties": false
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "detail",
+        "source_refs"
+      ],
+      "additionalProperties": false
+    },
+    "validity": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "valid",
+            "invalid",
+            "unknown"
+          ]
+        },
+        "scope": {
+          "type": "string"
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "scope",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "missing",
+            "unknown",
+            "partial",
+            "not_applicable"
+          ]
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      },
+      "required": [
+        "field",
+        "status",
+        "count",
+        "reason",
+        "source_refs"
+      ],
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "episode.started",
+            "task.presented",
+            "model.request",
+            "model.response",
+            "model.error",
+            "tool.call",
+            "tool.result",
+            "observation.delivered",
+            "state.observed",
+            "evaluation.completed",
+            "episode.finished",
+            "recorder.error"
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assurance": {
+          "enum": [
+            "source_recorded",
+            "recomputed",
+            "live_boundary",
+            "synthetic_fixture"
+          ]
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        },
+        "links": {
+          "type": "object",
+          "properties": {
+            "model_call_id": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": "string"
+            },
+            "request_event_id": {
+              "type": "string"
+            },
+            "response_event_id": {
+              "type": "string"
+            },
+            "tool_call_event_id": {
+              "type": "string"
+            },
+            "delivered_in_model_call_id": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "payload": {
+          "type": "object"
+        },
+        "prev_event_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "event_id",
+        "seq",
+        "kind",
+        "observed_at",
+        "assurance",
+        "source_refs",
+        "links",
+        "payload",
+        "prev_event_sha256",
+        "event_sha256"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "model.request"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "model_call_id",
+                  "request_ref",
+                  "source_identity_sha256"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "model.response"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "model_call_id",
+                  "response_ref",
+                  "source_identity_sha256",
+                  "usage"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool.call"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "tool_call_id",
+                  "name",
+                  "arguments",
+                  "native_tool_call_id",
+                  "source_dispatch_index",
+                  "linkage"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool.result"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "tool_call_id",
+                  "source_dispatch_index",
+                  "raw_observation",
+                  "raw_observation_ref"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "observation.delivered"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "tool_call_id",
+                  "delivered_observation",
+                  "observation_ref"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "recorder.error"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "object_id": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        },
+        "logical_path": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "initial",
+            "final"
+          ]
+        },
+        "file": {
+          "$ref": "#/$defs/file"
+        },
+        "original_mode": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "object_id",
+        "version_id",
+        "logical_path",
+        "role",
+        "file",
+        "original_mode"
+      ],
+      "additionalProperties": false
+    },
+    "artifact_inventory": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "files",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "state_change": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "change_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "object_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "file",
+            "directory",
+            "unknown"
+          ]
+        },
+        "observation_type": {
+          "enum": [
+            "recorded_step_delta",
+            "recomputed_endpoint_delta"
+          ]
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "before_blob_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_blob_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification": {
+          "enum": [
+            "reported_without_retained_snapshots",
+            "recomputed_from_retained_bytes"
+          ]
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "change_id",
+        "event_id",
+        "object_id",
+        "path",
+        "scope",
+        "observation_type",
+        "before",
+        "after",
+        "before_blob_ref",
+        "after_blob_ref",
+        "verification",
+        "source_refs"
+      ],
+      "additionalProperties": false
+    },
+    "checkpoints": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "cold_resume_qualified": {
+          "const": false
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "checkpoint_id": {
+                "type": "string"
+              },
+              "qualification": {
+                "enum": [
+                  "unqualified"
+                ]
+              },
+              "source_ref": {
+                "$ref": "#/$defs/ref"
+              },
+              "reason_codes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "checkpoint_id",
+              "qualification",
+              "source_ref",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "cold_resume_qualified",
+        "items",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    "grade_phase": {
+      "type": "object",
+      "properties": {
+        "source_ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "official_raw": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalization": {
+          "type": "object"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        }
+      },
+      "required": [
+        "source_ref",
+        "official_raw",
+        "normalization",
+        "checks"
+      ],
+      "additionalProperties": false
+    },
+    "official_grade": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "evaluation_mode": {
+          "enum": [
+            "imported_not_rerun",
+            "live",
+            "synthetic_fixture"
+          ]
+        },
+        "grader_image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initial": {
+          "$ref": "#/$defs/grade_phase"
+        },
+        "final": {
+          "$ref": "#/$defs/grade_phase"
+        },
+        "evaluation_validity": {
+          "$ref": "#/$defs/validity"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "evaluation_mode",
+        "grader_image",
+        "initial",
+        "final",
+        "evaluation_validity"
+      ],
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "recording_mode": {
+          "enum": [
+            "legacy_import",
+            "live",
+            "synthetic_fixture"
+          ]
+        },
+        "imported_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_run_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "object",
+          "properties": {
+            "benchmark": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "source_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "asset_dataset_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "expected_output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "bundle_manifest_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task_metadata_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "public_prompt_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rubric_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "verifier_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "benchmark",
+            "task_id",
+            "source_revision",
+            "asset_dataset_revision",
+            "expected_output",
+            "bundle_manifest_ref",
+            "task_metadata_ref",
+            "public_prompt_ref",
+            "rubric_ref",
+            "verifier_ref"
+          ],
+          "additionalProperties": false
+        },
+        "agent": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "api",
+                "local",
+                "unknown"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "requested_model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "declared_fingerprint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "declared_fingerprint_verified": {
+              "const": false
+            },
+            "response_model_versions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "raw_runtime_ref": {
+              "$ref": "#/$defs/ref"
+            }
+          },
+          "required": [
+            "backend",
+            "provider",
+            "requested_model",
+            "declared_fingerprint",
+            "declared_fingerprint_verified",
+            "response_model_versions",
+            "raw_runtime_ref"
+          ],
+          "additionalProperties": false
+        },
+        "configuration": {
+          "type": "object",
+          "properties": {
+            "declared_seed": {},
+            "seed_in_native_requests": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "native_request_refs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ref"
+              }
+            },
+            "source_config_lock_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "resolved_config_verified": {
+              "const": false
+            },
+            "declared_max_turns": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source_code_binding": {
+              "enum": [
+                "unverified"
+              ]
+            }
+          },
+          "required": [
+            "declared_seed",
+            "seed_in_native_requests",
+            "native_request_refs",
+            "source_config_lock_ref",
+            "resolved_config_verified",
+            "declared_max_turns",
+            "source_code_binding"
+          ],
+          "additionalProperties": false
+        },
+        "environment": {
+          "type": "object",
+          "properties": {
+            "agent_runtime_provenance_ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_image_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "grader_image_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "isolation_verified": {
+              "const": false
+            }
+          },
+          "required": [
+            "agent_runtime_provenance_ref",
+            "agent_image_digest",
+            "grader_image_digest",
+            "isolation_verified"
+          ],
+          "additionalProperties": false
+        },
+        "status": {
+          "type": "object",
+          "properties": {
+            "termination": {
+              "enum": [
+                "assistant_finished",
+                "budget_exhausted",
+                "protocol_error",
+                "provider_error",
+                "tool_execution_error",
+                "interrupted",
+                "unknown"
+              ]
+            },
+            "source_stopped_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "protocol_validity": {
+              "$ref": "#/$defs/validity"
+            },
+            "execution_validity": {
+              "$ref": "#/$defs/validity"
+            },
+            "evaluation_validity": {
+              "$ref": "#/$defs/validity"
+            },
+            "task_outcome": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "enum": [
+                    "success",
+                    "partial",
+                    "failure",
+                    "unknown"
+                  ]
+                },
+                "policy": {
+                  "type": "string"
+                },
+                "source_ref": {
+                  "$ref": "#/$defs/ref"
+                }
+              },
+              "required": [
+                "status",
+                "policy",
+                "source_ref"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_completeness": {
+              "enum": [
+                "complete",
+                "incomplete"
+              ]
+            }
+          },
+          "required": [
+            "termination",
+            "source_stopped_reason",
+            "protocol_validity",
+            "execution_validity",
+            "evaluation_validity",
+            "task_outcome",
+            "evidence_completeness"
+          ],
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "offline_evidence_read": {
+              "type": "boolean"
+            },
+            "tool_reexecution_qualified": {
+              "const": false
+            },
+            "cold_resume_qualified": {
+              "const": false
+            },
+            "deterministic_model_replay": {
+              "const": false
+            }
+          },
+          "required": [
+            "offline_evidence_read",
+            "tool_reexecution_qualified",
+            "cold_resume_qualified",
+            "deterministic_model_replay"
+          ],
+          "additionalProperties": false
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "model_requests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "model_responses": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tool_calls": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tool_results": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "delivered_observations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "state_changes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "checkpoints": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "events": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "model_requests",
+            "model_responses",
+            "tool_calls",
+            "tool_results",
+            "delivered_observations",
+            "state_changes",
+            "checkpoints",
+            "events"
+          ],
+          "additionalProperties": false
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverage"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "references": {
+          "type": "object",
+          "properties": {
+            "raw_result": {
+              "$ref": "#/$defs/ref"
+            },
+            "trajectory": {
+              "$ref": "#/$defs/ref"
+            },
+            "state_changes": {
+              "$ref": "#/$defs/ref"
+            },
+            "artifacts": {
+              "$ref": "#/$defs/ref"
+            },
+            "official_grade": {
+              "$ref": "#/$defs/ref"
+            },
+            "checkpoints": {
+              "$ref": "#/$defs/ref"
+            }
+          },
+          "required": [
+            "raw_result",
+            "trajectory",
+            "state_changes",
+            "artifacts",
+            "official_grade",
+            "checkpoints"
+          ],
+          "additionalProperties": false
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "recording_mode",
+        "imported_at",
+        "source_run_id",
+        "task",
+        "agent",
+        "configuration",
+        "environment",
+        "status",
+        "capabilities",
+        "counts",
+        "coverage",
+        "checks",
+        "references",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "evidence_index": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "0.1.0"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "hash_algorithm": {
+          "const": "sha256"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "trajectory_head_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excludes": {
+          "const": [
+            "evidence_index.json"
+          ]
+        },
+        "trust_scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "hash_algorithm",
+        "files",
+        "trajectory_head_sha256",
+        "event_count",
+        "excludes",
+        "trust_scope"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/manifest"
+}

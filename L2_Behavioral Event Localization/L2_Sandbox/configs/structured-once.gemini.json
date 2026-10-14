@@ -1,0 +1,8 @@
+{
+  "mode": "structured-once",
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "CONFIGURE_YOUR_AVAILABLE_GEMINI_MODEL"
+  }
+}

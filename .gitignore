@@ -1,0 +1,49 @@
+# OS & IDE / Agent local files
+.DS_Store
+.agents/
+PROJECT_MEMORY.md
+
+# Python virtualenvs, caches & build artifacts
+.venv/
+.model-venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+*.whl
+*.zip
+*.tar.gz
+pytest_junit.xml
+test_results.log
+DELIVERY_MANIFEST.json
+
+# Secrets & environment variables
+.env
+.env.*
+!**/.env.example
+
+# L1 local runs, deliverables, third-party repos & benchmark datasets (data excluded, framework only)
+L1_sandbox/deliverables_by_model/
+L1_sandbox/deliverables_multitask/
+L1_sandbox/deliverables_multitask.zip
+L1_sandbox/C3_Experimental_Sandbox/runs/
+L1_sandbox/C3_Experimental_Sandbox/third_party/
+L1_sandbox/C3_Experimental_Sandbox/models/
+L1_sandbox/C3_Experimental_Sandbox/.l1-work-*/
+L1_sandbox/C3_Experimental_Sandbox/benchmarks/*/data/*
+!L1_sandbox/C3_Experimental_Sandbox/benchmarks/*/data/data.lock.json
+L1_sandbox/C3_Experimental_Sandbox/benchmarks/*/assets/
+L1_sandbox/C3_Experimental_Sandbox/examples/
+L1_sandbox/C3_Experimental_Sandbox/docs/l1/validation/
+L1_sandbox/C3_Experimental_Sandbox/docs/l1_v2/validation/
+
+# L2 local runs, example evidence bundles & validation outputs (data excluded, framework only)
+L2_Behavioral Event Localization/L2_Sandbox/runs/
+L2_Behavioral Event Localization/L2_Sandbox/examples/officeval003/
+L2_Behavioral Event Localization/L2_Sandbox/examples/analyst_loop_fixture/
+L2_Behavioral Event Localization/L2_Sandbox/examples/legacy_fixture/
+L2_Behavioral Event Localization/L2_Sandbox/examples/plans/
+L2_Behavioral Event Localization/L2_Sandbox/validation/

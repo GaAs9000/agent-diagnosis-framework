@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "officeval-bundle",
+    "task_id": "officeval_003",
+    "bundle_dir": "../../runs/integrated-delivery-001/bundle"
+  },
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "gemini-2.5-flash",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "parameters": {
+      "temperature": 0,
+      "maxOutputTokens": 8192
+    },
+    "supports_images": true
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "l1-office:0.2.0"
+  },
+  "evaluation": {
+    "adapter": "docker-verifier",
+    "image": "l1-office:0.2.0",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 20,
+    "max_tool_calls": 40,
+    "wall_time_seconds": 1200
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}

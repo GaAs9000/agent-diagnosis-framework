@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:l1:evidence:0.2.0",
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "0.2.0"
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "links": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "data": {
+          "type": "object"
+        },
+        "previous_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "event_id",
+        "seq",
+        "kind",
+        "observed_at",
+        "links",
+        "data",
+        "previous_sha256",
+        "sha256"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "0.2.0"
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "recording_mode": {
+          "enum": [
+            "live",
+            "test_fixture",
+            "recovered"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent": {
+          "type": "object"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "termination": {
+              "type": "string"
+            },
+            "protocol_validity": {
+              "enum": [
+                "valid",
+                "invalid",
+                "unknown"
+              ]
+            },
+            "execution_validity": {
+              "enum": [
+                "valid",
+                "invalid",
+                "unknown"
+              ]
+            },
+            "evaluation_validity": {
+              "enum": [
+                "valid",
+                "invalid",
+                "not_run",
+                "unknown"
+              ]
+            },
+            "task_outcome": {
+              "enum": [
+                "success",
+                "partial",
+                "failure",
+                "unknown"
+              ]
+            },
+            "evidence_completeness": {
+              "enum": [
+                "complete",
+                "incomplete"
+              ]
+            }
+          },
+          "required": [
+            "termination",
+            "protocol_validity",
+            "execution_validity",
+            "evaluation_validity",
+            "task_outcome",
+            "evidence_completeness"
+          ]
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object"
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "recording_mode",
+        "created_at",
+        "finished_at",
+        "task",
+        "agent",
+        "runtime",
+        "status",
+        "counts",
+        "coverage",
+        "capabilities",
+        "lineage",
+        "usage",
+        "config_sha256"
+      ]
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "0.2.0"
+        },
+        "episode_id": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "size_bytes"
+            ]
+          }
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trajectory_head_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trust_scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "episode_id",
+        "files",
+        "event_count",
+        "trajectory_head_sha256",
+        "trust_scope"
+      ]
+    }
+  }
+}

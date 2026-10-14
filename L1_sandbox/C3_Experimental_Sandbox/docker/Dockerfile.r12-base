@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=c3-r1-base:locked
+FROM ${BASE_IMAGE}
+RUN python -m pip install --no-cache-dir openpyxl==3.1.5 python-pptx==1.0.2

@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+USER root
+RUN groupadd --gid 1000 sandbox && useradd --uid 1000 --gid 1000 --no-create-home sandbox \
+    && mkdir -p /workspace && chown 1000:1000 /workspace
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+USER 1000:1000
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

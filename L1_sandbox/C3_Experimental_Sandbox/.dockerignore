@@ -1,0 +1,16 @@
+.venv
+.model-venv
+models
+runs
+__pycache__
+.pytest_cache
+
+.git
+third_party
+benchmarks
+examples
+.env
+.env.*
+*.zip
+build
+dist

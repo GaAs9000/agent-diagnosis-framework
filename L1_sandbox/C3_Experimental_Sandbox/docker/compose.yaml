@@ -1,0 +1,78 @@
+{
+  "services": {
+    "default": {
+      "image": "c3-synthetic-default:v0.1",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.agent",
+        "args": {
+          "PYTHON_BASE": "${PYTHON_BASE:-python:3.12-slim}"
+        }
+      },
+      "x-local": true,
+      "platform": "linux/arm64",
+      "user": "1000:1000",
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "network_mode": "none",
+      "cpus": 2,
+      "mem_limit": "4g",
+      "pids_limit": 128,
+      "working_dir": "/workspace",
+      "command": [
+        "sleep",
+        "infinity"
+      ],
+      "tmpfs": [
+        "/workspace:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0700",
+        "/tmp:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0700"
+      ],
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "stop_grace_period": "1s"
+    },
+    "grader": {
+      "image": "c3-synthetic-grader:v0.1",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.grader",
+        "args": {
+          "PYTHON_BASE": "${PYTHON_BASE:-python:3.12-slim}"
+        }
+      },
+      "x-local": true,
+      "platform": "linux/arm64",
+      "user": "1000:1000",
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "network_mode": "none",
+      "cpus": 2,
+      "mem_limit": "4g",
+      "pids_limit": 128,
+      "working_dir": "/workspace",
+      "command": [
+        "sleep",
+        "infinity"
+      ],
+      "tmpfs": [
+        "/workspace:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0700",
+        "/tmp:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0700"
+      ],
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "stop_grace_period": "1s"
+    }
+  }
+}

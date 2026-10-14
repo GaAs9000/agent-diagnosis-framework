@@ -1,0 +1,47 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "officeval-native",
+    "task_id": "officeval_003",
+    "source_dir": "../../third_party/OmegaUse-OfficeVal",
+    "data_dir": "../../benchmarks/officeval/data",
+    "assets_dir": "../../benchmarks/officeval/assets",
+    "data_lock": "../../benchmarks/officeval/data/data.lock.json",
+    "source_commit": "5f3da616ac6a0bc30ca35e9678f8f1eb255bd91a",
+    "dataset_revision": "cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5"
+  },
+  "model": {
+    "adapter": "openai-compatible",
+    "kind": "local",
+    "model": "YOUR_SERVED_MODEL_ID",
+    "api_key_env": null,
+    "base_url": "http://127.0.0.1:8000/v1",
+    "parameters": {
+      "temperature": 0,
+      "max_tokens": 8192
+    },
+    "supports_images": false
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "l1-office:0.2.0"
+  },
+  "evaluation": {
+    "adapter": "docker-verifier",
+    "image": "l1-office:0.2.0",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 20,
+    "max_tool_calls": 40,
+    "wall_time_seconds": 1200
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}

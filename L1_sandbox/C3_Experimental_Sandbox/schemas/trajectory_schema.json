@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "C3-E2 trajectory v1.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "episode_id",
+    "task_id",
+    "task_family_id",
+    "system_id",
+    "split",
+    "status",
+    "outcome",
+    "events",
+    "artifact_versions",
+    "checkpoint_refs",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "task_family_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "system_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "split": {
+      "enum": [
+        "development",
+        "exploration",
+        "confirmation",
+        "transfer"
+      ]
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failure",
+        "partial",
+        "unknown"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "required": [
+        "execution_valid",
+        "target_resolved",
+        "regression_free",
+        "task_completed"
+      ],
+      "properties": {
+        "execution_valid": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "target_resolved": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "regression_free": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "task_completed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "artifact_versions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "checkpoint_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "replay_qualified"
+        ],
+        "properties": {
+          "checkpoint_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "replay_qualified": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "raw": {
+            "type": "object"
+          },
+          "checkpoint_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "qualification_report_ref": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "replay_qualified": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "checkpoint_identity",
+                "qualification_report_ref"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "source",
+        "version",
+        "is_synthetic"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "is_synthetic": {
+          "type": "boolean"
+        },
+        "raw_files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "sha256",
+              "base64",
+              "records"
+            ],
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "base64": {
+                "type": "string",
+                "contentEncoding": "base64"
+              },
+              "records": {
+                "type": [
+                  "object",
+                  "array"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": {
+          "const": "success"
+        },
+        "outcome": {
+          "properties": {
+            "execution_valid": {
+              "const": true
+            },
+            "task_completed": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "failure"
+        },
+        "outcome": {
+          "properties": {
+            "execution_valid": {
+              "const": true
+            },
+            "task_completed": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "partial"
+        },
+        "outcome": {
+          "properties": {
+            "execution_valid": {
+              "const": true
+            },
+            "task_completed": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "unknown"
+        }
+      }
+    }
+  ],
+  "description": "Finite JSON only. Python validator additionally verifies base64 bytes, SHA256, decoded ordered records, and legacy evidence consistency. Native qualified references identify reports; D1 does not certify replay truth.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "source": {
+                "const": "legacy_officeval"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "unknown"
+          },
+          "outcome": {
+            "properties": {
+              "execution_valid": {
+                "const": null
+              },
+              "target_resolved": {
+                "const": null
+              },
+              "regression_free": {
+                "const": null
+              },
+              "task_completed": {
+                "const": null
+              }
+            }
+          },
+          "checkpoint_refs": {
+            "items": {
+              "properties": {
+                "replay_qualified": {
+                  "const": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "execution_valid": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "target_resolved": {
+                "enum": [
+                  false,
+                  null
+                ]
+              },
+              "regression_free": {
+                "enum": [
+                  false,
+                  null
+                ]
+              },
+              "task_completed": {
+                "enum": [
+                  false,
+                  null
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

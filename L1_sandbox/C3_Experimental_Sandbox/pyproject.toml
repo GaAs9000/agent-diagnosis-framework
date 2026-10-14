@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "c3-experimental-sandbox"
+version = "0.2.0"
+description = "Benchmark-driven agent execution and evidence sandbox, with legacy C3 compatibility"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+l1 = ["jsonschema>=4.18,<5"]
+inspect = ["inspect-ai==0.3.278"]
+test = ["pytest>=8,<10", "python-docx==1.2.0"]
+
+[project.scripts]
+c3 = "c3_sandbox.cli:main"
+c3-l1 = "c3_sandbox.l1.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["docker: explicit local Docker integration checks", "live_api: explicit paid API integration checks"]
+
+
+[tool.setuptools.package-data]
+"c3_sandbox.l1" = ["evidence.schema.json"]
+"c3_sandbox.l1.evidence" = ["schema.json"]

@@ -1,0 +1,9 @@
+{
+  "mode": "analyst",
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "CONFIGURE_YOUR_AVAILABLE_GEMINI_MODEL",
+    "api_key_env": "GEMINI_API_KEY"
+  }
+}

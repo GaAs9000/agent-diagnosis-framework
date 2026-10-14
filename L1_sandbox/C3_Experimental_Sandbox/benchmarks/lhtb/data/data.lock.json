@@ -1,0 +1,60 @@
+{
+  "schema_version": "0.2.0",
+  "source_commit": "7ca0cacea9bf6a0694eaad7306bed794eaaaabce",
+  "tasks": {
+    "sokoban": {
+      "bin/sokoban": {
+        "sha256": "15a009d9a767f49536301b2ff7b34df28a79490fc95b3e6c23375c435ad4a8b7",
+        "size_bytes": 356
+      },
+      "fetch_assets.sh": {
+        "sha256": "12a6c6cec243351af0d88f7180e1f3b96e7b9d681a5d546a435ccf9cf62c65c8",
+        "size_bytes": 1684
+      },
+      "instruction.md": {
+        "sha256": "5c187f521616cfadeaf1751f5c2a4d3193d593807b9d02530a6f463d5d4c35bb",
+        "size_bytes": 5408
+      },
+      "solution/solve.sh": {
+        "sha256": "2b3d839329b15326ae8f9a419f8b8e04ff432fa9da403eadba0ae66a78486610",
+        "size_bytes": 885
+      },
+      "task.toml": {
+        "sha256": "ee19e116c313f0d06d5a82984aa921a3f83c9c6439c0917652fff37d8a5ecad4",
+        "size_bytes": 1061
+      },
+      "tests/__pycache__/levels.cpython-311.pyc": {
+        "sha256": "4db5ead9ffad3ed29f1506c86a672ca07848767218cca6cee97ee47c25d377b3",
+        "size_bytes": 2948
+      },
+      "tests/__pycache__/sokoban_engine.cpython-311.pyc": {
+        "sha256": "17bd6251f8e82036118ab7979a0923220a8673a81716b4637b07682e7a7b3f42",
+        "size_bytes": 15389
+      },
+      "tests/__pycache__/test_outputs.cpython-311-pytest-8.4.1.pyc": {
+        "sha256": "b5468075e9455e540dee1fa8270821ed544da6aff8f15812b9bd333ae6777ab0",
+        "size_bytes": 19135
+      },
+      "tests/levels.py": {
+        "sha256": "e9f520503943370792a3f9214809c4c2c4619e27a37349e56ad0eea5da9b741b",
+        "size_bytes": 1532
+      },
+      "tests/microban.sok": {
+        "sha256": "f7f2fa0375e9677d894f81a96587648e8ae69785d0057e88eca8d74749dea331",
+        "size_bytes": 15760
+      },
+      "tests/sokoban_engine.py": {
+        "sha256": "3334d6c446a872af7b7ad1a00405fe5f12df3b1756087418399ce61d7c6d630f",
+        "size_bytes": 10085
+      },
+      "tests/test.sh": {
+        "sha256": "b82e1420ef94b4c08a9df58c85db2019f88007acef80e43b41225843c6f4b2d4",
+        "size_bytes": 734
+      },
+      "tests/test_outputs.py": {
+        "sha256": "991d121b3a1e0f437f9eac2c9a81b701453d11f093fce336ab5efc2276ae4fc2",
+        "size_bytes": 12497
+      }
+    }
+  }
+}

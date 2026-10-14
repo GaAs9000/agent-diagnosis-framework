@@ -1,0 +1,285 @@
+{
+  "version": "C3-E2-v1.0",
+  "probes": [
+    {
+      "probe_id": "original",
+      "kind": "original",
+      "mechanism": "original",
+      "payload": {},
+      "lines": [
+        "E2-S",
+        "E2-F"
+      ],
+      "control_id": null,
+      "matched_control_id": null,
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "visibility.compact",
+      "kind": "target",
+      "mechanism": "visibility",
+      "payload": {
+        "mode": "compact"
+      },
+      "lines": [
+        "E2-S"
+      ],
+      "control_id": "visibility.compact.matched",
+      "matched_control_id": "visibility.compact.matched",
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "redundant_observation_views"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "visibility.compact.matched",
+      "kind": "matched_control",
+      "mechanism": "visibility",
+      "payload": {
+        "mode": "sham",
+        "matched_mode": "compact"
+      },
+      "lines": [
+        "E2-S"
+      ],
+      "control_id": null,
+      "matched_control_id": null,
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "redundant_observation_views"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "feedback.aggregate",
+      "kind": "target",
+      "mechanism": "feedback",
+      "payload": {
+        "mode": "aggregate"
+      },
+      "lines": [
+        "E2-S"
+      ],
+      "control_id": "feedback.aggregate.matched",
+      "matched_control_id": "feedback.aggregate.matched",
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "public_feedback_fields"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "feedback.aggregate.matched",
+      "kind": "matched_control",
+      "mechanism": "feedback",
+      "payload": {
+        "mode": "sham",
+        "matched_mode": "aggregate"
+      },
+      "lines": [
+        "E2-S"
+      ],
+      "control_id": null,
+      "matched_control_id": null,
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "public_feedback_fields"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "visibility.expanded",
+      "kind": "target",
+      "mechanism": "visibility",
+      "payload": {
+        "mode": "expanded"
+      },
+      "lines": [
+        "E2-F"
+      ],
+      "control_id": "visibility.expanded.matched",
+      "matched_control_id": "visibility.expanded.matched",
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "redundant_observation_views"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "visibility.expanded.matched",
+      "kind": "matched_control",
+      "mechanism": "visibility",
+      "payload": {
+        "mode": "sham",
+        "matched_mode": "expanded"
+      },
+      "lines": [
+        "E2-F"
+      ],
+      "control_id": null,
+      "matched_control_id": null,
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "redundant_observation_views"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "feedback.structured",
+      "kind": "target",
+      "mechanism": "feedback",
+      "payload": {
+        "mode": "structured"
+      },
+      "lines": [
+        "E2-F"
+      ],
+      "control_id": "feedback.structured.matched",
+      "matched_control_id": "feedback.structured.matched",
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "public_feedback_fields"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    },
+    {
+      "probe_id": "feedback.structured.matched",
+      "kind": "matched_control",
+      "mechanism": "feedback",
+      "payload": {
+        "mode": "sham",
+        "matched_mode": "structured"
+      },
+      "lines": [
+        "E2-F"
+      ],
+      "control_id": null,
+      "matched_control_id": null,
+      "leakage_policy": {
+        "allowlist": "closed_generic_public_observation_presentation",
+        "no_answer_material": true,
+        "no_task_specific_patch": true,
+        "no_target_object_paths": true,
+        "per_task_review": "required_including_controls"
+      },
+      "preconditions": [
+        "public_feedback_fields"
+      ],
+      "preserve": [
+        "necessary_inputs",
+        "necessary_tools",
+        "sampling",
+        "temperature",
+        "budgets"
+      ],
+      "requires_fresh_execution": true
+    }
+  ]
+}

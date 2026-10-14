@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "lhtb-native",
+    "task_id": "sokoban",
+    "data_dir": "../../benchmarks/lhtb/data",
+    "data_lock": "../../benchmarks/lhtb/data/data.lock.json",
+    "source_commit": "7ca0cacea9bf6a0694eaad7306bed794eaaaabce"
+  },
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "gemini-3.5-flash-lite",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "parameters": {
+      "temperature": 0,
+      "maxOutputTokens": 8192
+    },
+    "supports_images": false
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "zli12321/lhtb-sokoban:20260615"
+  },
+  "evaluation": {
+    "adapter": "lhtb-verifier",
+    "image": "zli12321/lhtb-sokoban:20260615",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 20,
+    "max_tool_calls": 30,
+    "wall_time_seconds": 600
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}

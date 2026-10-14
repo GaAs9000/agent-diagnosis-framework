@@ -1,0 +1,24 @@
+.venv/
+.model-venv/
+models/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+runs/
+.env
+
+
+# L1 local dependency caches, private runs and secrets
+third_party/
+benchmarks/*/data/*
+!benchmarks/*/data/data.lock.json
+benchmarks/*/assets/
+examples/
+docs/l1/validation/
+docs/l1_v2/validation/
+.l1-work-*/
+.env.*
+!.env.example
+build/
+dist/

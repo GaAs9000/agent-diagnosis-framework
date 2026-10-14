@@ -1,0 +1,86 @@
+{
+  "schema_version": "integrated-dual-backend-v1",
+  "name": "c3-e2-dual-backend-delivery",
+  "seed": 2026,
+  "task_ids": [
+    "officeval_002",
+    "officeval_003",
+    "officeval_006",
+    "officeval_012",
+    "officeval_015",
+    "officeval_018",
+    "officeval_033",
+    "officeval_037"
+  ],
+  "budgets": {
+    "max_original_episodes": 16,
+    "max_execution_fragments": 100,
+    "max_error_revisions": 3,
+    "fragment_definition": "one complete original episode or one restored suffix; model requests and tool calls are separate counters"
+  },
+  "models": {
+    "executor": {
+      "backend": "api",
+      "provider": "gemini",
+      "name": "gemini-3.5-flash-lite",
+      "fingerprint": "gemini-3.5-flash-lite-wire-v1",
+      "agent_image": "sha256:e336609b5a86ee91c28751e7cfd2a067db3ac4442d0263b9709de9b3a16ebef3",
+      "max_turns": 20,
+      "max_tokens": 4096,
+      "context_window": 32768,
+      "generation_timeout_seconds": 240
+    },
+    "reference": {
+      "backend": "saved_reference",
+      "provider": "saved_reference",
+      "name": "Qwen3-4B",
+      "fingerprint": "083da37e056d0d55d9c39a8fea0085e0b35ee2196b3a1f2636412f1a0ca32393",
+      "agent_image": "sha256:2918992de03997ecb5715bbfc0f7c9b0a69aeeb3a6f5d956b106edece34a794c",
+      "qualification_path": "runs/e2-r1-1/originals/officeval_012/model_qualification.json",
+      "max_turns": 10,
+      "max_tokens": 2048,
+      "context_window": 16384,
+      "generation_timeout_seconds": 120
+    },
+    "diagnostician": {
+      "backend": "api",
+      "provider": "gemini",
+      "name": "gemini-3.5-flash-lite",
+      "fingerprint": "gemini-3.5-flash-lite-wire-v1",
+      "max_tokens": 1024
+    }
+  },
+  "identities": {
+    "grader": {
+      "image_id": "sha256:a91b8477740e2fe7c47ede272568c6c917bc61a8e5940e677445c3684b6abb3f",
+      "role": "grader"
+    },
+    "tokenizer": {
+      "name": "model-specific tokenizer service",
+      "fingerprints": {
+        "target": "gemini-native-wire-v1",
+        "reference": "legacy-reference-qualification"
+      }
+    },
+    "server": {
+      "name": "local-serial-mlx-service",
+      "host": "127.0.0.1",
+      "model_port": 18080,
+      "tokenizer_port": 18081,
+      "platform": "darwin/arm64",
+      "concurrency": 1,
+      "auto_launch": true
+    }
+  },
+  "paths": {
+    "bundle_root": "runs/integrated-delivery-001/bundle",
+    "assets": "runs/integrated-delivery-001/bundle/inputs",
+    "verifiers": "runs/integrated-delivery-001/bundle/verifiers"
+  },
+  "services": {
+    "model_endpoint": "http://127.0.0.1:18080/v1",
+    "tokenizer_endpoint": "http://127.0.0.1:18081/tokenize",
+    "grader_endpoint": "docker://sha256:a91b8477740e2fe7c47ede272568c6c917bc61a8e5940e677445c3684b6abb3f",
+    "diagnostic_endpoint": "http://127.0.0.1:18080/v1/chat/completions"
+  }
+}

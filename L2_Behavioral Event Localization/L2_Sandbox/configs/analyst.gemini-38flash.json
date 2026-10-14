@@ -1,0 +1,18 @@
+{
+  "mode": "analyst",
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "gemini-3.8-flash",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "parameters": {
+      "temperature": 0
+    }
+  },
+  "budget": {
+    "max_analyst_requests": 10,
+    "max_retrieval_bytes": 1048576,
+    "wall_time_seconds": 300
+  }
+}

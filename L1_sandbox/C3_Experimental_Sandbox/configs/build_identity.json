@@ -1,0 +1,23 @@
+{
+  "purpose": "infrastructure_build_identity_only",
+  "host_python": "3.12.14",
+  "images": {
+    "python_base": {
+      "image_id": "sha256:ce9a404c2c0138e747a43e6ea022d2f7e670ed868df35d627a663ba7fb940ea9",
+      "repo_digests": [
+        "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+      ],
+      "platform": "linux/arm64"
+    },
+    "agent": {
+      "image_id": "sha256:20a1c66f6bfdf26d6d872c638fb96efe1e840b27612f058d66d68f6bfe263f38",
+      "repo_digests": [],
+      "platform": "linux/arm64"
+    },
+    "grader": {
+      "image_id": "sha256:2b15279a62849a935c462a8a1d48ff77f5d09e84c2dda639c97a412e448475f2",
+      "repo_digests": [],
+      "platform": "linux/arm64"
+    }
+  }
+}

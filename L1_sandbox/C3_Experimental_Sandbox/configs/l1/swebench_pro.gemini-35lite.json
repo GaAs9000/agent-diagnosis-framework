@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "swebench_pro-native",
+    "task_id": "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+    "data_dir": "../../benchmarks/swebench_pro/data",
+    "data_lock": "../../benchmarks/swebench_pro/data/data.lock.json",
+    "source_commit": "scaleapi/SWE-bench_Pro-os:v2"
+  },
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "gemini-3.5-flash-lite",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "parameters": {
+      "temperature": 0,
+      "maxOutputTokens": 8192
+    },
+    "supports_images": false
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "ghcr.io/scaleapi/swe-bench_pro-v2:instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2"
+  },
+  "evaluation": {
+    "adapter": "swebench_pro-verifier",
+    "image": "ghcr.io/scaleapi/swe-bench_pro-v2:instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 30,
+    "max_tool_calls": 40,
+    "wall_time_seconds": 1200
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "officeval-native",
+    "task_id": "officeval_003",
+    "source_dir": "../../third_party/OmegaUse-OfficeVal",
+    "data_dir": "../../benchmarks/officeval/data",
+    "assets_dir": "../../benchmarks/officeval/assets",
+    "data_lock": "../../benchmarks/officeval/data/data.lock.json",
+    "source_commit": "5f3da616ac6a0bc30ca35e9678f8f1eb255bd91a",
+    "dataset_revision": "cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5"
+  },
+  "model": {
+    "adapter": "gemini",
+    "kind": "api",
+    "model": "gemini-3.5-flash-lite",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "parameters": {
+      "temperature": 0,
+      "maxOutputTokens": 8192
+    },
+    "supports_images": true
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "l1-office:0.2.0"
+  },
+  "evaluation": {
+    "adapter": "docker-verifier",
+    "image": "l1-office:0.2.0",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 35,
+    "max_tool_calls": 50,
+    "wall_time_seconds": 1200
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0",
+    "system_prompt": "You are the tested agent in an execution-and-evidence sandbox. Complete the user's task using the supplied native tools. Original input files are in /workspace/input. Put ONLY final deliverables in /workspace/submission. Preserve required filenames unless the task says otherwise. Do not put reference inputs into submission unless requested. You may use /workspace for scripts and intermediate files. Shell calls run in fresh Linux containers without network. Only /workspace persists; working directory, environment variables, /tmp and background processes do not persist. Do not claim to have run a tool in text: use actual native tool calls. No scoring rubrics or grader are accessible to you. You operate under a strict execution budget: maximum {max_model_requests} model requests and maximum {max_tool_calls} tool calls (wall time limit: {wall_time_seconds}s). Do not make dozens of exploratory shell calls. Inspect input files quickly, write a python script to process the document, execute the script to verify and save the final deliverable directly into /workspace/submission, and conclude your work promptly."
+  }
+}

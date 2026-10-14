@@ -1,0 +1,11 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+COPY frozen/verifiers/ /opt/officeval/verifiers/
+COPY frozen/manifest.json /opt/officeval/manifest.json
+COPY src/c3_sandbox/r1/officeval.py /opt/grader/officeval.py
+COPY docker/r1_grader.py /opt/grader/r1_grader.py
+RUN chmod -R a-w /opt/officeval /opt/grader
+WORKDIR /opt/grader
+USER 65532:65532
+ENTRYPOINT ["python", "-I", "/opt/grader/r1_grader.py"]
