@@ -1,6 +1,6 @@
 # L3 · Agent Capability Boundary Discovery（跨任务能力边界发现）
 
-本目录为三层研究架构中的 **L3 层（Capability Boundary Discovery）**，负责在 **L1（Execution Sandbox）** 客观执行证据与 **L2（Behavioral Event Localization）** 单任务行为诊断包的基础上，跨任务、跨模型、跨基准提炼并验证 Agent 的条件性能力边界。
+本目录研究指定模型、提示、工具与资源配置下，任务表现随可操控条件如何变化，以及这些规律能否预测未见任务。总体研究保持 L1 执行证据 → L2 行为发现 → L3 能力边界；预算和条件实验可以直接调用 L1，不依赖 L2 的实现或机制库。
 
 ---
 
@@ -9,8 +9,8 @@
 | 维度 | 说明 |
 | :--- | :--- |
 | **核心问题** | Agent 在什么任务条件、环境约束与交互模式下容易成功或失败？ |
-| **上游输入** | L2 产出的结构化 `Diagnosis Package`（含 `FactRecord`、`EventLocalization`、`Hypothesis`、`ExperimentReceipt`）与 L1 密封执行证据 |
-| **核心机制** | 跨任务模式聚合（Cross-task Analysis） $\rightarrow$ 能力边界假说生成（Boundary Hypothesis） $\rightarrow$ 独立任务与受控分支验证（Counterfactual & Out-of-Task Validation） |
+| **上游输入** | L1 完整执行包、任务家族与条件、完整策略配置、官方终点；L2 行为解释是可选假说来源 |
+| **核心机制** | 冻结条件矩阵 → 独立完整运行 → 配对条件效应 → 独立家族与自然任务验证 |
 | **最终产物** | **Capability Boundary Report（能力边界与适用条件报告）** |
 
 ---
@@ -25,9 +25,12 @@
 
 ---
 
-## 3. 模块结构规划
+## 3. 实现与当前边界
 
-- `schemas/`：跨任务模式聚类、能力边界假说与验证报告的数据合同定义
-- `src/`：L3 跨任务聚合器、条件归因分析器与验证实验编排器
-- `configs/`：跨基准（B1 OfficeVal / B2 LHTB / B3 SWE-bench Pro V2）聚合分析配置
-- `tests/`：L3 合同与聚合逻辑单元测试
+`L3_Sandbox/` 实现 `plan → run → outcomes → report`，仅依赖共享 L1。它支持预算试跑和公开结构信息 × 预算的条件矩阵；默认只生成和检查计划，真实模型运行必须显式使用 `--execute`。
+
+- 当前方案：[L3 · 条件效应与能力边界](https://app.notion.com/p/ff0615f526aa4de8b3dd517a2a7e6379)。
+- 使用与限制：[L3_Sandbox/README.md](L3_Sandbox/README.md)。
+- 进度：[项目进度与验收台账](https://app.notion.com/p/99e8ebf3fc84451489f60a57530efe5d)。
+
+工程实现与离线测试不构成条件效应或能力边界证据。预算 pilot、M2 基线和正式留出验证的完成状态，以真实运行记录为准。

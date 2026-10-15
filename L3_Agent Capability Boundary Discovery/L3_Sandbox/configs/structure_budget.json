@@ -1,0 +1,111 @@
+{
+  "schema_version": "l3-plan-0.1",
+  "experiment_id": "officeval-structure-budget-development-v1",
+  "purpose": "pilot",
+  "design": "structure_budget",
+  "base_config": "../../../L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json",
+  "tasks": [
+    {
+      "task_id": "officeval_004",
+      "family_id": "officeval-family-unresolved",
+      "family_verified": false,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Two editable Word documents; formatting from public reference images. Provisional pilot selection, not heldout evidence."
+    },
+    {
+      "task_id": "officeval_010",
+      "family_id": "officeval-family-unresolved",
+      "family_verified": false,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Editable flowchart modification within a Word document; distinct public operation from 004."
+    },
+    {
+      "task_id": "officeval_050",
+      "family_id": "officeval-family-unresolved",
+      "family_verified": false,
+      "split": "development",
+      "file_type": "powerpoint",
+      "selection_reason": "Reconstruct two slides as editable content; PowerPoint coverage."
+    },
+    {
+      "task_id": "officeval_085",
+      "family_id": "officeval-family-unresolved",
+      "family_verified": false,
+      "split": "development",
+      "file_type": "excel",
+      "selection_reason": "Editable charts over three spreadsheets; Excel chart generation coverage."
+    },
+    {
+      "task_id": "officeval_095",
+      "family_id": "officeval-family-unresolved",
+      "family_verified": false,
+      "split": "development",
+      "file_type": "excel",
+      "selection_reason": "Editable doughnut chart from survey workbook; Excel presentation coverage."
+    }
+  ],
+  "exclude_task_ids": [
+    "officeval_003",
+    "officeval_033",
+    "officeval_060",
+    "officeval_070",
+    "officeval_090"
+  ],
+  "conditions": [
+    {
+      "condition_id": "original_035",
+      "max_model_requests": 35,
+      "context": "original"
+    },
+    {
+      "condition_id": "placebo_035",
+      "max_model_requests": 35,
+      "context": "placebo"
+    },
+    {
+      "condition_id": "structure_035",
+      "max_model_requests": 35,
+      "context": "structure"
+    },
+    {
+      "condition_id": "original_070",
+      "max_model_requests": 70,
+      "context": "original"
+    },
+    {
+      "condition_id": "placebo_070",
+      "max_model_requests": 70,
+      "context": "placebo"
+    },
+    {
+      "condition_id": "structure_070",
+      "max_model_requests": 70,
+      "context": "structure"
+    }
+  ],
+  "replicates": 3,
+  "shared_budget": {
+    "max_tool_calls": 140,
+    "wall_time_seconds": 10800,
+    "max_total_tokens": null
+  },
+  "limits": {
+    "max_concurrency": 2,
+    "rpm": 30,
+    "tpm": 10000000,
+    "max_http_attempts": 18900,
+    "max_replacements_per_slot": 2
+  },
+  "analysis": {
+    "primary_comparison": [
+      "structure_070",
+      "placebo_070"
+    ],
+    "minimum_effect": 0.1,
+    "bootstrap_samples": 2000,
+    "seed": 20261015
+  },
+  "schedule_seed": 20261015
+}
