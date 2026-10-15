@@ -137,12 +137,13 @@ def test_l2_rejects_infrastructure_grade(tmp_path, monkeypatch):
     package = tmp_path / 'l2-package'
     package.mkdir()
     write_json(package, 'manifest.json', {
-        'episode_id': 'lhtb-scorer-failure-fixture', 'benchmark': 'lhtb',
-        'status': {'execution_validity': 'valid', 'evaluation_validity': 'invalid'}
+        'episode_id': 'lhtb-scorer-failure-fixture', 'benchmark': 'lhtb', 'recording_mode': 'test_fixture',
+        'task': {'benchmark': 'lhtb', 'task_id': 'sokoban'},
+        'status': {'execution_validity': 'valid', 'evaluation_validity': 'invalid', 'evidence_completeness': 'complete'}
     })
     write_json(package, 'artifacts/inventory.json', {'files': [{'path': 'moves.log'}]})
     write_json(package, 'official_grade.json', grade)
     outcome = l2.L1Package(package).outcome()
     assert outcome['valid'] is False
     assert outcome['y'] is None
-    assert outcome['reason'] == 'scorer_exception'
+    assert outcome['reason'] == 'infrastructure_failure'

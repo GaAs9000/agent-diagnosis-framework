@@ -65,11 +65,12 @@ def test_l2_rejects_scorer_stop_with_nonempty_official_result(tmp_path, monkeypa
     package = tmp_path / 'package'
     package.mkdir()
     write_json(package, 'manifest.json', {
-        'episode_id': 'officeval-scorer-failure-fixture', 'benchmark': 'officeval',
-        'status': {'execution_validity': 'valid', 'evaluation_validity': 'invalid'}})
+        'episode_id': 'officeval-scorer-failure-fixture', 'benchmark': 'officeval', 'recording_mode': 'test_fixture',
+        'task': {'benchmark': 'officeval', 'task_id': 'officeval_003'},
+        'status': {'execution_validity': 'valid', 'evaluation_validity': 'invalid', 'evidence_completeness': 'complete'}})
     write_json(package, 'artifacts/inventory.json', {'files': [{'path': 'answer.docx'}]})
     write_json(package, 'official_grade.json', result)
     outcome = l2.L1Package(package).outcome()
     assert outcome['valid'] is False
     assert outcome['y'] is None
-    assert outcome['reason'] == 'scorer_exception'
+    assert outcome['reason'] == 'infrastructure_failure'

@@ -20,11 +20,13 @@ def _finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def study_outcome(package: Path, *, verify_evidence: bool = False) -> dict:
+def study_outcome(package: Path, *, verify_evidence: bool = False,
+                  allow_test_fixture: bool = False) -> dict:
     """Require actual grader health before counting any score or agent zero.
 
     Verification establishes self-consistency only; runners must separately bind
-    the evidence index to their sealed expected trial identity.
+    the evidence index to their sealed expected trial identity. Synthetic L2 unit
+    fixtures require explicit opt-in; production baseline callers must not opt in.
     """
     package = Path(package)
     out = dict(study_valid=False, study_outcome_y=None, zero_reason=None,
@@ -40,7 +42,8 @@ def study_outcome(package: Path, *, verify_evidence: bool = False) -> dict:
         out['native_evaluation_validity'] = status.get('evaluation_validity')
         if (status.get('execution_validity') != 'valid'
                 or status.get('evidence_completeness') != 'complete'
-                or manifest.get('recording_mode') != 'live'):
+                or manifest.get('recording_mode') not in (
+                    ('live', 'test_fixture') if allow_test_fixture else ('live',))):
             return invalid('invalid_execution_or_evidence')
         if verify_evidence:
             from ..package import verify_package

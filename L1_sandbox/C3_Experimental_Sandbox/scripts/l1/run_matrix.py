@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import copy
 import csv
 import json
-import math
 import os
 from pathlib import Path
 import sys
@@ -65,27 +64,14 @@ def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
     proj = grade.get('projection') or {}
     raw = grade.get('official_raw') if isinstance(grade.get('official_raw'), dict) else {}
 
-    # A missing artifact or an error envelope is not an official zero score.
-    # Keep invalid execution/evaluation out of baseline statistics even when a
-    # grader happened to produce a numeric result for the final state.
-    score_eligible = (exec_valid == 'valid' and eval_valid == 'valid'
-                      and proj.get('evaluation_validity') == 'valid'
-                      and bool(raw) and raw.get('status') != 'error' and not raw.get('error'))
-    score_classification = 'official_score' if score_eligible else (
-        'invalid_execution' if exec_valid != 'valid' else 'invalid_official_evaluation')
-    if score_eligible:
-        completion_rate = proj.get('completion_rate')
-        dim1 = raw.get('dim1_pass') if 'dim1_pass' in raw else (proj.get('official_dimensions') or {}).get('passed')
-        if type(completion_rate) not in (int, float) or not math.isfinite(completion_rate):
-            completion_rate = None
-            dim1 = None
-            score_eligible = False
-            score_classification = 'undefined_official_endpoint'
-        elif completion_rate == 0:
-            score_classification = 'official_zero'
-    else:
-        completion_rate = None
-        dim1 = None
+    # One research denominator shared with L2. Native rubric validity remains
+    # separately visible: a healthy missing delivery is a study zero.
+    study = study_outcome(package)
+    score_eligible = study['study_valid']
+    completion_rate = study['study_outcome_y']
+    score_classification = study['study_classification']
+    dim1 = (raw.get('dim1_pass') if 'dim1_pass' in raw else
+            (proj.get('official_dimensions') or {}).get('passed')) if score_eligible else None
 
     idx_path = package / 'checkpoints/index.json'
     eligible_cps = 0
@@ -113,7 +99,7 @@ def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
         'model_version': versions[-1] if versions else None,
         'retries': retries,
         'config_sha256': manifest.get('config_sha256'),
-        **study_outcome(package),
+        **study,
     }
 
 

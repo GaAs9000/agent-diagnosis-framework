@@ -106,7 +106,7 @@ def test_retry_backoff_exhaustion_keeps_wall_budget(tmp_path, config, components
     row = matrix_script.summarize_episode('fixture', 0, out)
     assert row['completion_rate'] is None
     assert row['score_eligible'] is False
-    assert row['score_classification'] == 'invalid_execution'
+    assert row['score_classification'] == 'invalid_execution_or_evidence'
 
 
 @pytest.mark.parametrize('response,expected_validity', [
@@ -138,32 +138,48 @@ def matrix_script():
     return module
 
 
-@pytest.mark.parametrize('execution,evaluation,projection,grade_status,files,expected,classification', [
-    ('invalid', 'valid', 'valid', 'ok', ['deliverable'], None, 'invalid_execution'),
-    ('valid', 'invalid', 'invalid', 'error', ['deliverable'], None, 'invalid_official_evaluation'),
-    ('valid', 'invalid', 'invalid', 'error', [], None, 'invalid_official_evaluation'),
-    ('valid', 'valid', 'invalid', 'error', ['deliverable'], None, 'invalid_official_evaluation'),
-    ('valid', 'valid', 'valid', 'error', ['deliverable'], None, 'invalid_official_evaluation'),
-    ('valid', 'valid', 'valid', 'ok', [], 0.0, 'official_zero'),
-    ('valid', 'valid', 'valid', 'ok', ['damaged'], 0.0, 'official_zero'),
-    ('valid', 'valid', 'valid', 'ok', ['deliverable'], 0.5, 'official_score'),
-    ('valid', 'valid', 'valid', 'ok', ['deliverable'], None, 'undefined_official_endpoint'),
+@pytest.mark.parametrize('case,expected', [
+    ('invalid_execution', None), ('missing_grade', None), ('process_failure', None),
+    ('malformed_grade', None), ('projection_mismatch', None),
+    ('missing_delivery', 0.0), ('damaged_delivery', 0.0),
+    ('valid_zero', 0.0), ('valid_score', 0.5), ('undefined_endpoint', None),
 ])
-def test_matrix_validity_gates_actual_packages(tmp_path, matrix_script, execution, evaluation, projection,
-                                               grade_status, files, expected, classification):
-    (tmp_path / 'artifacts').mkdir()
-    (tmp_path / 'manifest.json').write_text(json.dumps({'status': {
-        'execution_validity': execution, 'evaluation_validity': evaluation}}))
-    (tmp_path / 'artifacts/inventory.json').write_text(json.dumps({'files': files}))
-    rate = expected if expected is not None else (None if classification == 'undefined_official_endpoint' else 0.8)
-    (tmp_path / 'official_grade.json').write_text(json.dumps({
-        'projection': {'evaluation_validity': projection, 'completion_rate': rate},
-        'official_raw': {'status': grade_status, 'dim1_pass': bool(expected)}}))
-    row = matrix_script.summarize_episode('fixture', 0, tmp_path)
-    assert row['completion_rate'] == expected
-    assert row['score_eligible'] == (expected is not None)
-    assert row['score_classification'] == classification
-    if expected is None: assert row['dim1'] is None
+def test_matrix_validity_gates_actual_packages(tmp_path, matrix_script, case, expected):
+    from c3_sandbox.l1.evaluation.officeval import interpret
+    manifest = {'episode_id': 'matrix-fixture', 'recording_mode': 'live',
+                'task': {'task_id': 'officeval_003', 'benchmark': 'officeval'},
+                'status': {'execution_validity': 'valid', 'evaluation_validity': 'valid',
+                           'evidence_completeness': 'complete'}}
+    raw = {'id': '003', 'file_name': 'result.docx', 'status': 'ok', 'error': None,
+           'dim1_pass': True, 'dim1_reason': '', 'dim2_items': [],
+           'total_score': 5, 'max_score': 10}
+    if case == 'invalid_execution': manifest['status']['execution_validity'] = 'invalid'
+    if case in ('missing_delivery', 'damaged_delivery'):
+        raw.update(status='error', error='FileNotFoundError' if case == 'missing_delivery' else 'BadZipFile',
+                   dim1_pass=False, total_score=0)
+        manifest['status']['evaluation_validity'] = 'invalid'
+    if case == 'valid_zero': raw.update(total_score=0)
+    if case == 'malformed_grade': raw.pop('id')
+    if case == 'undefined_endpoint': raw.update(total_score=0, max_score=0)
+    projection = interpret(raw, 'officeval_003')
+    if case == 'projection_mismatch': projection['completion_rate'] = .8
+    grade = {'official_raw': raw, 'projection': projection,
+             'process': {'container_exit_code': 1 if case == 'process_failure' else 0}}
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    if case != 'missing_grade':
+        (tmp_path / 'official_grade.json').write_text(json.dumps(grade))
+    worker = tmp_path / 'grading/worker-output/worker.json'
+    worker.parent.mkdir(parents=True)
+    worker.write_text(json.dumps({'official_returned': True, 'exception': None}))
+    row = matrix_script.summarize_episode('officeval_003', 0, tmp_path)
+    assert row['completion_rate'] == row['study_outcome_y'] == expected
+    assert row['score_eligible'] == row['study_valid'] == (expected is not None)
+    assert row['score_classification'] == row['study_classification']
+    if expected is None:
+        assert row['dim1'] is None
+    elif case in ('missing_delivery', 'damaged_delivery'):
+        assert row['evaluation_validity'] == row['native_evaluation_validity'] == 'invalid'
+        assert row['zero_reason'] == 'missing_or_damaged_delivery'
 
 
 def test_matrix_missing_grade_is_undefined(tmp_path, matrix_script):

@@ -114,3 +114,63 @@ def test_lhtb_inconsistent_band_and_pass_fail_closed(package, band, code, case):
                                             'process': {'container_exit_code': code}})
     (package / 'grading/worker-output/pytest.xml').write_text('<testsuite><testcase name="test_sokoban_progress"><failure message="AssertionError: Band 0 &lt; pass threshold 1."/></testcase></testsuite>')
     assert not study_outcome(package)['study_valid']
+
+
+@pytest.mark.parametrize('case', ['missing_grade', 'infra_with_empty_inventory', 'missing_worker',
+                                  'unknown_execution', 'incomplete_evidence', 'fixture_mode'])
+def test_empty_inventory_never_bypasses_health_gates(package, case):
+    write(package / 'artifacts/inventory.json', {'files': []})
+    manifest = json.loads((package / 'manifest.json').read_text())
+    if case == 'missing_grade':
+        (package / 'official_grade.json').unlink()
+    elif case == 'infra_with_empty_inventory':
+        grade = json.loads((package / 'official_grade.json').read_text())
+        grade['error_kind'] = 'infrastructure'
+        write(package / 'official_grade.json', grade)
+    elif case == 'missing_worker':
+        (package / 'grading/worker-output/worker.json').unlink()
+    elif case == 'unknown_execution':
+        manifest['status']['execution_validity'] = 'unknown'
+    elif case == 'incomplete_evidence':
+        manifest['status'].pop('evidence_completeness')
+    elif case == 'fixture_mode':
+        manifest['recording_mode'] = 'test_fixture'
+    write(package / 'manifest.json', manifest)
+    assert study_outcome(package)['study_valid'] is False
+
+
+def test_fixture_opt_in_requires_same_grader_health(package):
+    manifest = json.loads((package / 'manifest.json').read_text())
+    manifest['recording_mode'] = 'test_fixture'
+    write(package / 'manifest.json', manifest)
+    assert study_outcome(package, allow_test_fixture=True)['study_valid']
+    (package / 'grading/worker-output/worker.json').unlink()
+    assert not study_outcome(package, allow_test_fixture=True)['study_valid']
+
+
+def test_shared_l2_matrix_endpoint_and_raw_immutability(package):
+    import importlib.util
+    from l2_sandbox.evidence.l1 import L1Package
+    # No inventory is required to infer a zero: the returned official delivery
+    # error and healthy worker provide the evidence. Conversely inventory alone
+    # cannot establish grader health (covered above).
+    manifest = json.loads((package / 'manifest.json').read_text())
+    manifest['episode_id'] = 'shared-outcome-fixture'
+    write(package / 'manifest.json', manifest)
+    from c3_sandbox.l1.storage import file_digest
+    write(package / 'evidence_index.json', {'episode_id': manifest['episode_id'], 'files': [
+        {'path': p.relative_to(package).as_posix(), 'sha256': file_digest(p), 'size_bytes': p.stat().st_size}
+        for p in sorted(package.rglob('*')) if p.is_file()]})
+    before = {p.relative_to(package): p.read_bytes() for p in package.rglob('*') if p.is_file()}
+    script = Path(__file__).resolve().parents[2] / 'scripts/l1/run_matrix.py'
+    spec = importlib.util.spec_from_file_location('matrix_shared_outcome', script)
+    matrix = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix)
+    row = matrix.summarize_episode('officeval_003', 0, package)
+    outcome = L1Package(package).outcome()
+    assert row['study_outcome_y'] == row['completion_rate'] == outcome['y'] == 0
+    assert row['study_valid'] == row['score_eligible'] == outcome['valid'] is True
+    assert row['endpoint_version'] == outcome['endpoint_version']
+    assert outcome['native_evaluation_validity'] == row['evaluation_validity'] == 'invalid'
+    assert outcome['native_status'] == 'error'
+    assert before == {p.relative_to(package): p.read_bytes() for p in package.rglob('*') if p.is_file()}
