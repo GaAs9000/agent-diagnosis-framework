@@ -176,3 +176,37 @@ def test_pre_response_limit_legacy_tag_and_group_migrate_without_recall(tmp_path
     assert migrated['input_sha256'] == original['input_sha256']
     assert migrated['analyst_group'] == 'C'
     assert result['scores']['analysts'][migrated['analyst']]['analyst_group'] == 'C'
+
+
+def test_opencode_adapters_in_default_llm_transport():
+    with local_model() as (cfg, requests, state):
+        # 1. opencode-chat
+        state['body'] = json.dumps({
+            'choices': [{'message': {'role': 'assistant', 'content': '{"values": [0.2, 0.8]}'}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 5},
+        }).encode()
+        chat_cfg = {**cfg, 'adapter': 'opencode-chat', 'model': 'kimi-k2.6', 'parameters': {'temperature': 0.0, 'max_tokens': 512}}
+        assert _default_llm_transport(chat_cfg, 'sys', {'trajectory': []}) == {'values': [0.2, 0.8]}
+        assert 'tools' not in requests[-1]
+
+        # 2. openai-responses
+        state['body'] = json.dumps({
+            'status': 'completed',
+            'output': [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '{"values": [0.1, 0.9]}'}]}],
+            'usage': {'input_tokens': 4, 'output_tokens': 6},
+        }).encode()
+        resp_cfg = {**cfg, 'adapter': 'openai-responses', 'model': 'gpt-5.5', 'parameters': {'temperature': 0.0, 'max_output_tokens': 512}}
+        assert _default_llm_transport(resp_cfg, 'sys', {'trajectory': []}) == {'values': [0.1, 0.9]}
+        assert requests[-1]['instructions'] == 'sys'
+
+        # 3. anthropic-messages
+        state['body'] = json.dumps({
+            'role': 'assistant',
+            'stop_reason': 'end_turn',
+            'content': [{'type': 'text', 'text': '{"values": [0.3, 0.7]}'}],
+            'usage': {'input_tokens': 8, 'output_tokens': 4},
+        }).encode()
+        anth_cfg = {**cfg, 'adapter': 'anthropic-messages', 'model': 'claude-sonnet-4-6', 'parameters': {'temperature': 0.0, 'max_tokens': 512}}
+        assert _default_llm_transport(anth_cfg, 'sys', {'trajectory': []}) == {'values': [0.3, 0.7]}
+        assert requests[-1]['system'] == 'sys'
+        assert requests[-1]['max_tokens'] == 512

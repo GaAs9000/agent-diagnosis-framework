@@ -105,19 +105,42 @@ def analyst_tag(model_cfg: dict[str, Any], *, include_facts: bool = True) -> str
     return f'llm:{model_name}@{prompt_sha}'
 
 
+def _resolve_model_backend(model_cfg: dict[str, Any]):
+    try:
+        from c3_sandbox.l1.models.native import GeminiBackend, OpenAICompatibleBackend
+        from c3_sandbox.l1.models.opencode import (
+            AnthropicMessagesBackend,
+            OpenAIResponsesBackend,
+            OpenCodeChatBackend,
+            OpenCodeGeminiBackend,
+        )
+    except ImportError as exc:
+        raise Unsupported('Install c3_sandbox L1 for live LLM Analyst calls, or inject llm_caller in tests') from exc
+    adapters = {
+        'gemini': GeminiBackend,
+        'openai-compatible': OpenAICompatibleBackend,
+        'opencode-chat': OpenCodeChatBackend,
+        'openai-responses': OpenAIResponsesBackend,
+        'anthropic-messages': AnthropicMessagesBackend,
+        'opencode-gemini': OpenCodeGeminiBackend,
+    }
+    adapter = model_cfg.get('adapter', 'gemini')
+    if adapter not in adapters:
+        raise L2Error(f'Unknown model adapter: {adapter}')
+    return adapters[adapter](copy.deepcopy(model_cfg))
+
+
 def _default_llm_transport(model_cfg: dict[str, Any], system_prompt: str, user_payload: dict[str, Any]) -> dict[str, Any]:
     from ..config import DEFAULTS, validate
     model_cfg = copy.deepcopy(model_cfg)
     model_cfg.setdefault('max_response_bytes', DEFAULTS['model']['max_response_bytes'])
     validate({'model': model_cfg})
-    try:
-        from c3_sandbox.l1.models.native import GeminiBackend, OpenAICompatibleBackend
-    except ImportError as exc:
-        raise Unsupported('Install c3_sandbox L1 for live LLM Analyst calls, or inject llm_caller in tests') from exc
-    cls = GeminiBackend if model_cfg.get('adapter') == 'gemini' else OpenAICompatibleBackend
-    backend = cls(copy.deepcopy(model_cfg))
+    backend = _resolve_model_backend(model_cfg)
     conv = backend.initial(system_prompt, canonical(user_payload).decode('utf-8'))
     req = backend.request(conv, [])
+    if model_cfg.get('adapter') == 'openai-compatible' and not req.get('tools'):
+        req.pop('tools', None)
+        req.pop('tool_choice', None)
     resp = backend.send(canonical(req), timeout=float(model_cfg.get('timeout_seconds', 120)))
     if resp.metadata.get('body_truncated'):
         raise L2Error('LLM Analyst response exceeded model.max_response_bytes')

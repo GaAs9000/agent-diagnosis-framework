@@ -1,6 +1,7 @@
 """No SDK retries, no auth in evidence, bounded body capture, native HTTP receipts."""
 from __future__ import annotations
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -23,8 +24,16 @@ class NativeHTTP:
         if url.scheme!='https' and not (url.scheme=='http' and loopback and config['kind']=='local'):
             raise ConfigurationError('Use HTTPS; HTTP is allowed only for loopback local model servers')
         self.base=config['base_url'].rstrip('/')
-    def post(self, url: str, body: bytes, timeout: float, *, gemini: bool=False) -> HTTPResult:
+    def post(self, url: str, body: bytes, timeout: float, *, gemini: bool=False, extra_headers: dict[str, str] | None=None) -> HTTPResult:
         headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':'l1-evidence/0.2.0'}
+        # Caller-controlled headers must never replace authentication, framing, or
+        # the client identity. Only explicitly safe extension headers are accepted.
+        for name, value in (extra_headers or {}).items():
+            if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9-]+', name)
+                    or name.lower() not in {'x-opencode-session'}
+                    or not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)):
+                raise ConfigurationError('Invalid or unsupported extra HTTP header')
+            headers[name] = value
         key_env=self.config.get('api_key_env')
         if key_env:
             value=os.environ.get(key_env)
@@ -57,4 +66,7 @@ class NativeHTTP:
         return HTTPResult(status,bytes(data),{
             'started_at':started,'finished_at':utc_now(),'duration_seconds':time.monotonic()-start,
             'status_code':status, 'headers':hdrs, 'transport_error':err,
-            'body_truncated':limited, 'attempts':1, 'auth_recorded':False})
+            'body_truncated':limited, 'attempts':1, 'auth_recorded':False,
+            **({'opencode_session_id': next(value for name, value in headers.items()
+                                           if name.lower() == 'x-opencode-session')}
+               if any(name.lower() == 'x-opencode-session' for name in headers) else {})})

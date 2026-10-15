@@ -64,6 +64,11 @@ def _usage(package):
                         pass
                 tokens = (usage.get('totalTokenCount', usage.get('total_tokens'))
                           if isinstance(usage, dict) else None)
+                if tokens is None and isinstance(usage, dict):
+                    inp = usage.get('input_tokens', usage.get('prompt_tokens'))
+                    comp = usage.get('output_tokens', usage.get('completion_tokens'))
+                    if type(inp) is int and type(comp) is int and inp >= 0 and comp >= 0:
+                        tokens = inp + comp
                 if type(tokens) is int and tokens >= 0:
                     total += tokens
                 else:

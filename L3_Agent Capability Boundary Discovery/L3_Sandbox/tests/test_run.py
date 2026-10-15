@@ -6,6 +6,7 @@ import pytest
 
 from l3_sandbox.common import L3Error, digest, read, write
 from l3_sandbox import run
+from l3_sandbox.run import _transport_guard as real_transport_guard
 
 
 @pytest.fixture
@@ -269,3 +270,121 @@ def test_resealed_inconsistent_acceptance_cannot_force_paid_replacement(setup, a
     result = read(directory / 'run_results.json')
     assert result['http_admissions']['count'] == 1
     assert result['rows'][0]['status'] == 'receipt_corrupt'
+
+
+@pytest.mark.parametrize('status,attempts', [(402, 1), (429, 4)])
+def test_provider_failure_stops_replacements_and_queued_jobs_and_restart(setup, monkeypatch, status, attempts):
+    import copy
+    directory, plan, calls, native = setup
+    plan['limits']['max_concurrency'] = 1
+    for i in range(2, 46):
+        job = copy.deepcopy(plan['jobs'][0])
+        job['trial_id'] = f'trial{i}'
+        plan['jobs'].append(job)
+    def blocked(config, output, *, request_limiter):
+        native(config, output, request_limiter=request_limiter)
+        for i in range(attempts):
+            if i:
+                assert request_limiter.acquire(1, timeout=1)
+                request_limiter.reconcile(1, None)
+            request_limiter.observe(SimpleNamespace(status=status, body=b'provider blocked'))
+    monkeypatch.setattr(run, '_native_run', blocked)
+    first = run.run_plan(directory, execute=True)
+    assert first['status'] == 'blocked_provider'
+    assert first['http_admissions']['count'] == attempts
+    assert len(first['rows']) == len(calls) == 1
+    assert first['rows'][0]['status'] == 'blocked_provider'
+    assert first['rows'][0]['study_valid'] is False
+    assert not first['rows'][0]['accepted']
+    again = run.run_plan(directory, execute=True)
+    assert again['status'] == 'blocked_provider'
+    assert len(calls) == 1
+    assert len(list((directory / 'runs').glob('*/attempt_*'))) == 1
+
+
+def test_provider_stop_does_not_invalidate_historical_healthy_receipt(setup):
+    from l3_sandbox.limiter import RequestLimiter
+    directory, plan, calls, _ = setup
+    run.run_plan(directory, execute=True)
+    limiter = RequestLimiter(directory, max_http_attempts=10)
+    limiter.stop_provider('payment_required', 402)
+    result = run.run_plan(directory, execute=True)
+    assert result['rows'][0]['accepted']
+    assert len(calls) == 1
+    assert result['http_admissions']['provider_stop']['reason'] == 'payment_required'
+
+
+def test_provider_failure_retained_when_native_raises_before_package(setup, monkeypatch):
+    directory, plan, calls, _ = setup
+    def fail(config, output, *, request_limiter):
+        calls.append(output)
+        request_limiter.observe(SimpleNamespace(status=429, body=b'quota'))
+        raise RuntimeError('private provider text')
+    monkeypatch.setattr(run, '_native_run', fail)
+    result = run.run_plan(directory, execute=True)
+    assert result['status'] == 'blocked_provider'
+    assert len(calls) == 1
+    assert result['rows'][0]['provider_stop'] == 'quota_exhausted'
+    assert 'private provider text' not in (directory / 'run_results.json').read_text()
+
+
+def test_real_chat_backend_wrong_model_stops_before_replacement_and_persists(setup, monkeypatch):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from c3_sandbox.l1.models.opencode import OpenCodeChatBackend
+    directory, plan, calls, _ = setup
+    sends = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            sends.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            body = json.dumps({'model': 'unexpected-model', 'system_fingerprint': 'independent',
+                               'usage': {'prompt_tokens': 3, 'completion_tokens': 2},
+                               'choices': [{'message': {'role': 'assistant', 'content': 'done'},
+                                            'finish_reason': 'stop'}]}).encode()
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        config = {'kind': 'local', 'base_url': f'http://127.0.0.1:{server.server_port}',
+                  'model': 'requested-alias', 'expected_reported_model': 'approved-version',
+                  'parameters': {}, 'max_response_bytes': 1024 * 1024}
+        plan['jobs'][0]['config']['model'] = config
+        plan['jobs'][0]['config_sha256'] = digest(plan['jobs'][0]['config'])
+        monkeypatch.setattr(run, '_transport_guard', real_transport_guard)
+        def native(config, output, *, request_limiter):
+            calls.append(output)
+            backend = OpenCodeChatBackend(config['model'])
+            body = json.dumps(backend.request(backend.initial('system', 'prompt'), [])).encode()
+            assert request_limiter.acquire(1, timeout=1)
+            receipt = backend.send(body, 2)
+            # Match the native runner: charge usage before protocol parsing.
+            assert receipt.metadata['usage']['total_tokens'] == 5
+            assert receipt.metadata['system_fingerprint'] == 'independent'
+            request_limiter.reconcile(1, receipt.metadata['usage']['total_tokens'])
+            backend.parse(receipt.body, 'request1')
+        monkeypatch.setattr(run, '_native_run', native)
+        first = run.run_plan(directory, execute=True)
+        assert first['status'] == 'blocked_provider'
+        assert len(first['rows']) == len(calls) == len(sends) == 1
+        assert first['rows'][0]['provider_stop'] == 'model_identity_mismatch'
+        assert first['rows'][0]['runner_error'] == 'ProtocolError'
+        assert not first['rows'][0]['accepted']
+        ledger = read(directory / 'http_admissions.json')['state']
+        assert ledger['count'] == 1
+        assert ledger['admissions'][0]['tokens'] == 5
+        assert ledger['admissions'][0]['usage_known']
+        assert ledger['provider_stop'] == {'reason': 'model_identity_mismatch', 'status': 200}
+        again = run.run_plan(directory, execute=True)
+        assert again['status'] == 'blocked_provider'
+        assert len(calls) == len(sends) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

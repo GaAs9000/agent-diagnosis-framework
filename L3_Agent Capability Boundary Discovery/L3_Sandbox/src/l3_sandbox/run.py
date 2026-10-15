@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import copy
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -106,6 +107,21 @@ def _transport_guard(limiter):
         def guarded(instance, *args, **kwargs):
             limiter.check_send()
             result = original(instance, *args, **kwargs)
+            # Backend.send decorates receipts only after post returns. Check the
+            # explicit model contract here, before parsing can raise and trigger
+            # replacements. Fingerprints are independent of model identity.
+            expected = getattr(instance, 'config', {}).get('expected_reported_model')
+            if (expected is not None and result.status is not None
+                    and 200 <= result.status < 300
+                    and not result.metadata.get('transport_error')
+                    and not result.metadata.get('body_truncated')):
+                try:
+                    response = json.loads(result.body)
+                except (ValueError, UnicodeError):
+                    response = None
+                if isinstance(response, dict) and response.get('model') != expected:
+                    result.metadata['model_identity_mismatch'] = {
+                        'expected': expected, 'observed': response.get('model')}
             limiter.observe(result)
             return result
         NativeHTTP.post = guarded
@@ -279,7 +295,7 @@ def _run_job(directory, plan, job, limiter, publish):
     maximum = 1 + plan['limits'].get('max_replacements_per_slot', 2)
     for index in range(len(existing), maximum):
         state = limiter.snapshot()
-        if state['fatal_auth'] or state['count'] >= limiter.cap:
+        if state['fatal_auth'] or state['provider_stop'] or state['count'] >= limiter.cap:
             return
         attempt = root / f'attempt_{index:03d}'
         attempt.mkdir()  # Directory creation durably consumes this finite slot.
@@ -290,8 +306,13 @@ def _run_job(directory, plan, job, limiter, publish):
         # Persist running receipt before invoking native execution; crash gaps still count.
         _save_receipt(attempt / 'receipt.json', row)
         publish(row)
+        provider_failure = None
+        limiter.begin_episode()
         try:
-            _native_run(copy.deepcopy(job['config']), attempt / 'episode', request_limiter=limiter)
+            try:
+                _native_run(copy.deepcopy(job['config']), attempt / 'episode', request_limiter=limiter)
+            finally:
+                provider_failure = limiter.finish_episode()
             expected = hashlib.sha256((attempt / 'episode/evidence_index.json').read_bytes()).hexdigest()
             row['expected_index_sha256'] = expected
             _evidence(attempt / 'episode', job, expected)
@@ -306,6 +327,9 @@ def _run_job(directory, plan, job, limiter, publish):
         except Exception as exc:
             row.update(status='runner_error', runner_error=type(exc).__name__, accepted=False,
                        study_valid=False, study_outcome_y=None)
+        if provider_failure:
+            row.update(status='blocked_provider', provider_stop=provider_failure,
+                       accepted=False, study_valid=False, study_outcome_y=None)
         _save_receipt(attempt / 'receipt.json', row)
         publish(row)
         if row['accepted']:
@@ -354,8 +378,13 @@ def run_plan(directory: Path, *, execute: bool = False) -> dict:
         state = limiter.snapshot()
         status = ('complete' if len(accepted) == len(plan['jobs']) and not errors else
                   'blocked_auth' if state['fatal_auth'] else
+                  'blocked_provider' if state['provider_stop'] else
                   'blocked_http_cap' if state['count'] >= limiter.cap else 'incomplete')
         result = snapshot(status)
+        if state['provider_stop']:
+            result['provider_action'] = ('Resolve provider access, balance, quota or model identity externally; '
+                                         'this plan remains stopped across restart. '
+                                         'Use a deliberate new plan after resolution.')
         write(directory / 'run_results.json', result)
         if errors:
             raise L3Error('L3 runner failed; inspect run_results.json for retained progress')

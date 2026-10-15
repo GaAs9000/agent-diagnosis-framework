@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from importlib import metadata
+import inspect
 import math
 from pathlib import Path
 import random
@@ -157,7 +158,7 @@ def _execution_sources(inventory):
     for name, value in inventory.items():
         path = Path(name)
         if path.is_relative_to(l1):
-            include = path != l1 / 'evaluation/study.py'
+            include = path not in (l1 / 'evaluation/study.py', l1 / 'models/opencode.py')
         elif path.is_relative_to(l3):
             include = path.name in ('conditions.py', 'common.py', 'limiter.py', 'run.py', '__init__.py')
         else:
@@ -171,13 +172,51 @@ def source_inventory():
     return _execution_sources(provenance_inventory())
 
 
+def selected_actor_binding(config):
+    """Resolve the factory without constructing an actor or reading credentials.
+
+    Bind the entry point and resolved class independently, including the actual
+    defining module even when an installed actor lives outside the L1 tree.
+    """
+    from c3_sandbox.l1.models.registry import registry
+    adapter = config['model']['adapter']
+    factories = registry()._factories
+    entries = []
+    if config['plugins']['load_installed']:
+        entries = list(metadata.entry_points(group='l1.models'))
+        names = list(factories) + [ep.name for ep in entries]
+        if len(names) != len(set(names)):
+            raise L3Error('Duplicate installed model adapter registration')
+    selected = [ep for ep in entries if ep.name == adapter]
+    ep = selected[0] if selected else None
+    try:
+        factory = ep.load() if ep else factories[adapter]
+        if not inspect.isclass(factory):
+            raise L3Error('Selected actor must resolve to a backend class')
+        path = Path(inspect.getfile(factory)).resolve()
+        binding = {'adapter': adapter, 'model': config['model']['model'],
+                   'module': factory.__module__, 'qualname': factory.__qualname__,
+                   'file': str(path), 'file_sha256': sha_file(path), 'entry_point': None}
+        if ep:
+            dist = ep.dist
+            binding['entry_point'] = {'group': ep.group, 'name': ep.name, 'value': ep.value,
+                'distribution': {'name': dist.metadata['Name'], 'version': dist.version}}
+        return binding
+    except (KeyError, TypeError, OSError, ImportError, AttributeError) as exc:
+        raise L3Error('Cannot freeze selected actor binding: ' + adapter) from exc
+
+
+def _actor_sources(binding):
+    return {binding['file']: binding['file_sha256']} if binding else {}
+
+
 def load_native_task(config, task_id):
     from c3_sandbox.l1.benchmarks.officeval.adapter import NativeOfficeVal
     return NativeOfficeVal(config['benchmark']).load(task_id)
 
 
 def _frozen_execution_sources(plan):
-    return (plan['source_sha256'] if plan.get('source_scope') == 'execution-v1'
+    return (plan['source_sha256'] if plan.get('source_scope') in ('execution-v1', 'execution-v2-selected-actor')
             else _execution_sources(plan['source_sha256']))
 
 
@@ -210,6 +249,13 @@ def _task_execution_identity(plan, job):
 
 
 def _verify_reuse_contract(source, target, source_job, target_job):
+    source_actor = source.get('selected_actor_binding')
+    target_actor = target.get('selected_actor_binding')
+    plugin_adapters = ('opencode-chat', 'openai-responses', 'anthropic-messages', 'opencode-gemini')
+    if source_actor != target_actor or (not source_actor and any(
+            job['config']['model'].get('adapter') in plugin_adapters
+            for job in (source_job, target_job))):
+        raise L3Error('Reused selected actor binding differs from target plan')
     for field in ('family_id', 'family_verified', 'split'):
         if source_job.get(field) != target_job.get(field):
             raise L3Error('Reused task family assignment differs from target plan: ' + field)
@@ -333,11 +379,22 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
     template = Path(spec['base_config'])
     template = (spec_path.parent / template).resolve() if not template.is_absolute() else template
     base = resolve(template)
-    if base['benchmark']['adapter'] != 'officeval-native' or base['plugins']['load_installed']:
+    model_plugin = base['model']['adapter'] in ('opencode-chat', 'openai-responses', 'anthropic-messages', 'opencode-gemini')
+    if base['benchmark']['adapter'] != 'officeval-native' or (base['plugins']['load_installed'] and not model_plugin):
         raise L3Error('First L3 implementation requires the locked native OfficeVal template')
     if base['model']['parameters'].get('temperature') != 1.0 or any(
         k in base['model']['parameters'] for k in ('seed', 'random_seed', 'randomSeed')):
         raise L3Error('L3 requires frozen T=1 native sampling without a model seed')
+    if base['plugins']['load_installed']:
+        # Model opt-in must not authorize a plugin benchmark/runtime/evaluator.
+        native = {'benchmark': ('l1.benchmarks', 'officeval-native'),
+                  'runtime': ('l1.runtimes', 'docker-cold'),
+                  'evaluation': ('l1.evaluators', 'docker-verifier')}
+        for section, (group, adapter) in native.items():
+            if base[section]['adapter'] != adapter or any(
+                    ep.name == adapter for ep in metadata.entry_points(group=group)):
+                raise L3Error('Installed model plugins require native OfficeVal runtime/evaluation')
+    actor_binding = selected_actor_binding(base)
     images = {base[s]['image']: image_id(base[s]['image']) for s in ('runtime', 'evaluation')}
     inputs = {str(spec_path): sha_file(spec_path), str(template): sha_file(template)}
     if family_snapshot:
@@ -395,8 +452,9 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
         'purpose': spec['purpose'], 'design': spec['design'], 'spec_sha256': digest(spec),
         'replicates': spec['replicates'], 'tasks': task_records, 'conditions': spec['conditions'],
         'analysis': spec['analysis'], 'limits': spec['limits'], 'schedule_seed': spec['schedule_seed'],
-        'jobs': jobs, 'source_sha256': source_inventory(), 'inputs_sha256': inputs,
-        'source_scope': 'execution-v1', 'code_provenance': provenance_inventory(),
+        'jobs': jobs, 'source_sha256': {**source_inventory(), **_actor_sources(actor_binding)},
+        'selected_actor_binding': actor_binding, 'inputs_sha256': inputs,
+        'source_scope': 'execution-v2-selected-actor', 'code_provenance': provenance_inventory(),
         'images': images, 'transform_version': TRANSFORM_VERSION,
         'workload': {'trial_slots': len(jobs), 'logical_request_bound': logical,
             'http_attempt_bound_without_replacements': attempts,
@@ -431,7 +489,18 @@ def verify_plan(directory: Path, *, verify_images: bool = True, verify_execution
         raise L3Error('Unknown plan version')
     if verify_execution:
         expected_sources = _frozen_execution_sources(plan)
-        if source_inventory() != expected_sources:
+        binding = plan.get('selected_actor_binding')
+        if not binding and plan.get('source_scope') == 'execution-v2-selected-actor':
+            raise L3Error('Execution requires a frozen selected actor binding')
+        if binding:
+            for job in plan['jobs']:
+                if selected_actor_binding(job['config']) != binding:
+                    raise L3Error('Selected actor binding changed; freeze a new plan')
+        elif any(job['config']['model'].get('adapter') in (
+                'opencode-chat', 'openai-responses', 'anthropic-messages', 'opencode-gemini')
+                for job in plan['jobs']):
+            raise L3Error('OpenCode execution requires a frozen selected actor binding')
+        if {**source_inventory(), **_actor_sources(binding)} != expected_sources:
             raise L3Error('Execution source inventory changed; freeze a new plan')
         for name, expected in plan['inputs_sha256'].items():
             if sha_file(Path(name)) != expected:

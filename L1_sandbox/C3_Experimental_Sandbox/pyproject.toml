@@ -18,6 +18,12 @@ test = ["pytest>=8,<10", "python-docx==1.2.0"]
 c3 = "c3_sandbox.cli:main"
 c3-l1 = "c3_sandbox.l1.cli:main"
 
+[project.entry-points."l1.models"]
+opencode-chat = "c3_sandbox.l1.models.opencode:OpenCodeChatBackend"
+openai-responses = "c3_sandbox.l1.models.opencode:OpenAIResponsesBackend"
+anthropic-messages = "c3_sandbox.l1.models.opencode:AnthropicMessagesBackend"
+opencode-gemini = "c3_sandbox.l1.models.opencode:OpenCodeGeminiBackend"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

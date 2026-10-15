@@ -55,6 +55,7 @@ class RequestLimiter:
                             raise L3Error('Invalid HTTP admission record')
                 else:
                     state = {'binding': self.binding, 'count': 0, 'admissions': [], 'fatal_auth': False}
+                state.setdefault('provider_stop', None)
                 yield state
                 write(self.path, {'state': state, 'sha256': digest(state)})
             finally:
@@ -62,14 +63,48 @@ class RequestLimiter:
 
     def snapshot(self):
         with self._state() as state:
-            return {k: state[k] for k in ('count', 'fatal_auth')}
+            return {k: state[k] for k in ('count', 'fatal_auth', 'provider_stop')}
 
     def check_send(self):
         with self._state() as state:
             if state['fatal_auth']:
                 raise L3Error('Fatal provider authentication latch is set')
+            if state['provider_stop']:
+                raise L3Error('Provider stop latch is set: ' + state['provider_stop']['reason']
+                              + '; resolve provider access/balance/quota/model identity before a deliberate new plan')
+
+    def stop_provider(self, reason, status=None):
+        # The first provider failure remains durable across process restarts.
+        with self._state() as state:
+            if state['provider_stop'] is None:
+                state['provider_stop'] = {'reason': reason, 'status': status}
+
+    def begin_episode(self):
+        self._local.last_status = None
+        self._local.provider_failure = None
+
+    def finish_episode(self):
+        # L1 owns retries for each logical request. Only after native execution
+        # exits is its final 429 terminal; never count 429s across requests.
+        reason = getattr(self._local, 'provider_failure', None)
+        if reason is None and getattr(self._local, 'last_status', None) == 429:
+            reason = 'quota_exhausted'
+            self.stop_provider(reason, 429)
+        return reason
 
     def observe(self, receipt):
+        self._local.last_status = receipt.status
+        metadata = getattr(receipt, 'metadata', None) or {}
+        if metadata.get('model_identity_mismatch'):
+            self._local.provider_failure = 'model_identity_mismatch'
+            self.stop_provider('model_identity_mismatch', receipt.status)
+        body = receipt.body.lower()
+        if (receipt.status == 402 or (receipt.status is not None and receipt.status >= 400
+                and any(marker in body for marker in (
+                    b'insufficient balance', b'insufficient_balance',
+                    b'payment required', b'payment_required', b'credit balance is too low')))):
+            self._local.provider_failure = 'payment_required'
+            self.stop_provider('payment_required', receipt.status)
         if receipt.status in (401, 403) or b'API_KEY_INVALID' in receipt.body:
             with self._state() as state:
                 state['fatal_auth'] = True
@@ -86,7 +121,7 @@ class RequestLimiter:
             return False
         while True:
             with self._state() as state:
-                if state['fatal_auth'] or state['count'] >= self.cap:
+                if state['fatal_auth'] or state['provider_stop'] or state['count'] >= self.cap:
                     return False
                 if time.monotonic() >= deadline:
                     return False

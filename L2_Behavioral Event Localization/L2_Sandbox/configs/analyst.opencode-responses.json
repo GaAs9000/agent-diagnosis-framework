@@ -1,0 +1,14 @@
+{
+  "mode": "analyst",
+  "model": {
+    "adapter": "openai-responses",
+    "kind": "api",
+    "model": "gpt-5.5",
+    "api_key_env": "OPENCODE_API_KEY",
+    "base_url": "https://opencode.ai/inference/openai/v1",
+    "parameters": {
+      "temperature": 0.0,
+      "max_output_tokens": 4096
+    }
+  }
+}
