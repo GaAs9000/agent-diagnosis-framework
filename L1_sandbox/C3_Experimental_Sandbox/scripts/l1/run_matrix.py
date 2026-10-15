@@ -25,6 +25,7 @@ for _p in [Path('.env'), Path(__file__).resolve().parents[2] / '.env']:
                 if _k not in os.environ:
                     os.environ[_k] = _v
 
+from c3_sandbox.l1.evaluation.study import study_outcome
 from c3_sandbox.l1.core.config import resolve
 from c3_sandbox.l1.core.orchestrator import run
 from c3_sandbox.l1.evidence.live import scan
@@ -47,6 +48,9 @@ COLUMNS = [
     'model_version',
     'retries',
     'config_sha256',
+    'study_valid', 'study_outcome_y', 'zero_reason', 'study_classification',
+    'endpoint_version', 'native_evaluation_validity',
+    'native_projection_evaluation_validity', 'native_status', 'native_error',
 ]
 
 
@@ -109,6 +113,7 @@ def summarize_episode(task_id: str, replicate: int, package: Path) -> dict:
         'model_version': versions[-1] if versions else None,
         'retries': retries,
         'config_sha256': manifest.get('config_sha256'),
+        **study_outcome(package),
     }
 
 
