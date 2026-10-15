@@ -37,6 +37,20 @@ L1_sandbox/C3_Experimental_Sandbox/.venv/bin/l3 summarize \
 - 总逻辑请求上界 1695；每请求最多 4 次 HTTP 尝试时，初始槽的 HTTP 上界 6780。最多允许每槽 2 次基础设施替换，理论上界 20340，但全局硬上限仍为 6780，触顶就停止并报告未完成，不自动扩额。
 - 模型会看到真实预算告知，测量的是告知与实际上限这一配置组合。
 
+## M2 开发侧基线
+
+`configs/m2_dev_baseline.json` 使用单条件 `design: "baseline"`，覆盖 9 个开发家族代表任务，每任务 5 次，共 45 槽。当前配置为 `officeval-m2-dev-baseline-v2`：SWE 评分与资产锁修复改变了 L1 冻结源码，因此本配置不导入旧预算 pilot 的 12 条记录，45 槽均待执行。旧 pilot 保持原样，仍可离线分析。
+
+```bash
+L1_sandbox/C3_Experimental_Sandbox/.venv/bin/l3 plan \
+  'L3_Agent Capability Boundary Discovery/L3_Sandbox/configs/m2_dev_baseline.json' \
+  --output 'L3_Agent Capability Boundary Discovery/L3_Sandbox/validation/m2_dev_baseline_v2'
+L1_sandbox/C3_Experimental_Sandbox/.venv/bin/l3 run \
+  'L3_Agent Capability Boundary Discovery/L3_Sandbox/validation/m2_dev_baseline_v2'
+```
+
+以上仅冻结计划和预览，不调用模型。正式采样仍需显式 `--execute`。通用 `reuse_from` 功能会在复制前比较源、目标的执行代码、镜像、任务指令、公开资产和私有评分资产；只改变分析代码允许复用，改变执行合同则拒绝。dry-run 的 `workload` 是冻结槽位总数；已复用和待运行槽位可从 `run_results.json` 的有效 receipt 核对。
+
 ## 结构信息 × 预算
 
 `configs/structure_budget.json` 是六单元开发示例：原版 O、等字符长度无关材料 P、结构摘要 S，分别与 35／70 请求交叉；同五个开发任务、每格 3 次，共 90 槽。它不是已执行或已冻结的正式验证实验。
@@ -64,7 +78,9 @@ L1 `evaluation/study.py` 提供共享研究终点；旧 `run_matrix.py` 保留�
 
 `summary.json`、`summary.csv`、`report.md` 记录预定分母、有效／缺失槽、无效尝试与替换，不以少跑的数据冒充完整比较。仅完整任务配对进入主效应；家族区间要求核实家族且至少两个家族。模型版本漂移会显示并阻止混合的主对比。
 
-报告保留真实完成的任务／条件基线 cohort、配置哈希、终点版本及模型版本。向 L2 自动导出 p0 仍受“独立父轨迹排除”合同限制，目前不自动导出，也不填占位 p0。
+报告保留完整任务／条件基线 cohort、配置哈希、终点版本及模型版本；完整的 baseline 计划另导出 `m2_baseline.json`。`l3 resolve-p0 <计划目录> --parent <父执行包>` 从冻结计划、receipt 和原始密封证据重新计算基线，并排除父轨迹自身；缓存的汇总数值不能代替证据。解析过程不写回源实验，也不调用模型或评分器。
+
+同目录 `summary.json`／`m2_baseline.json` 可作为入口。移到其他目录的导出 JSON 必须携带 `source_binding`，其源目录和计划哈希须可核验，且导出内容须与重算结果一致；没有源证据绑定的 JSON 会被拒绝。L2 的 `--baseline` 使用同一个解析器，检查任务、配置、模型返回版本、当前研究终点版本与逐槽身份；外部基线仍可用显式 `--p0`，不会标为证据已验证。
 
 计划冻结实际执行代码、原任务输入、配置、镜像及家族清单；L3 报告代码和 L1 的研究终点投影 `evaluation/study.py` 只记溯源，不作为执行复用的门禁。修改分析实现后，`summarize` 从封存运行重算；`run` 复用健康的已完成执行，不因派生结局变化付费重跑。原计划及逐次 receipt 不改写，新运行和每次汇总分别记录代码溯源。真正改变执行代码、输入、配置或镜像时，采集需使用新计划；历史汇总无需重装原始执行环境。原始实验及验证产物在本地 `validation/`／`runs/`，不进入 Git。
 

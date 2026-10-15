@@ -171,7 +171,48 @@ def test_condition_adapter_changes_only_public_prompt_and_provenance(tmp_path, m
         with pytest.raises(L3Error, match='differs'): ConditionOfficeVal(config).load(task.task_id)
 
 
-def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
+@pytest.mark.parametrize('kind', ['asset', 'task', 'rubric', 'verifier'])
+def test_reuse_compares_frozen_same_path_contents_without_reading_old_files(prepared, tmp_path, kind):
+    path, _, _ = prepared
+    source = plan.create_plan(path, tmp_path / 'source_plan')
+    job = source['jobs'][0]
+    benchmark = job['config']['benchmark']
+    names = {
+        'asset': Path(benchmark['assets_dir']) / job['task_id'] / 'missing.xlsx',
+        'task': Path(benchmark['data_dir']) / 'tasks' / (job['task_id'] + '.json'),
+        'rubric': Path(benchmark['data_dir']) / 'rubrics' / (job['task_id'] + '.json'),
+        'verifier': Path(benchmark['source_dir']) / 'verifiers/missing.py',
+    }
+    name = str(names[kind])
+    source['inputs_sha256'][name] = 'old-content'
+    target = copy.deepcopy(source)
+    # Historical source is usable offline even when external paths moved away.
+    plan._verify_reuse_contract(source, target, job, job)
+    target['inputs_sha256'][name] = 'new-content-at-same-path'
+    with pytest.raises(L3Error, match='task execution inputs differ'):
+        plan._verify_reuse_contract(source, target, job, job)
+
+
+@pytest.mark.parametrize('field,value', [('family_id', 'relabelled-family'),
+                                       ('family_verified', False), ('split', 'heldout')])
+def test_reuse_rejects_family_or_split_relabelling(prepared, tmp_path, field, value):
+    path, _, _ = prepared
+    source = plan.create_plan(path, tmp_path / 'source_plan')
+    job = source['jobs'][0]
+    target = copy.deepcopy(source)
+    target_job = next(j for j in target['jobs'] if j['trial_id'] == job['trial_id'])
+    plan._verify_reuse_contract(source, target, job, target_job)
+    # A family manifest is optional; frozen slot identity must enforce this too.
+    target.pop('family_manifest', None)
+    target_job[field] = value
+    with pytest.raises(L3Error, match='family assignment differs.*' + field):
+        plan._verify_reuse_contract(source, target, job, target_job)
+
+
+@pytest.mark.parametrize('drift', [None, 'source', 'prompt', 'assets', 'private', 'provenance',
+                                   'input_asset', 'input_private', 'runtime_image',
+                                   'evaluation_image', 'analysis_legacy', 'metadata'])
+def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch, drift):
     import hashlib
     from l3_sandbox import run
     _, _, _ = prepared
@@ -185,7 +226,8 @@ def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
 
     # Create one completed verified slot in pilot_dir for officeval_004 replicate 0 under requests_035
     match_job = next(j for j in pilot_plan['jobs'] if j['task_id'] == 'officeval_004' and j['condition_id'] == 'requests_035' and j['replicate'] == 0)
-    ep = pilot_dir / 'runs' / match_job['trial_id'] / 'attempt_000/episode'
+    # Replacement attempt 1 is still genuine evidence for destination attempt 0.
+    ep = pilot_dir / 'runs' / match_job['trial_id'] / 'attempt_001/episode'
     write(ep / 'manifest.json', {'recording_mode': 'live', 'lineage': None, 'task': {'task_id': 'officeval_004'}, 'config_sha256': match_job['config_sha256']})
     write(ep / 'raw/resolved_config.json', match_job['config'])
     write(ep / 'official_grade.json', {'y': 0.25})
@@ -200,12 +242,43 @@ def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
     monkeypatch.setattr(run, '_summarize', lambda package, frozen_job, attempt: {
         'study_valid': True, 'study_outcome_y': 0.25, 'endpoint_version': 'study-outcome-v1', 'model_versions': ['v1']
     })
-    row = {**{k: v for k, v in match_job.items() if k != 'config'}, 'attempt': 0,
+    original_provenance = {'original-actor.py': 'original-source-digest'}
+    row = {**{k: v for k, v in match_job.items() if k != 'config'}, 'attempt': 1,
            'binding': run._binding(pilot_plan, match_job), 'accepted': True, 'status': 'completed',
+           'code_provenance': original_provenance,
+           'reused_from': {'experiment_id': 'earlier-pilot', 'trial_id': 'original-trial', 'attempt': 1},
            'expected_index_sha256': expected, 'study_valid': True, 'study_outcome_y': 0.25,
            'endpoint_version': 'study-outcome-v1', 'model_versions': ['v1']}
     run._save_receipt(ep.parent / 'receipt.json', row)
     write(pilot_dir / 'run_results.json', {'rows': [row]})
+
+    pilot_plan = copy.deepcopy(pilot_plan)
+    task = next(t for t in pilot_plan['tasks'] if t['task_id'] == match_job['task_id'])
+    if drift == 'source':
+        pilot_plan['source_sha256'][str(prepared[2])] = 'historical-actor'
+    elif drift == 'prompt':
+        task['public_prompt_sha256'] = digest('different prompt')
+    elif drift == 'assets':
+        task['public_assets'] = [{'name': 'different.xlsx', 'sha256': 'old', 'size_bytes': 10}]
+    elif drift == 'private':
+        task['native_provenance']['private_files_sha256'] = {'source/verifier.py': 'old'}
+    elif drift == 'provenance':
+        task['native_provenance']['source_commit'] = 'historical-commit'
+    elif drift in ('input_asset', 'input_private'):
+        benchmark = match_job['config']['benchmark']
+        name = (Path(benchmark['assets_dir']) / match_job['task_id'] / 'same-path.xlsx'
+                if drift == 'input_asset' else Path(benchmark['source_dir']) / 'same-verifier.py')
+        # Frozen snapshots are authoritative; these historical paths need not exist.
+        pilot_plan['inputs_sha256'][str(name)] = 'historical-content'
+    elif drift in ('runtime_image', 'evaluation_image'):
+        pilot_plan['images'][drift] = 'sha256:' + 'b' * 64
+    elif drift == 'analysis_legacy':
+        pilot_plan.pop('source_scope')
+        pilot_plan['source_sha256'][str(Path(plan.__file__).parent / 'report.py')] = 'old-analysis'
+    elif drift == 'metadata':
+        task.update(selection_reason='Different selection rationale', family_id='different-label')
+    write(pilot_dir / 'plan.json', pilot_plan)
+    (pilot_dir / 'plan.sha256').write_text(sha_file(pilot_dir / 'plan.json'))
 
     m2_spec = read(SANDBOX / 'configs/m2_dev_baseline.json')
     m2_spec['base_config'] = str(REPO / 'L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json')
@@ -215,6 +288,12 @@ def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
     write(m2_spec_path, m2_spec)
 
     m2_dir = tmp_path / 'm2'
+    if drift not in (None, 'analysis_legacy', 'metadata'):
+        monkeypatch.setattr(plan.shutil, 'copytree', lambda *a, **kw: pytest.fail('copy before contract validation'))
+        with pytest.raises(L3Error, match='Reused .* differs? from target plan'):
+            plan.create_plan(m2_spec_path, m2_dir)
+        assert not m2_dir.exists()
+        return
     m2_plan = plan.create_plan(m2_spec_path, m2_dir)
     assert m2_plan['design'] == 'baseline'
     assert m2_plan['workload']['trial_slots'] == 45
@@ -224,4 +303,7 @@ def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
     assert len(seeded) == 1
     assert seeded[0]['task_id'] == 'officeval_004'
     assert seeded[0]['reused_from']['trial_id'] == match_job['trial_id']
+    assert seeded[0]['reused_from']['attempt'] == 1
+    assert seeded[0]['reused_from']['reused_from'] == row['reused_from']
+    assert seeded[0]['code_provenance'] == original_provenance
 

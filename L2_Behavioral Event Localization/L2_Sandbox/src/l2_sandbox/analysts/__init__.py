@@ -1,10 +1,11 @@
 """L2 v0.3 Analysts (Rules, Reference, and LLM)."""
 from __future__ import annotations
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class Values(TypedDict):
     analyst: str
+    analyst_group: NotRequired[str]
     values: list[float]
 
 

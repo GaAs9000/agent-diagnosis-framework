@@ -17,14 +17,16 @@ CALL2_SYSTEM_PROMPT = """You are an L2 behavioral localization analyst.
 Given the parent trajectory, optional turn facts, task baseline p_0, and the value curve summary,
 propose testable behavioral predicate hypotheses for the localized drop.
 Each predicate must use only boolean combinators `{"all": [...]}`, `{"any": [...]}`, `{"not": <pred>}`, and atomic predicates `{"fact": "<type>", "where": {...}}` (string values in `where` support `*` wildcards; nested keys use dot notation like `arguments.command`).
+The following generated fact contract is identical for raw-trajectory and facts-assisted analysts; it describes fields, not observed values. Facts have `turn` (1-based integer), `type` (fact type string), and `value` (object). In `where`, value fields use unprefixed paths below; `value.<path>` also works. Envelope `turn` and `type` are accessible. Match scalars (string, number, bool, null), not whole objects or lists. A missing path never matches, including when the expected value is null. Optional fields may be absent; nullable fields may contain null.
 Valid `fact` types and their `where` fields are:
-- `tool_requested`: `name`, `arguments.command` (or `arguments.<arg>`), `call_id`, `request_id`
-- `tool_exit`: `ok` (bool), `exit_code` (int), `stop_reason`, `output_complete` (bool), `name`, `stderr_preview`
-- `file_transition`: `path` (e.g. `"submission/*"`), `change` (`"created"`, `"modified"`, `"deleted"`)
-- `object_structure_change`: `file_path`, `before_sha256`, `after_sha256`, `before_summary.<key>`, `after_summary.<key>`
-- `model_output_text`: `text`, `request_id`
-- `protocol_error` / `execution_error`: `kind`, `code`, `message`
-- `termination`: `termination`, `execution_validity`, `evaluation_validity`
+- `tool_requested`: `name`, `call_id`, `request_id` (string or null); `arguments` (tool-defined object, default {}), with scalar paths such as `arguments.command` (string) or `arguments.<arg>` as defined by the tool, including nested argument paths.
+- `tool_exit`: `call_id`, `name` (string or null); `exit_code` (integer or null); `stop_reason` (string or null); `output_complete` (bool, defaults to true when absent in the observation); `ok` (bool, true exactly when exit_code == 0, stop_reason is null, and output_complete is true); `stderr_preview` (string, first 800 characters of stderr or empty string).
+- `file_transition`: `path` (string or null; string matching supports patterns such as "submission/*"); `change` ("created", "modified", "deleted", or "directory_changed"); `before`, `after` (snapshot entry object or null for a missing side). File entry paths: `before.path`, `after.path`, `before.blob`, `after.blob`, `before.sha256`, `after.sha256` (strings); `before.size_bytes`, `after.size_bytes`, `before.mode`, `after.mode` (integers). Directory entries contain only path and mode. Additional snapshot entry fields, if present, retain their source names and scalar types.
+- `object_structure_change`: `file_path`, `before_sha256`, `after_sha256` (strings); `before_summary`, `after_summary` (DOCX direct-XML summary objects). Integer counts: `before_summary.paragraphs_recursive`, `after_summary.paragraphs_recursive`, `before_summary.tables_recursive`, `after_summary.tables_recursive`, `before_summary.top_level_tables`, `after_summary.top_level_tables`, `before_summary.rows_recursive`, `after_summary.rows_recursive`, `before_summary.textless_rows_without_drawing`, `after_summary.textless_rows_without_drawing`. Boolean flags: `before_summary.textless_rows_are_not_rendered_empty_row_judgements`, `after_summary.textless_rows_are_not_rendered_empty_row_judgements` (always true). These count XML descendants (top_level_tables counts direct body tables); textless rows exclude drawing/pict/object content and are not rendered-empty-row judgements. Emitted only when both DOCX versions have supported nonempty summaries and those summaries differ; no rendered appearance or semantic object identity is inferred.
+- `model_output_text`: `text` (nonempty string), `request_id` (string or null).
+- `protocol_error`: `kind` (event kind string), plus the original event data without a fixed allowlist. Native optional fields: `code`, `message`, `reason`, `error_type`, `call_id`, `request_id`, `stop_phase` (strings), `transport_attempts` (integer). This type is selected when data.code == "protocol_error" or the event kind is "tool.rejected".
+- `execution_error`: `kind` (event kind string), plus the same original-event fields and types as protocol_error; applies to tool.error, episode.error, or model.error events not selected as protocol_error. Original event data can contain additional scalar or nested fields; use their exact source paths and types. If original data contains kind, it overrides the event kind in both error types.
+- `termination`: the episode.finished `status` object, or its event data when status is absent/empty. Native fields are `termination` (stop-reason string), `protocol_validity`, `execution_validity` ("valid", "invalid", "unknown"), `evaluation_validity` ("valid", "invalid", "not_run"), `task_outcome` ("success", "failure", "unknown"), `evidence_completeness` ("complete", "incomplete"). Additional original status/event fields retain their source names and types.
 Output ONLY a JSON object: {"hypotheses": [{"turn": <int>, "predicate": <dict>, "effect": <negative float>, "rationale": "<str>"}]}."""
 
 FORBIDDEN_BRANCH_KEYS = {'branches', 'outcomes', 'branch_receipts', 'branch_facts', 's1_samples', 's2_samples'}
@@ -104,6 +106,10 @@ def analyst_tag(model_cfg: dict[str, Any], *, include_facts: bool = True) -> str
 
 
 def _default_llm_transport(model_cfg: dict[str, Any], system_prompt: str, user_payload: dict[str, Any]) -> dict[str, Any]:
+    from ..config import DEFAULTS, validate
+    model_cfg = copy.deepcopy(model_cfg)
+    model_cfg.setdefault('max_response_bytes', DEFAULTS['model']['max_response_bytes'])
+    validate({'model': model_cfg})
     try:
         from c3_sandbox.l1.models.native import GeminiBackend, OpenAICompatibleBackend
     except ImportError as exc:
@@ -113,6 +119,8 @@ def _default_llm_transport(model_cfg: dict[str, Any], system_prompt: str, user_p
     conv = backend.initial(system_prompt, canonical(user_payload).decode('utf-8'))
     req = backend.request(conv, [])
     resp = backend.send(canonical(req), timeout=float(model_cfg.get('timeout_seconds', 120)))
+    if resp.metadata.get('body_truncated'):
+        raise L2Error('LLM Analyst response exceeded model.max_response_bytes')
     parsed = backend.parse(resp.body, 'l2-analyst')
     if not parsed.text:
         raise L2Error('LLM Analyst returned empty text response')
@@ -137,7 +145,8 @@ def predict_values_llm(
     caller = llm_caller or (lambda sys_p, u_inp: _default_llm_transport(model_cfg, sys_p, u_inp))
     raw = caller(CALL1_SYSTEM_PROMPT, inp)
     vals = validate_values(raw.get('values'), parent.turns)
-    return {'analyst': analyst_tag(model_cfg, include_facts=include_facts), 'values': vals}
+    return {'analyst': analyst_tag(model_cfg, include_facts=include_facts),
+            'analyst_group': 'C' if include_facts else 'B', 'values': vals}
 
 
 def propose_hypotheses_llm(

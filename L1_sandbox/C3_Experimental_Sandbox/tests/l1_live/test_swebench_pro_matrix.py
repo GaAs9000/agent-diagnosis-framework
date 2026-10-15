@@ -15,7 +15,7 @@ TASK2_ID = "instance_ansible__ansible-0fd88717c953b92ed8a50495d55e630eb5d59166-v
 
 
 def _require_swebench_assets():
-    if not (ROOT / f"benchmarks/swebench_pro/data/{TASK1_ID}/instruction.md").exists():
+    if not (ROOT / f"benchmarks/swebench_pro/data/tasks/{TASK1_ID}/instruction.md").exists():
         pytest.skip("SWE-bench Pro task data not present in this checkout")
 
 

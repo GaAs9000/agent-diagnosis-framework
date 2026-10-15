@@ -1,11 +1,67 @@
 """SWE-bench Pro V2 official verifier execution in isolated Docker container."""
 from __future__ import annotations
 import os
-import json
+import ast
+import math
+import shlex
 from pathlib import Path
 from ..core.contracts import CapabilityError
 from ..runtime.docker import DockerRuntime
 from ..storage import read_json, write_bytes, write_json, file_digest, regular_file
+
+
+# Run inside the worker: /tmp is a bounded tmpfs; host exports share one cap.
+# Keep this script standalone so its actual copy behavior is testable offline.
+_BOUNDED_EXPORT = """
+import json, os, stat, sys
+from pathlib import Path
+source, target, limit = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+remaining = limit
+receipt = {'limit_bytes': limit, 'truncated': False, 'files': {}}
+for src, dst in [('stdout.log', 'test_stdout.log'), ('stderr.log', 'test_stderr.log'), ('output.json', 'output.json')]:
+    fd = os.open(source / src, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('nonregular worker output')
+        data = stream.read(remaining)
+        size = os.fstat(stream.fileno()).st_size
+    with open(target / dst, 'xb') as stream:
+        stream.write(data)
+    remaining -= len(data)
+    receipt['files'][dst] = {'source_size_bytes': size, 'exported_size_bytes': len(data)}
+    receipt['truncated'] |= size > len(data)
+with open(target / 'output_export.json', 'x') as stream:
+    json.dump(receipt, stream)
+"""
+
+
+def _required_tests(config: dict) -> set[str]:
+    required = set()
+    for key in ("fail_to_pass", "pass_to_pass"):
+        value = config[key]
+        if isinstance(value, str):
+            value = ast.literal_eval(value)
+        if not isinstance(value, list) or any(not isinstance(x, str) or not x for x in value):
+            raise ValueError("malformed required tests")
+        required.update(value)
+    if not required:
+        raise ValueError("empty required tests")
+    return required
+
+
+def _passed_tests(results: dict) -> set[str]:
+    if not isinstance(results, dict) or not isinstance(results.get("tests"), list):
+        raise ValueError("missing or malformed parsed tests")
+    names, passed = set(), set()
+    for test in results["tests"]:
+        if (not isinstance(test, dict) or not isinstance(test.get("name"), str)
+                or not test["name"] or test["name"] in names
+                or test.get("status") not in ("PASSED", "FAILED", "SKIPPED", "ERROR")):
+            raise ValueError("malformed parsed test")
+        names.add(test["name"])
+        if test["status"] == "PASSED":
+            passed.add(test["name"])
+    return passed
 
 
 def interpret_swebench_pro(raw: dict, task_id: str, policy: str = "official_dimensions") -> dict:
@@ -18,11 +74,30 @@ def interpret_swebench_pro(raw: dict, task_id: str, policy: str = "official_dime
         "rubric_coverage": "fail_to_pass_and_pass_to_pass",
         "reason": "malformed_official_result"
     }
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or raw.get("task_id") != task_id or raw.get("error"):
         return out
-
-    passed = bool(raw.get("passed", False))
-    reward = float(raw.get("reward", 1.0 if passed else 0.0))
+    passed, reward = raw.get("passed"), raw.get("reward")
+    if (type(passed) is not bool or type(reward) not in (int, float)
+            or reward not in (0, 1) or not math.isfinite(reward)
+            or reward != int(passed) or type(raw.get("score")) not in (int, float)
+            or raw["score"] != reward or raw.get("status") != ("ok" if passed else "failed")
+            or type(raw.get("exit_code")) is not int or raw["exit_code"] != (0 if passed else 1)):
+        return out
+    protocol = raw.get("protocol")
+    if (not isinstance(protocol, dict)
+            or any(not isinstance(protocol.get(key), str) for key in ("reward_text", "test_exit_text", "test_run_exit_text"))
+            or protocol["reward_text"].strip() != str(int(passed))
+            or protocol.get("test_exit_text", "").strip() != str(raw["exit_code"])
+            or protocol.get("test_run_exit_text", "").strip() not in ("0", "1")
+            or not isinstance(protocol.get("output_export"), dict)
+            or protocol["output_export"].get("truncated") is not False):
+        return out
+    try:
+        required = _required_tests(raw.get("test_config", {}))
+        if (required <= _passed_tests(raw.get("test_results"))) != passed:
+            return out
+    except (ValueError, TypeError, KeyError, SyntaxError):
+        return out
 
     out.update(
         evaluation_validity="valid",
@@ -50,12 +125,15 @@ class SWEBenchProEvaluator:
         output.mkdir(parents=True, exist_ok=False)
         image = spec.metadata.get("image", self.config.get("image", f"ghcr.io/scaleapi/swe-bench_pro-v2:{spec.task_id}"))
 
+        output_limit = self.config.get("output_limit_bytes", 8388608)
+        if type(output_limit) is not int or output_limit <= 0:
+            raise CapabilityError("output_limit_bytes must be a positive integer")
         runtime = DockerRuntime({
             "image": image,
             "memory": self.config.get("memory", "4g"),
             "cpus": self.config.get("cpus", 2),
             "pids_limit": self.config.get("pids_limit", 256),
-            "output_limit_bytes": self.config.get("output_limit_bytes", 8388608),
+            "output_limit_bytes": output_limit,
             "read_only_rootfs": False,
             "user": "root"
         })
@@ -73,7 +151,7 @@ class SWEBenchProEvaluator:
         command = [
             "/bin/bash", "-c",
             (
-                "set -o pipefail\n"
+                "set -e -o pipefail\n"
                 "cd /app 2>/dev/null || cd /testbed 2>/dev/null\n"
                 "# Fast clean reset of test code\n"
                 "python3 - <<'PYRESET' > /tmp/reset_list.txt\n"
@@ -133,13 +211,15 @@ class SWEBenchProEvaluator:
                 "else\n"
                 "    bash /tests/run_script.sh > /tmp/stdout.log 2> /tmp/stderr.log\n"
                 "fi\n"
+                "echo $? > /logs/verifier/test_run_exit.txt\n"
                 "set -e\n"
                 "\n"
                 "# Run parser\n"
                 "python3 /tests/parser.py /tmp/stdout.log /tmp/stderr.log /tmp/output.json\n"
-                "cp /tmp/output.json /logs/verifier/output.json 2>/dev/null || true\n"
+                f"python3 -c {shlex.quote(_BOUNDED_EXPORT)} /tmp /logs/verifier {output_limit}\n"
                 "\n"
                 "# Check results against config.json\n"
+                "set +e\n"
                 "python3 << 'EVAL_EOF'\n"
                 "import json, sys, ast\n"
                 "results = json.load(open('/tmp/output.json'))\n"
@@ -167,7 +247,9 @@ class SWEBenchProEvaluator:
                 "    f.write('1\\n' if success else '0\\n')\n"
                 "sys.exit(0 if success else 1)\n"
                 "EVAL_EOF\n"
-                "echo $? > /logs/verifier/test_exit_code.txt\n"
+                "code=$?\n"
+                "echo \"$code\" > /logs/verifier/test_exit_code.txt\n"
+                "exit \"$code\"\n"
             )
         ]
 
@@ -185,47 +267,69 @@ class SWEBenchProEvaluator:
         write_json(output, "process.json", process)
         write_json(output, "runtime.json", provenance)
 
-        # Check reward.txt generated by eval logic
-        reward_path = grade_dir / "reward.txt"
-        passed = False
-        reward = 0.0
-
-        if reward_path.is_file():
+        # Exit codes alone never establish an official score. Keep every artifact
+        # even when a partial worker output cannot support a valid projection.
+        texts = {}
+        error = None
+        for name, filename in (("reward_text", "reward.txt"),
+                               ("test_exit_text", "test_exit_code.txt"),
+                               ("test_run_exit_text", "test_run_exit.txt")):
             try:
-                val = reward_path.read_text().strip()
-                if val == "1":
-                    passed = True
-                    reward = 1.0
-                elif val == "0":
-                    passed = False
-                    reward = 0.0
-            except Exception:
-                pass
-        else:
-            exit_code_path = grade_dir / "test_exit_code.txt"
-            if exit_code_path.is_file():
-                try:
-                    c = int(exit_code_path.read_text().strip())
-                    passed = (c == 0)
-                    reward = 1.0 if passed else 0.0
-                except Exception:
-                    pass
-
+                path = grade_dir / filename
+                regular_file(path)
+                texts[name] = path.read_text(encoding="utf-8")
+            except (OSError, ValueError, UnicodeError):
+                texts[name] = None
+        reward_text = texts["reward_text"]
+        reward = float(reward_text.strip()) if isinstance(reward_text, str) and reward_text.strip() in ("0", "1") else None
         raw_result = {
             "task_id": spec.task_id,
-            "passed": passed,
-            "reward": reward,
-            "score": reward,
-            "status": "ok" if passed else "failed",
-            "exit_code": 0 if passed else 1
+            "passed": reward == 1 if reward is not None else None,
+            "reward": reward, "score": reward,
+            "status": "ok" if reward == 1 else "failed",
+            "exit_code": process.get("container_exit_code"),
+            "protocol": texts,
         }
+        export_error = None
+        try:
+            regular_file(grade_dir / "output_export.json")
+            export = read_json(grade_dir / "output_export.json")
+            texts["output_export"] = export
+            if (not isinstance(export, dict) or type(export.get("limit_bytes")) is not int
+                    or export["limit_bytes"] != output_limit or type(export.get("truncated")) is not bool):
+                export_error = "missing_or_malformed_output_export"
+            elif export["truncated"]:
+                export_error = "verifier_output_limit"
+        except (OSError, ValueError, TypeError):
+            export_error = "missing_or_malformed_output_export"
+        try:
+            regular_file(grade_dir / "output.json")
+            raw_result["test_results"] = read_json(grade_dir / "output.json")
+            raw_result["test_config"] = read_json(tests_dir / "config.json")
+            required = _required_tests(raw_result["test_config"])
+            expected_pass = required <= _passed_tests(raw_result["test_results"])
+        except (OSError, ValueError, TypeError, KeyError, SyntaxError):
+            error = "missing_or_malformed_official_result"
+            expected_pass = None
 
-        test_output_json = grade_dir / "output.json"
-        if test_output_json.is_file():
-            try:
-                raw_result["test_results"] = json.loads(test_output_json.read_text())
-            except Exception:
-                pass
+        if process.get("stop_reason") is not None:
+            error = process["stop_reason"]
+        elif process.get("oom_killed") is not False or process.get("output_complete") is not True:
+            error = "incomplete_verifier_execution"
+        elif export_error:
+            error = export_error
+        elif reward is None:
+            error = "missing_or_malformed_official_reward"
+        elif error is None:
+            expected_exit = "0" if expected_pass else "1"
+            if (texts["test_exit_text"] is None or texts["test_exit_text"].strip() != expected_exit
+                    or texts["test_run_exit_text"] is None or texts["test_run_exit_text"].strip() not in ("0", "1")
+                    or type(process.get("container_exit_code")) is not int
+                    or process["container_exit_code"] != int(expected_exit)
+                    or (reward == 1) != expected_pass):
+                error = "inconsistent_official_protocol"
+        if error:
+            raw_result.update(status="error", error=error)
 
         write_json(grade_dir, "official.json", raw_result)
         raw_sha = file_digest(grade_dir / "official.json")
@@ -240,5 +344,8 @@ class SWEBenchProEvaluator:
             "process": process,
             "runtime": provenance
         }
+        if error:
+            projection["reason"] = error
+            out_grade.update(status="infra_error", error_kind="infrastructure", error=error)
         write_json(output, "grade.json", out_grade)
         return out_grade

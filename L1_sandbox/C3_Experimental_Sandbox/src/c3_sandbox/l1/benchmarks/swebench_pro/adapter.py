@@ -6,10 +6,9 @@ Adheres strictly to L1 zero-core-change isolation:
 - Pinned to official SWE-bench Pro V2 repository commit & data lock.
 """
 from __future__ import annotations
-import os
 from pathlib import Path
-from ...core.contracts import Asset, Task, EvaluationSpec, ConfigurationError
-from ...storage import confined, read_json, file_digest, regular_file, safe_relative
+from ...core.contracts import Task, EvaluationSpec, ConfigurationError
+from ...storage import confined, read_json, file_digest, regular_file
 
 PIN = "scaleapi/SWE-bench_Pro-os:v2"
 
@@ -35,7 +34,7 @@ class NativeSWEBenchPro:
         return out
 
     def load(self, task_id: str) -> Task:
-        task_dir = self.tasks_dir / task_id
+        task_dir = confined(self.tasks_dir, task_id)
         if not task_dir.is_dir():
             raise ConfigurationError(f"Unknown SWE-bench Pro V2 task: {task_id}")
 
@@ -45,13 +44,36 @@ class NativeSWEBenchPro:
         regular_file(toml_file)
         instruction = inst_file.read_text(encoding="utf-8")
 
-        # Check data lock if present
+        # A locked provenance claim covers the complete independent file set.
         lock_path = self.data / "data.lock.json"
         lock_status = "unlocked"
-        if lock_path.is_file():
-            lock = read_json(lock_path)
-            if task_id in lock.get("tasks", {}):
+        if lock_path.exists() or lock_path.is_symlink():
+            try:
+                regular_file(lock_path)
+                lock = read_json(lock_path)
+                entries = lock.get("tasks", {}).get(task_id)
+                if not isinstance(entries, dict) or not entries:
+                    raise ValueError("task missing from data lock")
+                actual = set()
+                for path in task_dir.rglob("*"):
+                    if path.is_symlink():
+                        raise ValueError("symlink task asset")
+                    if not path.is_dir():
+                        regular_file(path)
+                        actual.add(path.relative_to(task_dir).as_posix())
+                if actual != set(entries):
+                    raise ValueError("task file set differs from data lock")
+                for relative, expected in entries.items():
+                    path = confined(task_dir, relative)
+                    regular_file(path)
+                    if (not isinstance(expected, dict)
+                            or file_digest(path) != expected.get("sha256")
+                            or type(expected.get("size_bytes")) is not int
+                            or path.stat().st_size != expected["size_bytes"]):
+                        raise ValueError(f"locked file mismatch: {relative}")
                 lock_status = "sha256_locked"
+            except (ValueError, OSError, TypeError, AttributeError) as exc:
+                raise ConfigurationError(f"Invalid SWE-bench Pro data lock: {exc}") from exc
 
         # Private files: hidden tests, verifier scripts, gold patch
         private = {}
@@ -62,6 +84,8 @@ class NativeSWEBenchPro:
                 for p in sorted(s_dir.rglob("*")):
                     if p.is_file():
                         rel = p.relative_to(task_dir).as_posix()
+                        confined(task_dir, rel)
+                        regular_file(p)
                         private["source/" + rel] = p
 
         image = self.config.get("image", f"ghcr.io/scaleapi/swe-bench_pro-v2:{task_id}")

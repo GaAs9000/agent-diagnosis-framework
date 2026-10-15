@@ -1,6 +1,6 @@
 {
   "schema_version": "l3-plan-0.1",
-  "experiment_id": "officeval-m2-dev-baseline-v1",
+  "experiment_id": "officeval-m2-dev-baseline-v2",
   "purpose": "pilot",
   "design": "baseline",
   "base_config": "../../../L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json",
@@ -19,7 +19,7 @@
       "family_verified": true,
       "split": "development",
       "file_type": "word",
-      "selection_reason": "Development family representative for word-template-formatting (reuses 3 pilot slots at 35 requests)."
+      "selection_reason": "Development family representative for word-template-formatting (fresh M2 execution contract)."
     },
     {
       "task_id": "officeval_010",
@@ -27,7 +27,7 @@
       "family_verified": true,
       "split": "development",
       "file_type": "word",
-      "selection_reason": "Development family representative for word-diagram-edit (reuses 3 pilot slots at 35 requests)."
+      "selection_reason": "Development family representative for word-diagram-edit (fresh M2 execution contract)."
     },
     {
       "task_id": "officeval_033",
@@ -43,7 +43,7 @@
       "family_verified": true,
       "split": "development",
       "file_type": "powerpoint",
-      "selection_reason": "Development family representative for image-to-editable-ppt (reuses 3 pilot slots at 35 requests)."
+      "selection_reason": "Development family representative for image-to-editable-ppt (fresh M2 execution contract)."
     },
     {
       "task_id": "officeval_060",
@@ -67,7 +67,7 @@
       "family_verified": true,
       "split": "development",
       "file_type": "excel",
-      "selection_reason": "Development family representative for excel-chart-creation (reuses 3 pilot slots at 35 requests)."
+      "selection_reason": "Development family representative for excel-chart-creation (fresh M2 execution contract)."
     },
     {
       "task_id": "officeval_090",
@@ -105,8 +105,5 @@
     "seed": 20261015
   },
   "schedule_seed": 20261015,
-  "family_manifest": "../../../L1_sandbox/C3_Experimental_Sandbox/benchmarks/officeval/family_split.json",
-  "reuse_from": [
-    "../validation/budget_pilot_20261015"
-  ]
+  "family_manifest": "../../../L1_sandbox/C3_Experimental_Sandbox/benchmarks/officeval/family_split.json"
 }

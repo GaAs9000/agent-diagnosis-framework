@@ -176,6 +176,51 @@ def load_native_task(config, task_id):
     return NativeOfficeVal(config['benchmark']).load(task_id)
 
 
+def _frozen_execution_sources(plan):
+    return (plan['source_sha256'] if plan.get('source_scope') == 'execution-v1'
+            else _execution_sources(plan['source_sha256']))
+
+
+def _task_execution_identity(plan, job):
+    """Project frozen native inputs, without opening historical asset paths.
+
+    Spec/template/family files and other tasks may differ between batches. The
+    native source tree and this task's metadata/assets must still be identical.
+    Native provenance additionally binds logical private filenames and hashes.
+    """
+    tasks = [task for task in plan['tasks'] if task['task_id'] == job['task_id']]
+    if len(tasks) != 1:
+        raise L3Error('Reused task lacks a unique frozen task record')
+    task = tasks[0]
+    fields = ('public_prompt_sha256', 'public_assets', 'native_provenance')
+    if any(field not in task for field in fields):
+        raise L3Error('Reused task lacks frozen native input identity')
+    benchmark = job['config']['benchmark']
+    source = Path(benchmark['source_dir'])
+    data = Path(benchmark['data_dir'])
+    assets = Path(benchmark['assets_dir'])
+    task_id = job['task_id']
+    task_paths = {data / prefix / f'{task_id}.json'
+                  for prefix in ('tasks', 'data/tasks', 'rubrics', 'data/rubrics')}
+    asset_roots = (assets / task_id, assets / 'task_files' / task_id)
+    inputs = {name: value for name, value in plan['inputs_sha256'].items()
+              if Path(name).is_relative_to(source) or Path(name) in task_paths
+              or any(Path(name).is_relative_to(root) for root in asset_roots)}
+    return {**{field: task[field] for field in fields}, 'inputs_sha256': inputs}
+
+
+def _verify_reuse_contract(source, target, source_job, target_job):
+    for field in ('family_id', 'family_verified', 'split'):
+        if source_job.get(field) != target_job.get(field):
+            raise L3Error('Reused task family assignment differs from target plan: ' + field)
+    if _frozen_execution_sources(source) != _frozen_execution_sources(target):
+        raise L3Error('Reused execution source inventory differs from target plan')
+    if source['images'] != target['images']:
+        raise L3Error('Reused frozen images differ from target plan')
+    if _task_execution_identity(source, source_job) != _task_execution_identity(target, target_job):
+        raise L3Error('Reused task execution inputs differ from target plan')
+
+
 def _seed_reused_slots(directory: Path, plan: dict, reuse_dirs: list[Path]) -> int:
     """Import verified accepted native episodes from prior frozen L3 runs matching exact job config."""
     from . import report, run
@@ -196,13 +241,20 @@ def _seed_reused_slots(directory: Path, plan: dict, reuse_dirs: list[Path]) -> i
             key = (chosen['task_id'], chosen['condition_id'], int(chosen['replicate']), chosen['config_sha256'])
             available.setdefault(key, (src_dir, src_plan, chosen))
 
-    seeded_rows = []
+    # Validate the entire import before copying even the first episode.
+    matches = []
     for job in plan['jobs']:
         key = (job['task_id'], job['condition_id'], int(job['replicate']), job['config_sha256'])
         match = available.get(key)
         if match is None:
             continue
         src_dir, src_plan, src_row = match
+        src_job = next(j for j in src_plan['jobs'] if j['trial_id'] == src_row['trial_id'])
+        _verify_reuse_contract(src_plan, plan, src_job, job)
+        matches.append((job, src_dir, src_plan, src_row))
+
+    seeded_rows = []
+    for job, src_dir, src_plan, src_row in matches:
         src_attempt = int(src_row['attempt'])
         src_episode = src_dir / 'runs' / src_row['trial_id'] / f'attempt_{src_attempt:03d}' / 'episode'
         dest_attempt = directory / 'runs' / job['trial_id'] / 'attempt_000'
@@ -222,7 +274,8 @@ def _seed_reused_slots(directory: Path, plan: dict, reuse_dirs: list[Path]) -> i
             status='completed',
             replacement_of=None,
             episode=str(dest_episode),
-            code_provenance=provenance_inventory(),
+            code_provenance=(src_row.get('code_provenance') or src_plan.get('code_provenance')
+                             or src_plan['source_sha256']),
             expected_index_sha256=expected,
             reused_from={
                 'experiment_id': src_plan['experiment_id'],
@@ -231,6 +284,8 @@ def _seed_reused_slots(directory: Path, plan: dict, reuse_dirs: list[Path]) -> i
                 'attempt': src_attempt,
             },
         )
+        if src_row.get('reused_from'):
+            row['reused_from']['reused_from'] = copy.deepcopy(src_row['reused_from'])
         row.update(summary)
         run._verify_identity(row, job, 0)
         run._save_receipt(dest_attempt / 'receipt.json', row)
@@ -375,8 +430,7 @@ def verify_plan(directory: Path, *, verify_images: bool = True, verify_execution
     if plan.get('schema_version') != VERSION:
         raise L3Error('Unknown plan version')
     if verify_execution:
-        expected_sources = (plan['source_sha256'] if plan.get('source_scope') == 'execution-v1'
-                            else _execution_sources(plan['source_sha256']))
+        expected_sources = _frozen_execution_sources(plan)
         if source_inventory() != expected_sources:
             raise L3Error('Execution source inventory changed; freeze a new plan')
         for name, expected in plan['inputs_sha256'].items():

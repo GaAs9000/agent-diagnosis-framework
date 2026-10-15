@@ -82,64 +82,16 @@ def resolve_m2_baseline_p0(
     *,
     condition_id: str | None = None,
 ) -> dict[str, Any]:
-    """Resolves parent-excluded M2 baseline p_0 from an L3 summary/directory for `parent_dir`."""
-    parent = L1Package(Path(parent_dir))
-    src = Path(source_path)
-    doc = read_json(src / 'summary.json') if src.is_dir() else read_json(src)
-    baseline_doc = doc.get('m2_baseline') if isinstance(doc, dict) and 'm2_baseline' in doc else doc
-    cohorts = (baseline_doc or {}).get('complete_cohorts') if isinstance(baseline_doc, dict) else None
-    if not isinstance(cohorts, list) or not cohorts:
-        raise L2Error('No complete baseline cohorts available in baseline source')
-
-    parent_cfg_sha = digest(parent.json('raw/resolved_config.json'))
-    manifest_cfg_sha = parent.manifest.get('config_sha256')
-    if manifest_cfg_sha is not None and manifest_cfg_sha != parent_cfg_sha:
-        raise L2Error('Parent manifest config_sha256 disagrees with raw/resolved_config.json')
-    matched = [
-        c for c in cohorts
-        if c.get('task_id') == parent.task_id
-        and c.get('config_sha256') == parent_cfg_sha
-        and (condition_id is None or c.get('condition_id') == condition_id)
-    ]
-    if not matched:
-        raise L2Error(f'No complete baseline cohort matches task={parent.task_id} and config_sha256={parent_cfg_sha}')
-    if len(matched) > 1:
-        raise L2Error('Multiple baseline cohorts match parent task/config; specify --baseline-condition')
-    cohort = matched[0]
-    if not cohort.get('selected_parent_exclusion_supported'):
-        raise L2Error('Matched cohort lacks sealed episode anchors required for parent exclusion')
-    parent_ver = parent.model_version()
-    if parent_ver and parent_ver != 'unknown' and cohort.get('model_version') and cohort.get('model_version') != parent_ver:
-        raise L2Error('Parent episode modelVersion differs from baseline cohort modelVersion')
-
-    trials = cohort.get('trials') or []
-    excluded = [
-        t for t in trials
-        if t.get('expected_index_sha256') == parent.index_sha256
-        or (parent.episode_id and t.get('episode_id') == parent.episode_id)
-    ]
-    if len(excluded) > 1:
-        raise L2Error('Parent episode matches multiple cohort slots; duplicate baseline evidence')
-    remaining = [t for t in trials if t not in excluded]
-    if not remaining:
-        raise L2Error('No baseline trials remain after excluding parent episode')
-    p0_val = sum(float(t['study_outcome_y']) for t in remaining) / len(remaining)
-    excluded_id = excluded[0]['trial_id'] if excluded else None
-    return {
-        'p0': probability(p0_val, 'p0'),
-        'cohort_verified': True,
-        'cohort_key': cohort.get('key'),
-        'condition_id': cohort.get('condition_id'),
-        'cohort_n': len(trials),
-        'used_n': len(remaining),
-        'parent_in_cohort': bool(excluded),
-        'excluded_trial_id': excluded_id,
-        'provenance': (
-            f"L3 cohort {str(cohort.get('key', ''))[:16]} ({cohort.get('condition_id')}); "
-            f"used {len(remaining)}/{len(trials)} valid runs; "
-            f"excluded_parent_trial={excluded_id or 'external_verified_distinct'}"
-        ),
-    }
+    """Use L3's single offline evidence verifier, only when baseline is requested."""
+    try:
+        from l3_sandbox.report import resolve_baseline_p0
+        from l3_sandbox.common import L3Error
+    except ImportError as exc:
+        raise L2Error('Verified --baseline requires L3; install the L3_Sandbox package, or use explicit --p0') from exc
+    try:
+        return resolve_baseline_p0(source_path, parent_dir, condition_id=condition_id)
+    except (L3Error, OSError, ValueError, KeyError, TypeError) as exc:
+        raise L2Error(str(exc)) from exc
 
 
 def run_episode(
@@ -247,10 +199,20 @@ def run_episode(
         # Older files may have a tag derived from unrelated config/code. Match actual inputs.
         candidates = [path, *sorted(path.parent.glob('*.json'))]
         cfg = spec['config']['model']
-        legacy_tag_hash = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT,
-                                  'mode': 'facts' if spec['include_facts'] else 'raw', 'model_config': cfg})[:16]
-        legacy_id = f"llm:{cfg.get('model') or 'unknown'}@{legacy_tag_hash}"
-        legacy_config_hash = digest({**spec, 'id': legacy_id})
+        from .config import DEFAULTS
+        legacy_models = [cfg]
+        if cfg.get('max_response_bytes') == DEFAULTS['model']['max_response_bytes']:
+            # This execution-only default was absent from older full-config tags.
+            legacy_models.append({k: v for k, v in cfg.items() if k != 'max_response_bytes'})
+        legacy_config_hashes = {digest(spec)}
+        for legacy_model in legacy_models:
+            legacy_tag_hash = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT,
+                                      'mode': 'facts' if spec['include_facts'] else 'raw',
+                                      'model_config': legacy_model})[:16]
+            legacy_id = f"llm:{cfg.get('model') or 'unknown'}@{legacy_tag_hash}"
+            legacy_config = {**spec['config'], 'model': legacy_model}
+            legacy_config_hashes.add(digest({**spec, 'config': legacy_config}))
+            legacy_config_hashes.add(digest({**spec, 'id': legacy_id, 'config': legacy_config}))
         for candidate in dict.fromkeys(candidates):
             if not candidate.is_file():
                 continue
@@ -261,15 +223,19 @@ def run_episode(
                 old = doc.get('input_sha256') or {}
                 legacy_match = (old.get('payload_sha256') == inputs['payload_sha256'] and
                                 old.get('prompt_sha256') == inputs['prompt_sha256'] and
-                                old.get('analyst_config_sha256') in (digest(spec), legacy_config_hash))
+                                old.get('analyst_config_sha256') in legacy_config_hashes)
                 if old != inputs and not legacy_match:
                     continue
                 if kind == 'values':
                     validate_values(doc.get('values'), parent.turns)
                 else:
                     validate_hypotheses(doc.get('hypotheses'), curve)
-                if old != inputs or doc.get('analyst') != spec['id'] or candidate != path:
-                    doc = {**doc, 'input_sha256': inputs, 'analyst': spec['id']}
+                # Group membership comes from the trusted request mode, never the
+                # model response, cache payload, or opaque analyst tag.
+                group = 'C' if spec['include_facts'] else 'B'
+                if (old != inputs or doc.get('analyst') != spec['id'] or candidate != path
+                        or doc.get('analyst_group') != group):
+                    doc = {**doc, 'input_sha256': inputs, 'analyst': spec['id'], 'analyst_group': group}
                     write_json(path, doc)
                 return doc
             except (L2Error, ValueError, TypeError, KeyError):

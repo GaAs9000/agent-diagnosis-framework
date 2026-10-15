@@ -284,58 +284,139 @@ def test_never_started_report_retains_missing_frozen_slots(tmp_path, monkeypatch
     assert result["nvalid"] == result["nattempts"] == 0
 
 
-def test_baseline_design_exports_m2_baseline_and_resolves_parent_excluded_p0(tmp_path, monkeypatch):
-    plan, rows, save = experiment(tmp_path, monkeypatch, tasks=1, replicates=5)
-    plan["design"] = "baseline"
-    plan["conditions"] = [{"condition_id": "requests_035"}]
-    plan["analysis"] = {"primary_comparison": ["requests_035"], "bootstrap_samples": 100, "seed": 7, "minimum_effect": 0.1}
-    plan["jobs"] = [j for j in plan["jobs"] if j["condition_id"] == "control"]
-    for idx, job in enumerate(plan["jobs"]):
-        job["condition_id"] = "requests_035"
-        job["trial_id"] = f"t0-requests_035-{idx}"
-        job["config"] = {"model": {"endpoint": "https://example.invalid/v1", "temperature": 1}, "budget": {"max_model_requests": 35}}
-    outcomes = [0.0, 0.2, 0.4, 0.6, 0.8]
-    new_rows = []
-    for idx, job in enumerate(plan["jobs"]):
-        new_rows.append({
-            **{k: v for k, v in job.items() if k != "config"},
-            "attempt": 0,
-            "accepted": True,
-            "study_valid": True,
-            "study_outcome_y": outcomes[idx],
-            "endpoint_version": "study-outcome-v1",
-            "model_versions": ["v1"],
-            "delivery_exists": outcomes[idx] > 0,
-            "legal_delivery": outcomes[idx] > 0,
-            "dim1_pass": outcomes[idx] > 0,
-            "known_total_tokens": 10,
-            "unknown_usage_count": 0,
-            "termination": "submitted",
-            "model_requests": 5,
-            "tool_calls": 4,
-            "expected_index_sha256": f"{idx + 1:064x}",
-        })
-    rows[:] = new_rows
+@pytest.fixture
+def verified_baseline(trusted_report, monkeypatch):
     import hashlib
-    from l3_sandbox.common import digest, write
-    cfg = {"model": {"endpoint": "https://example.invalid/v1", "temperature": 1}, "budget": {"max_model_requests": 35}}
-    parent_ep = tmp_path / "parent_ep"
-    write(parent_ep / "manifest.json", {"episode_id": "ep_t0_0", "task": {"task_id": "t0"}, "config_sha256": digest(cfg)})
-    write(parent_ep / "raw/resolved_config.json", cfg)
-    write(parent_ep / "evidence_index.json", {"files": []})
-    parent_idx_sha = hashlib.sha256((parent_ep / "evidence_index.json").read_bytes()).hexdigest()
-    rows[0]["expected_index_sha256"] = parent_idx_sha
-    save()
-    result = report.summarize(tmp_path)
-    assert result["m2_baseline"]["exported"] is True
-    assert (tmp_path / "m2_baseline.json").exists()
-    cohorts = result["m2_baseline"]["complete_cohorts"]
-    assert len(cohorts) == 1
-    assert cohorts[0]["p0"] == pytest.approx(0.4)
-    assert cohorts[0]["trials"][0]["p0_excluding_self"] == pytest.approx(0.5)
-    resolved = report.resolve_baseline_p0(tmp_path, parent_ep)
-    assert resolved["p0"] == pytest.approx(0.5)
-    assert resolved["used_n"] == 4
-    assert resolved["parent_in_cohort"] is True
-    assert resolved["excluded_trial_id"] == "t0-requests_035-0"
+    import shutil
+    from l3_sandbox import run
+    from l3_sandbox.common import digest, read, write
+    from c3_sandbox.l1.evaluation.study import ENDPOINT_VERSION
 
+    directory, episode, original_row, original_job = trusted_report
+    plan = read(directory / "plan.json")
+    plan["design"] = "baseline"
+    plan["schema_version"] = __import__("l3_sandbox.plan", fromlist=["VERSION"]).VERSION
+    jobs, rows = [], []
+    def derive(package, job, attempt):
+        return {"study_valid": True, "study_outcome_y": read(package / "official_grade.json")["y"],
+                "model_versions": ["offline-test-version"], "endpoint_version": ENDPOINT_VERSION,
+                "episode_id": read(package / "manifest.json")["episode_id"]}
+    monkeypatch.setattr(run, "_summarize", derive)
+    for i, y in enumerate([0, .4, .8]):
+        job = {**original_job, "trial_id": "trial" if i == 0 else f"trial{i}", "replicate": i}
+        package = directory / "runs" / job["trial_id"] / "attempt_000/episode"
+        if i:
+            shutil.copytree(episode, package)
+        write(package / "manifest.json", {**read(package / "manifest.json"), "episode_id": f"ep{i}"})
+        write(package / "official_grade.json", {"y": y})
+        (package / "trajectory.jsonl").write_text(json.dumps({"kind": "model.parsed", "data": {"reported_model_version": "offline-test-version"}}) + "\n")
+        index = {name: hashlib.sha256((package / name).read_bytes()).hexdigest()
+                 for name in ("manifest.json", "raw/resolved_config.json", "official_grade.json", "trajectory.jsonl", "state_changes.jsonl", "artifacts/inventory.json")}
+        write(package / "evidence_index.json", index)
+        row = {**original_row, **{k: v for k, v in job.items() if k != "config"},
+               "binding": run._binding(plan, job),
+               "expected_index_sha256": hashlib.sha256((package / "evidence_index.json").read_bytes()).hexdigest(),
+               **derive(package, job, 0)}
+        run._save_receipt(package.parent / "receipt.json", row)
+        jobs.append(job)
+        rows.append(row)
+    plan["jobs"] = jobs
+    write(directory / "plan.json", plan)
+    (directory / "plan.sha256").write_text(hashlib.sha256((directory / "plan.json").read_bytes()).hexdigest())
+    write(directory / "run_results.json", {"rows": rows})
+    from l3_sandbox.plan import verify_plan
+    monkeypatch.setattr(report, "verify_plan", verify_plan)
+    return directory, episode
+
+
+def test_verified_baseline_resolves_parent_and_copy_without_writes(verified_baseline, tmp_path):
+    import shutil
+    directory, parent = verified_baseline
+    report.summarize(directory)
+    before = {str(p): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    result = report.resolve_baseline_p0(directory, parent)
+    assert result["p0"] == pytest.approx(.6)
+    assert result["cohort_verified"] is True
+    assert result["used_n"] == 2
+    assert result["excluded_trial_id"] == "trial"
+    copied = tmp_path / "copied-parent"
+    shutil.copytree(parent, copied)
+    assert report.resolve_baseline_p0(directory / "summary.json", copied) == result
+    assert all(Path(p).read_bytes() == content for p, content in before.items())
+    assert {str(p) for p in directory.rglob("*") if p.is_file()} == set(before) | {str(p) for p in copied.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("field,value", [("study_outcome_y", 1), ("expected_index_sha256", "f" * 64), ("episode_id", "invented")])
+def test_cached_baseline_projection_cannot_change_p0(verified_baseline, field, value):
+    from l3_sandbox.common import read, write
+    directory, parent = verified_baseline
+    report.summarize(directory)
+    cached = read(directory / "summary.json")
+    cached["m2_baseline"]["complete_cohorts"][0]["trials"][0][field] = value
+    write(directory / "summary.json", cached)
+    assert report.resolve_baseline_p0(directory / "summary.json", parent)["p0"] == pytest.approx(.6)
+    assert read(directory / "summary.json") == cached  # Never repairs the source in place.
+
+
+def test_linked_export_verified_and_unbound_rejected(verified_baseline, tmp_path):
+    from l3_sandbox.common import read, write
+    directory, parent = verified_baseline
+    baseline = report.summarize(directory)["m2_baseline"]
+    export = tmp_path / "portable.json"
+    write(export, baseline)
+    assert report.resolve_baseline_p0(export, parent)["p0"] == pytest.approx(.6)
+    baseline.pop("source_binding")
+    write(export, baseline)
+    with pytest.raises(report.L3Error, match="Unverified baseline JSON"):
+        report.resolve_baseline_p0(export, parent)
+
+
+@pytest.mark.parametrize("tamper", ["value", "anchor", "endpoint", "plan_binding", "row"])
+def test_linked_export_rejects_projection_tampering(verified_baseline, tmp_path, tamper):
+    from l3_sandbox.common import write
+    directory, parent = verified_baseline
+    baseline = report.summarize(directory)["m2_baseline"]
+    cohort = baseline["complete_cohorts"][0]
+    if tamper == "value":
+        cohort["trials"][1]["study_outcome_y"] = 1
+    elif tamper == "anchor":
+        cohort["trials"][0]["expected_index_sha256"] = "a" * 64
+    elif tamper == "endpoint":
+        cohort["outcome_endpoint_version"] = "stale"
+    elif tamper == "row":
+        baseline["rows"][0]["p0_excluding_self"] = .99
+    else:
+        baseline["source_binding"]["plan_sha256"] = "a" * 64
+    export = tmp_path / "portable.json"
+    write(export, baseline)
+    with pytest.raises(report.L3Error, match="differs|mismatch"):
+        report.resolve_baseline_p0(export, parent)
+
+
+def test_current_endpoint_version_is_required(verified_baseline, monkeypatch):
+    directory, parent = verified_baseline
+    original = report._verified_rows
+    def stale(*args):
+        return [{**row, "endpoint_version": "stale"} for row in original(*args)]
+    monkeypatch.setattr(report, "_verified_rows", stale)
+    with pytest.raises(report.L3Error, match="outcome_endpoint_version"):
+        report.resolve_baseline_p0(directory, parent)
+
+
+@pytest.mark.parametrize("field", ["episode_id", "expected_index_sha256"])
+def test_duplicate_baseline_anchors_are_not_exportable(verified_baseline, monkeypatch, field):
+    directory, parent = verified_baseline
+    original = report._verified_rows
+    def duplicate(*args):
+        rows = original(*args)
+        rows[1][field] = rows[0][field]
+        return rows
+    monkeypatch.setattr(report, "_verified_rows", duplicate)
+    with pytest.raises(report.L3Error, match="sealed episode anchors"):
+        report.resolve_baseline_p0(directory, parent)
+
+
+def test_l2_wrapper_matches_verified_l3_resolution(verified_baseline):
+    l2_report = pytest.importorskip("l2_sandbox.report")
+    directory, parent = verified_baseline
+    assert l2_report.resolve_m2_baseline_p0(directory, parent) == report.resolve_baseline_p0(directory, parent)

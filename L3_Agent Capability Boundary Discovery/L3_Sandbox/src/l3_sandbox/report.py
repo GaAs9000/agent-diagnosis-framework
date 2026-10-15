@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean, variance
 
-from .common import L3Error, digest, read, safe_path, write
+from .common import L3Error, digest, read, safe_path, sha_file, write
 from .plan import verify_plan, provenance_inventory
 
 
@@ -184,6 +184,11 @@ def _verified_rows(directory, plan, rows):
 
 def summarize(directory: Path) -> dict:
     """Verify a frozen plan and write only derived report artifacts beside it."""
+    return _summarize(directory, write_artifacts=True)
+
+
+def _summarize(directory: Path, *, write_artifacts: bool = False) -> dict:
+    """Rederive reports offline; baseline resolution never writes source artifacts."""
     directory = Path(directory)
     verify_plan(directory, verify_images=False, verify_execution=False)
     plan = read(directory / "plan.json")
@@ -306,6 +311,12 @@ def summarize(directory: Path) -> dict:
         "n_tasks": len(tasks),
         "n_families": len({task["family_id"] for task in tasks if task.get("family_id")}),
     }
+    summary["m2_baseline"]["source_binding"] = {
+        "source_directory": str(safe_path(directory)),
+        "plan_sha256": sha_file(directory / "plan.json"),
+    }
+    if not write_artifacts:
+        return summary
     write(directory / "summary.json", summary)
     if summary["m2_baseline"]["exported"]:
         write(directory / "m2_baseline.json", summary["m2_baseline"])
@@ -358,6 +369,8 @@ def _baseline_cohorts(jobs, selected, cells):
             and all(isinstance(r.get("expected_index_sha256"), str) and len(r["expected_index_sha256"]) == 64
                     for r in observed)
             and len({r["expected_index_sha256"] for r in observed}) == len(observed)
+            and all(isinstance(r.get("episode_id"), str) and r["episode_id"] for r in observed)
+            and len({r["episode_id"] for r in observed}) == len(observed)
         )
         trials = []
         for job, row in zip(frozen, observed):
@@ -418,11 +431,28 @@ def resolve_baseline_p0(source: Path, parent_episode: Path, *, condition_id: str
     source = safe_path(source)
     parent_episode = safe_path(parent_episode)
     if source.is_dir():
-        summary_doc = read(source / "summary.json") if (source / "summary.json").is_file() else summarize(source)
-        baseline_doc = summary_doc.get("m2_baseline") or {}
+        directory = source
+        supplied = None  # Cached reports are disposable projections.
     else:
         doc = read(source)
-        baseline_doc = doc.get("m2_baseline") if isinstance(doc, dict) and "m2_baseline" in doc else doc
+        supplied = doc.get("m2_baseline") if isinstance(doc, dict) and "m2_baseline" in doc else doc
+        if (source.parent / "plan.json").is_file() and source.name in ("summary.json", "m2_baseline.json"):
+            directory = source.parent
+            supplied = None
+        else:
+            binding = supplied.get("source_binding") if isinstance(supplied, dict) else None
+            if not isinstance(binding, dict) or not binding.get("source_directory") or not binding.get("plan_sha256"):
+                raise L3Error("Unverified baseline JSON: source experiment binding required; use explicit --p0 for external values")
+            directory = safe_path(Path(binding["source_directory"]))
+            if sha_file(directory / "plan.json") != binding["plan_sha256"]:
+                raise L3Error("Baseline source frozen plan SHA-256 mismatch")
+    baseline_doc = _summarize(directory)["m2_baseline"]
+    if supplied is not None:
+        # Exported projections can travel, but they cannot change their source's
+        # numerical outcomes, identities, or evidence anchors.
+        for field in ("exported", "rows", "complete_cohorts"):
+            if digest(supplied.get(field)) != digest(baseline_doc.get(field)):
+                raise L3Error("Baseline export differs from verified source evidence: " + field)
     cohorts = (baseline_doc or {}).get("complete_cohorts") or []
     if not cohorts:
         raise L3Error("No complete baseline cohorts available in source")
@@ -437,9 +467,11 @@ def resolve_baseline_p0(source: Path, parent_episode: Path, *, condition_id: str
     parent_cfg_sha = digest(resolved_cfg)
     if manifest.get("config_sha256") != parent_cfg_sha:
         raise L3Error("Parent episode manifest config_sha256 disagrees with raw/resolved_config.json")
+    from . import run
     parent_task_id = (manifest.get("task") or {}).get("task_id") or (manifest.get("task") or {}).get("id")
     parent_episode_id = manifest.get("episode_id")
     parent_index_sha = hashlib.sha256(idx_path.read_bytes()).hexdigest()
+    run._evidence(parent_episode, {"task_id": parent_task_id, "config_sha256": parent_cfg_sha}, parent_index_sha)
 
     traj_path = parent_episode / "trajectory.jsonl"
     parent_versions = sorted({
@@ -462,7 +494,7 @@ def resolve_baseline_p0(source: Path, parent_episode: Path, *, condition_id: str
     cohort = matched[0]
     if not cohort.get("selected_parent_exclusion_supported"):
         raise L3Error("Matched cohort lacks sealed episode anchors required for parent exclusion")
-    if parent_versions and cohort.get("model_version") not in parent_versions:
+    if parent_versions != [cohort.get("model_version")]:
         raise L3Error("Parent episode modelVersion differs from baseline cohort modelVersion")
     if cohort.get("outcome_endpoint_version") != ENDPOINT_VERSION:
         raise L3Error("Baseline cohort outcome_endpoint_version differs from current study endpoint")
@@ -483,6 +515,7 @@ def resolve_baseline_p0(source: Path, parent_episode: Path, *, condition_id: str
     excluded_id = excluded[0]["trial_id"] if excluded else None
     return {
         "p0": p0_val,
+        "cohort_verified": True,
         "task_id": parent_task_id,
         "condition_id": cohort["condition_id"],
         "config_sha256": parent_cfg_sha,
@@ -579,5 +612,5 @@ def _markdown(summary, plan=None):
     lines += ["", f"Selected valid outcomes contain {unknown_receipts} HTTP attempts with unknown usage; known token totals may be incomplete.",
               "Actual monetary cost is unknown; reconcile with the provider bill before estimating subsequent batches.",
               "No automatic E3/E4 significance, causal mechanism, or capability conclusion is produced.",
-              "M2 export is disabled until independent parent identity and full configuration matching are supported.", ""]
+              "Verified M2 baselines require frozen task/config matching, sealed episode anchors, and parent exclusion.", ""]
     return "\n".join(lines)

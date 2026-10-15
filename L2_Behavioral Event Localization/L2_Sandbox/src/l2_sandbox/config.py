@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
         'base_url': 'https://generativelanguage.googleapis.com/v1beta',
         'parameters': {'temperature': 0.0, 'maxOutputTokens': 4096},
         'timeout_seconds': 120,
+        'max_response_bytes': 16777216,
         'include_facts': True,
         'cost_per_call_usd': 0.002,
     },
@@ -64,6 +65,9 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     timeout = m.get('timeout_seconds', 120)
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
         raise L2Error('model.timeout_seconds must be a positive finite number')
+    maximum = m.get('max_response_bytes', DEFAULTS['model']['max_response_bytes'])
+    if type(maximum) is not int or not 1 <= maximum <= 67108864:
+        raise L2Error('model.max_response_bytes must be an integer in [1, 67108864]')
     for key in ('rpm', 'tpm'):
         value = (config.get('curve') or {}).get(key)
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
