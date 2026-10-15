@@ -13,7 +13,7 @@ import threading
 
 from .common import L3Error, digest, read, write
 from .limiter import RequestLimiter
-from .plan import verify_plan
+from .plan import verify_plan, provenance_inventory
 
 
 # These lazy boundaries are monkeypatched only by offline tests.
@@ -177,6 +177,60 @@ def _verify_summary(row, summary, job, attempt):
         raise L3Error('Receipt outcome differs from sealed episode')
 
 
+def _analysis_matches(plan, row):
+    """Legacy plans are projected read-only; their original inventory is retained."""
+    original = row.get('code_provenance') or plan.get('code_provenance') or plan.get('source_sha256')
+    if not original:
+        return True  # Offline boundary fixtures have no code inventory.
+    current = provenance_inventory()
+    return all(current.get(name) == value for name, value in original.items())
+
+
+def _verify_identity(row, job, attempt):
+    expected = {k: v for k, v in job.items() if k != 'config'}
+    expected['attempt'] = attempt
+    if any(row.get(k) != value for k, value in expected.items()):
+        raise L3Error('Receipt differs from frozen trial identity')
+    if row.get('config') is not None and digest(row['config']) != job['config_sha256']:
+        raise L3Error('Receipt config differs from frozen job')
+
+
+def _execution_healthy(package, summary):
+    """Completion health is independent of the evolving numeric study endpoint.
+
+    The endpoint already independently checks full grader protocol. In addition,
+    keep healthy completed native evidence reusable if endpoint policy changes to
+    untestable; no analysis revision is permission to buy another execution.
+    """
+    manifest = read(package / 'manifest.json')
+    status = manifest.get('status') or {}
+    grade = read(package / 'official_grade.json')
+    process = grade.get('process') or {}
+    native_healthy = (status.get('execution_validity') == 'valid'
+        and status.get('evidence_completeness') == 'complete'
+        and grade.get('error_kind') != 'infrastructure' and grade.get('status') != 'infra_error'
+        and type(process.get('container_exit_code')) is int and process['container_exit_code'] == 0
+        and process.get('stop_reason') is None and not process.get('oom_killed')
+        and process.get('output_complete') is not False)
+    if native_healthy and manifest.get('task', {}).get('benchmark') == 'officeval':
+        worker = read(package / 'grading/worker-output/worker.json')
+        native_healthy = worker.get('official_returned') is True and worker.get('exception') is None
+    return native_healthy or summary.get('study_valid') is True
+
+
+def _project_receipt(row, summary, job, attempt, plan, package):
+    _verify_identity(row, job, attempt)
+    if _analysis_matches(plan, row):
+        if row.get('accepted') and summary.get('study_valid') is True:
+            _verify_summary(row, summary, job, attempt)
+        elif any(k not in row or digest(row[k]) != digest(v) for k, v in summary.items()):
+            raise L3Error('Receipt outcome differs from independently derived evidence')
+    if summary.get('test_fixture') or summary.get('recording_mode') == 'test_fixture':
+        raise L3Error('Fixture outcomes cannot qualify as production trials')
+    healthy = _execution_healthy(package, summary)
+    return {**row, **summary, 'accepted': healthy}
+
+
 def _run_job(directory, plan, job, limiter, publish):
     trial_id = job['trial_id']
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', trial_id) or trial_id in ('.', '..'):
@@ -202,19 +256,22 @@ def _run_job(directory, plan, job, limiter, publish):
                 raise
             if row.get('status') == 'running':
                 row = {**row, 'status': 'interrupted'}
-            if row.get('accepted'):
+            if row.get('accepted') or row.get('status') == 'execution_invalid':
                 try:
                     _evidence(attempt / 'episode', job, row['expected_index_sha256'])
                     summary = _summarize(attempt / 'episode', job, index)
-                    _verify_summary(row, summary, job, index)
+                    projected = _project_receipt(row, summary, job, index, plan, attempt / 'episode')
                 except Exception as exc:
                     row = {**row, 'accepted': False, 'reuse_invalid': True, 'runner_error': type(exc).__name__}
                     publish(row)
                     # A trusted accepted receipt whose evidence changed is an integrity
                     # failure, not permission to spend on a replacement.
                     raise L3Error('Accepted attempt evidence failed revalidation') from exc
-                publish(row)
-                return
+                if projected['accepted']:
+                    publish(projected)
+                    return
+                if row.get('accepted'):
+                    raise L3Error('Accepted native execution is no longer healthy')
             publish(row)
         else:
             publish({**job, 'config': None, 'attempt': index, 'binding': binding,
@@ -228,7 +285,8 @@ def _run_job(directory, plan, job, limiter, publish):
         attempt.mkdir()  # Directory creation durably consumes this finite slot.
         row = {k: v for k, v in job.items() if k != 'config'}
         row.update(attempt=index, binding=binding, accepted=False, status='running',
-                   replacement_of=index - 1 if index else None, episode=str(attempt / 'episode'))
+                   replacement_of=index - 1 if index else None, episode=str(attempt / 'episode'),
+                   code_provenance=provenance_inventory())
         # Persist running receipt before invoking native execution; crash gaps still count.
         _save_receipt(attempt / 'receipt.json', row)
         publish(row)
@@ -241,9 +299,9 @@ def _run_job(directory, plan, job, limiter, publish):
             if summary.get('test_fixture') or summary.get('recording_mode') == 'test_fixture':
                 raise L3Error('Fixture outcomes cannot qualify as production trials')
             row.update(summary)
-            row['accepted'] = summary.get('study_valid') is True
+            row['accepted'] = _execution_healthy(attempt / 'episode', summary)
             if row['accepted']:
-                _verify_summary(row, summary, job, index)
+                _verify_identity(row, job, index)
             row['status'] = 'completed' if row['accepted'] else 'execution_invalid'
         except Exception as exc:
             row.update(status='runner_error', runner_error=type(exc).__name__, accepted=False,

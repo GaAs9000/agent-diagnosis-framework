@@ -11,11 +11,12 @@ import subprocess
 
 from .common import L3Error, canonical, digest, read, safe_path, sha_file, write
 from .conditions import TRANSFORM_VERSION, placebo_context, structure_context
+from .families import load_family_manifest, validate_family_selection
 
 VERSION = 'l3-plan-0.1'
 SPEC_KEYS = {'schema_version', 'experiment_id', 'purpose', 'design', 'base_config',
              'tasks', 'conditions', 'replicates', 'shared_budget', 'limits', 'analysis',
-             'schedule_seed', 'exclude_task_ids'}
+             'schedule_seed', 'exclude_task_ids', 'family_manifest'}
 
 
 def _keys(value, allowed, required, name):
@@ -35,7 +36,9 @@ def _identifier(value):
 
 
 def validate_spec(spec):
-    _keys(spec, SPEC_KEYS, SPEC_KEYS - {'exclude_task_ids'}, 'study spec')
+    _keys(spec, SPEC_KEYS, SPEC_KEYS - {'exclude_task_ids', 'family_manifest'}, 'study spec')
+    if 'family_manifest' in spec and (not isinstance(spec['family_manifest'], str) or not spec['family_manifest']):
+        raise L3Error('family_manifest must be a nonempty path')
     if spec['schema_version'] != VERSION or spec['purpose'] not in ('pilot', 'validation'):
         raise L3Error('Unknown study version or purpose')
     if spec['design'] not in ('budget', 'structure_budget'):
@@ -124,10 +127,37 @@ def image_id(image):
     return value
 
 
-def source_inventory():
+def provenance_inventory():
     import c3_sandbox.l1
     roots = [Path(__file__).resolve().parent, Path(c3_sandbox.l1.__file__).resolve().parent]
     return {str(p): sha_file(p) for root in roots for p in sorted(root.rglob('*.py'))}
+
+
+def _execution_sources(inventory):
+    """Freeze the actor, transport, restore, grader and input-transform path.
+
+    Research endpoint projection and reporting are deliberately versioned only as
+    provenance. Unknown external inventory entries are retained (never waived).
+    """
+    import c3_sandbox.l1
+    l1 = Path(c3_sandbox.l1.__file__).resolve().parent
+    l3 = Path(__file__).resolve().parent
+    result = {}
+    for name, value in inventory.items():
+        path = Path(name)
+        if path.is_relative_to(l1):
+            include = path != l1 / 'evaluation/study.py'
+        elif path.is_relative_to(l3):
+            include = path.name in ('conditions.py', 'common.py', 'limiter.py', 'run.py', '__init__.py')
+        else:
+            include = True
+        if include:
+            result[name] = value
+    return result
+
+
+def source_inventory():
+    return _execution_sources(provenance_inventory())
 
 
 def load_native_task(config, task_id):
@@ -142,6 +172,13 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
     if directory.exists():
         raise L3Error('Plan destination exists; use another directory')
     spec = validate_spec(read(spec_path))
+    family_snapshot = None
+    if spec.get('family_manifest'):
+        family_path = Path(spec['family_manifest'])
+        family_path = (spec_path.parent / family_path).resolve() if not family_path.is_absolute() else family_path
+        family_data = load_family_manifest(family_path)
+        validate_family_selection(family_data, spec['tasks'], spec['purpose'])
+        family_snapshot = {'path': str(family_path), 'sha256': sha_file(family_path), 'manifest': family_data}
     template = Path(spec['base_config'])
     template = (spec_path.parent / template).resolve() if not template.is_absolute() else template
     base = resolve(template)
@@ -152,6 +189,8 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
         raise L3Error('L3 requires frozen T=1 native sampling without a model seed')
     images = {base[s]['image']: image_id(base[s]['image']) for s in ('runtime', 'evaluation')}
     inputs = {str(spec_path): sha_file(spec_path), str(template): sha_file(template)}
+    if family_snapshot:
+        inputs[family_snapshot['path']] = family_snapshot['sha256']
     lock = base['benchmark'].get('data_lock')
     if lock:
         inputs[str(Path(lock))] = sha_file(Path(lock))
@@ -206,6 +245,7 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
         'replicates': spec['replicates'], 'tasks': task_records, 'conditions': spec['conditions'],
         'analysis': spec['analysis'], 'limits': spec['limits'], 'schedule_seed': spec['schedule_seed'],
         'jobs': jobs, 'source_sha256': source_inventory(), 'inputs_sha256': inputs,
+        'source_scope': 'execution-v1', 'code_provenance': provenance_inventory(),
         'images': images, 'transform_version': TRANSFORM_VERSION,
         'workload': {'trial_slots': len(jobs), 'logical_request_bound': logical,
             'http_attempt_bound_without_replacements': attempts,
@@ -215,24 +255,29 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
             'cost_note': 'No calibrated per-request price or live usage; monetary cost unknown'},
         'interpretation': 'Exploratory pilot only' if spec['purpose'] == 'pilot' else 'Frozen heldout validation',
         'execution_status': 'unexecuted'}
+    if family_snapshot:
+        plan['family_manifest'] = family_snapshot
     directory.mkdir(parents=True, mode=0o700)
     write(directory / 'plan.json', plan)
     (directory / 'plan.sha256').write_text(sha_file(directory / 'plan.json') + '\n')
     return plan
 
 
-def verify_plan(directory: Path, *, verify_images: bool = True) -> dict:
+def verify_plan(directory: Path, *, verify_images: bool = True, verify_execution: bool = True) -> dict:
     directory = safe_path(directory)
     plan = read(directory / 'plan.json')
     if sha_file(directory / 'plan.json') != (directory / 'plan.sha256').read_text().strip():
         raise L3Error('Frozen plan hash mismatch')
     if plan.get('schema_version') != VERSION:
         raise L3Error('Unknown plan version')
-    if source_inventory() != plan['source_sha256']:
-        raise L3Error('Source inventory changed; freeze a new plan')
-    for name, expected in plan['inputs_sha256'].items():
-        if sha_file(Path(name)) != expected:
-            raise L3Error('Frozen input changed: ' + name)
+    if verify_execution:
+        expected_sources = (plan['source_sha256'] if plan.get('source_scope') == 'execution-v1'
+                            else _execution_sources(plan['source_sha256']))
+        if source_inventory() != expected_sources:
+            raise L3Error('Execution source inventory changed; freeze a new plan')
+        for name, expected in plan['inputs_sha256'].items():
+            if sha_file(Path(name)) != expected:
+                raise L3Error('Frozen input changed: ' + name)
     ids = set()
     for job in plan['jobs']:
         _identifier(job['trial_id'])

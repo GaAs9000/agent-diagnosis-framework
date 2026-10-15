@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean, variance
 
 from .common import L3Error, digest, read, safe_path, write
-from .plan import verify_plan
+from .plan import verify_plan, provenance_inventory
 
 
 def _versions(row):
@@ -130,8 +130,9 @@ def _verified_rows(directory, plan, rows):
         projected = dict(saved)
         if saved.get("status") == "running" and row.get("status") == "interrupted":
             projected["status"] = "interrupted"
-        if digest(row) != digest(projected):
-            raise L3Error("Result row differs from attempt receipt")
+        # The run table may hold the original receipt projection or the current
+        # reanalysis. Verify either below; never trust its numerical fields.
+        original_projection = digest(row) == digest(projected)
         for field in ("trial_id", "task_id", "condition_id", "replicate", "config_sha256",
                       "family_id", "family_verified", "split"):
             if row.get(field) != job.get(field):
@@ -145,13 +146,23 @@ def _verified_rows(directory, plan, rows):
             package = attempt / "episode"
             run._evidence(package, job, expected)
             derived = run._summarize(package, job, index)
-            if row.get("accepted") is True:
-                run._verify_summary(row, derived, job, index)
-            elif any(key not in row or digest(row[key]) != digest(value) for key, value in derived.items()):
-                raise L3Error("Receipt outcome differs from independently derived evidence")
+            projected = run._project_receipt(saved, derived, job, index, plan, package)
+            if not original_projection and digest(row) != digest(projected):
+                if run._analysis_matches(plan, saved):
+                    raise L3Error("Result row differs from attempt receipt or current projection")
+                # Older derived tables can contain a previous endpoint version.
+                # Their scientific fields are discarded, but execution anchors
+                # must still agree with the immutable attempt receipt.
+                for field in ('binding', 'expected_index_sha256', 'episode', 'code_provenance',
+                              'status', 'replacement_of'):
+                    if row.get(field) != saved.get(field):
+                        raise L3Error("Result execution anchor differs from receipt: " + field)
         elif row.get("study_valid") is True or row.get("study_outcome_y") is not None:
             raise L3Error("Unaccepted attempt carries an unverified statistical outcome")
-        verified.append(row)
+        else:
+            if not original_projection:
+                raise L3Error("Result row differs from attempt receipt")
+        verified.append(projected)
     actual = set()
     for trial_root in (directory / "runs").glob("*"):
         if not trial_root.is_dir() or trial_root.name not in jobs:
@@ -174,7 +185,7 @@ def _verified_rows(directory, plan, rows):
 def summarize(directory: Path) -> dict:
     """Verify a frozen plan and write only derived report artifacts beside it."""
     directory = Path(directory)
-    verify_plan(directory, verify_images=False)
+    verify_plan(directory, verify_images=False, verify_execution=False)
     plan = read(directory / "plan.json")
     results_path = directory / "run_results.json"
     rows = read(results_path).get("rows", []) if results_path.exists() else []
@@ -273,6 +284,7 @@ def summarize(directory: Path) -> dict:
                     contrasts.append(_contrast(f"interaction:{a}-{b}", weights, tasks, cells, analysis, drift, unknown_versions))
     summary = {"experiment_id": plan["experiment_id"], "purpose": plan["purpose"],
         "interpretation": "exploratory_pilot_only" if plan["purpose"] == "pilot" else "controlled_validation_requires_independent_review",
+        "analysis_code_provenance": provenance_inventory(),
         "automatic_capability_claim": False, "nexpected": len(jobs), "nvalid": len(selected),
         "nmissing": len(jobs) - len(selected), "nattempts": len(rows), "ninvalid_attempts": len(invalid),
         "attempt_usage": {field: _usage(rows, field) for field in ("known_total_tokens", "http_attempt_count", "model_requests", "tool_calls")},

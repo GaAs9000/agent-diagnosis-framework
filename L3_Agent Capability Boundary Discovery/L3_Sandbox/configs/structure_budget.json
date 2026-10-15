@@ -7,40 +7,40 @@
   "tasks": [
     {
       "task_id": "officeval_004",
-      "family_id": "officeval-family-unresolved",
-      "family_verified": false,
+      "family_id": "word-template-formatting",
+      "family_verified": true,
       "split": "development",
       "file_type": "word",
       "selection_reason": "Two editable Word documents; formatting from public reference images. Provisional pilot selection, not heldout evidence."
     },
     {
       "task_id": "officeval_010",
-      "family_id": "officeval-family-unresolved",
-      "family_verified": false,
+      "family_id": "word-diagram-edit",
+      "family_verified": true,
       "split": "development",
       "file_type": "word",
       "selection_reason": "Editable flowchart modification within a Word document; distinct public operation from 004."
     },
     {
       "task_id": "officeval_050",
-      "family_id": "officeval-family-unresolved",
-      "family_verified": false,
+      "family_id": "image-to-editable-ppt",
+      "family_verified": true,
       "split": "development",
       "file_type": "powerpoint",
       "selection_reason": "Reconstruct two slides as editable content; PowerPoint coverage."
     },
     {
       "task_id": "officeval_085",
-      "family_id": "officeval-family-unresolved",
-      "family_verified": false,
+      "family_id": "excel-chart-creation",
+      "family_verified": true,
       "split": "development",
       "file_type": "excel",
       "selection_reason": "Editable charts over three spreadsheets; Excel chart generation coverage."
     },
     {
       "task_id": "officeval_095",
-      "family_id": "officeval-family-unresolved",
-      "family_verified": false,
+      "family_id": "excel-chart-creation",
+      "family_verified": true,
       "split": "development",
       "file_type": "excel",
       "selection_reason": "Editable doughnut chart from survey workbook; Excel presentation coverage."
@@ -107,5 +107,6 @@
     "bootstrap_samples": 2000,
     "seed": 20261015
   },
-  "schedule_seed": 20261015
+  "schedule_seed": 20261015,
+  "family_manifest": "../../../L1_sandbox/C3_Experimental_Sandbox/benchmarks/officeval/family_split.json"
 }

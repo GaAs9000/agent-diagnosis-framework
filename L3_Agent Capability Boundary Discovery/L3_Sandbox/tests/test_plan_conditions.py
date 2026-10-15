@@ -18,6 +18,8 @@ REPO = SANDBOX.parents[1]
 def prepared(tmp_path, monkeypatch):
     spec = read(SANDBOX / 'configs/budget_pilot.json')
     spec['base_config'] = str(REPO / 'L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json')
+    if 'family_manifest' in spec:
+        spec['family_manifest'] = str((SANDBOX / 'configs' / spec['family_manifest']).resolve())
     source = tmp_path / 'source.py'
     source.write_text('source one')
     monkeypatch.setattr(plan, 'source_inventory', lambda: {str(source): sha_file(source)})
@@ -41,7 +43,12 @@ def test_pilot_freezes_45_balanced_fresh_slots_and_only_request_budget_varies(pr
     assert len({j['trial_id'] for j in p['jobs']}) == 45
     assert all(j['config_sha256'] == l1_digest(j['config']) for j in p['jobs'])
     assert all(j['config']['budget']['max_tool_calls'] == 140 for j in p['jobs'])
-    assert all(j['family_verified'] is False and j['split'] == 'development' for j in p['jobs'])
+    assert all(j['family_verified'] is True and j['split'] == 'development' for j in p['jobs'])
+    assert len({j['family_id'] for j in p['jobs']}) == 4
+    family = p['family_manifest']
+    assert family['manifest']['family_count'] == 28
+    assert family['manifest']['heldout_family_count'] == 19
+    assert p['inputs_sha256'][family['path']] == family['sha256']
     for job in p['jobs']:
         prompt = job['config']['agent']['system_prompt']
         assert f"At most {job['max_model_requests']} model requests" in prompt
@@ -71,14 +78,42 @@ def test_freeze_rejects_source_spec_or_plan_drift(prepared, tmp_path, target):
         plan.verify_plan(directory, verify_images=False)
 
 
+def test_frozen_family_input_changes_block_execution_but_not_reanalysis(prepared, tmp_path):
+    path, spec, _ = prepared
+    original = Path(spec['family_manifest'])
+    manifest = read(original)
+    manifest['data_lock'] = str((original.parent / manifest['data_lock']).resolve())
+    copied = tmp_path / 'families.json'
+    write(copied, manifest)
+    spec['family_manifest'] = str(copied)
+    write(path, spec)
+    directory = tmp_path / 'p'
+    frozen = plan.create_plan(path, directory)
+    copied.write_text(copied.read_text() + '\n')
+    with pytest.raises(L3Error, match='Frozen input changed'):
+        plan.verify_plan(directory, verify_images=False)
+    assert plan.verify_plan(directory, verify_images=False, verify_execution=False) == frozen
+
+
+def test_plan_family_mismatch_fails_before_native_loading(prepared, tmp_path, monkeypatch):
+    path, spec, _ = prepared
+    spec['tasks'][0]['family_id'] = 'not-the-frozen-family'
+    write(path, spec)
+    monkeypatch.setattr(plan, 'load_native_task', lambda *args: pytest.fail('must validate family before loading assets'))
+    with pytest.raises(L3Error, match='family metadata mismatches'):
+        plan.create_plan(path, tmp_path / 'p')
+
+
 @pytest.mark.parametrize('kind', ['duplicate_condition', 'excluded_task', 'unverified_holdout', 'mixed_family', 'unknown_field', 'nan_rpm'])
 def test_design_errors_fail_before_native_load(prepared, kind):
     _, original, _ = prepared
     s = copy.deepcopy(original)
     if kind == 'duplicate_condition': s['conditions'].append(s['conditions'][0])
     elif kind == 'excluded_task': s['tasks'][0]['task_id'] = 'officeval_003'
-    elif kind == 'unverified_holdout': s['tasks'][0]['split'] = 'heldout'
-    elif kind == 'mixed_family': s['tasks'][0].update(split='heldout', family_verified=True)
+    elif kind == 'unverified_holdout': s['tasks'][0].update(split='heldout', family_verified=False)
+    elif kind == 'mixed_family':
+        s['tasks'][0].update(split='heldout', family_verified=True)
+        s['tasks'][1]['family_id'] = s['tasks'][0]['family_id']
     elif kind == 'unknown_field': s['api_key'] = 'inline-secret-must-never-be-saved'
     else: s['limits']['rpm'] = float('nan')
     with pytest.raises(L3Error): plan.validate_spec(s)
