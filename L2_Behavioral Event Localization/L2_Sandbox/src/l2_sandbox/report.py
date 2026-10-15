@@ -54,6 +54,10 @@ def render_report_md(
         f"- **定位回合 / 区间**：回合 `{curve_doc.get('turn')}`，区间 `{curve_doc.get('interval')}`",
         f"- **分支统计**：尝试 `{curve_doc.get('selected_attempted_branches', curve_doc.get('total_attempted_branches'))}`，无效 `{curve_doc.get('selected_invalid_branches', curve_doc.get('invalid_branches'))}`（无效率 `{curve_doc.get('invalid_rate', 0.0):.2%}`，是否剔除：`{curve_doc.get('excluded_high_invalid_rate')}`）",
     ])
+    rb_rates = curve_doc.get('request_budget_rate_by_k') or {}
+    if rb_rates:
+        parts = [f"c_{k}: {rate:.1%}" for k, rate in sorted(rb_rates.items(), key=lambda kv: int(kv[0]))]
+        lines.append(f"- **各检查点有效分支请求耗尽比例（`request_budget`）**：{', '.join(parts)}")
 
     if scores_doc and scores_doc.get('analysts'):
         lines.extend([

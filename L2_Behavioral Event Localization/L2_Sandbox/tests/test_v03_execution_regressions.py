@@ -257,3 +257,44 @@ def test_real_parsed_model_version_preferred_over_declared_config(tmp_path):
     parent.events = [{'kind': 'model.parsed', 'data': {'reported_model_version': 'real-model-version'}}]
     assert parent.model_version() == 'real-model-version'
     assert parent.outcome()['modelVersion'] == 'real-model-version'
+
+
+def test_f20_branch_termination_and_request_budget_rate_and_cache_recompute(tmp_path):
+    from l2_sandbox.io import write_jsonl
+    from l2_sandbox.report import render_report_md
+    parent = parent_at(tmp_path / 'source')
+    plan = build_curve_plan(parent, n1=2, n2=2, stride=2, max_concurrency=1)
+    output = tmp_path / 'output'
+    calls = []
+
+    def runner(p, k, path):
+        calls.append(path.name)
+        make_branch(p, k, path, 'scored')
+        manifest = read_json(path / 'manifest.json')
+        # Set k=0 i00 -> assistant_finished, i01 -> request_budget; k=1 all request_budget
+        is_req_budget = (k == 1) or path.name.endswith('i01')
+        manifest['status']['termination'] = 'request_budget' if is_req_budget else 'assistant_finished'
+        write_json(path / 'manifest.json', manifest)
+        reseal(path)
+
+    curve = execute_curve(parent, output, plan, resume_fn=runner, max_concurrency=1)
+    rows = read_jsonl(output / 'outcomes.jsonl')
+    assert all(r.get('termination') in ('assistant_finished', 'request_budget') for r in rows)
+    assert curve['request_budget_rate_by_k'] == {'0': 0.5, '1': 1.0}
+    assert curve['terminations_by_k'] == {
+        '0': {'assistant_finished': 2, 'request_budget': 2},
+        '1': {'request_budget': 2},
+    }
+    md = render_report_md(plan, curve, None)
+    assert 'c_0: 50.0%, c_1: 100.0%' in md
+
+    # Simulate legacy outcomes.jsonl without termination and recompute cache-only (0 branch reruns)
+    legacy_rows = [{k: v for k, v in r.items() if k != 'termination'} for r in rows]
+    write_jsonl(output / 'outcomes.jsonl', legacy_rows)
+    call_count_before = len(calls)
+    recomputed = execute_curve(parent, output, plan, resume_fn=runner, cache_only=True, max_concurrency=1)
+    assert len(calls) == call_count_before
+    recomputed_rows = read_jsonl(output / 'outcomes.jsonl')
+    assert all(r.get('termination') in ('assistant_finished', 'request_budget') for r in recomputed_rows)
+    assert recomputed['request_budget_rate_by_k'] == {'0': 0.5, '1': 1.0}
+

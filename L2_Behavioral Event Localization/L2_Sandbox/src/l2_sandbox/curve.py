@@ -323,13 +323,16 @@ def execute_curve(
                 out = L1Package(directory).outcome()
             else:
                 out = {'valid': False, 'y': None,
-                       'reason': previous.get(name, {}).get('reason') or 'interrupted_attempt', 'modelVersion': None}
+                       'reason': previous.get(name, {}).get('reason') or 'interrupted_attempt',
+                       'termination': previous.get(name, {}).get('termination'),
+                       'modelVersion': None}
         except (L2Error, KeyError, TypeError, ValueError) as exc:
-            out = {'valid': False, 'y': None, 'reason': str(exc), 'modelVersion': None}
+            out = {'valid': False, 'y': None, 'reason': str(exc), 'termination': None, 'modelVersion': None}
         valid = bool(out['valid'] and out['y'] is not None)
         outcomes_by_trial[name] = {**outcome_header, 'trial': name, 'k': int(match[1]), 'stage': match[2],
             'valid': valid, 'y': float(out['y']) if valid else None, 'reason': out.get('reason'),
-            'modelVersion': out.get('modelVersion'), 'reused': False, 'selected': False}
+            'termination': out.get('termination'), 'modelVersion': out.get('modelVersion'),
+            'reused': False, 'selected': False}
     write_json(l2_dir / 'plan.json', plan)
     branches_root.mkdir(parents=True, exist_ok=True)
     outcomes_lock = threading.Lock()
@@ -378,13 +381,15 @@ def execute_curve(
                     b_out = b_pkg.outcome()
                 else:
                     b_out = {'valid': False, 'y': None,
-                             'reason': previous.get(trial_name, {}).get('reason') or 'interrupted_attempt', 'modelVersion': None}
+                             'reason': previous.get(trial_name, {}).get('reason') or 'interrupted_attempt',
+                             'termination': previous.get(trial_name, {}).get('termination'),
+                             'modelVersion': None}
             else:
                 if trial_name in previous:
                     old = previous[trial_name]
                     if old.get('valid'):
                         raise IntegrityError(f'Cached valid branch is missing: {trial_name}')
-                    persist({**old, **outcome_header, 'selected': True})
+                    persist({**old, 'termination': old.get('termination'), **outcome_header, 'selected': True})
                     continue
                 try:
                     if accepts_limiter:
@@ -392,10 +397,10 @@ def execute_curve(
                     else:
                         runner(parent, k, branch_dir)
                 except Exception as exc:
-                    b_out = {'valid': False, 'y': None, 'reason': str(exc), 'modelVersion': None}
+                    b_out = {'valid': False, 'y': None, 'reason': str(exc), 'termination': None, 'modelVersion': None}
                 else:
                     if not (branch_dir / 'manifest.json').is_file():
-                        b_out = {'valid': False, 'y': None, 'reason': 'missing_manifest', 'modelVersion': None}
+                        b_out = {'valid': False, 'y': None, 'reason': 'missing_manifest', 'termination': None, 'modelVersion': None}
                     else:
                         b_pkg = L1Package(branch_dir)
                         b_pkg.validate_branch(parent, k)
@@ -403,7 +408,8 @@ def execute_curve(
             row = {'trial': trial_name, 'k': k, 'stage': stage,
                    'valid': bool(b_out['valid'] and b_out['y'] is not None),
                    'y': float(b_out['y']) if b_out['valid'] and b_out['y'] is not None else None,
-                   'reason': b_out.get('reason'), 'modelVersion': b_out.get('modelVersion'), 'reused': False, 'selected': True}
+                   'reason': b_out.get('reason'), 'termination': b_out.get('termination'),
+                   'modelVersion': b_out.get('modelVersion'), 'reused': False, 'selected': True}
             persist(row)
             if row['valid']:
                 return float(row['y'])
@@ -468,6 +474,22 @@ def execute_curve(
     invalid_rate = selected_invalid / len(selected) if selected else 0.0
     excluded = invalid_rate > max_invalid_rate
 
+    valid_by_k: dict[int, list[dict[str, Any]]] = {}
+    for row in selected:
+        if row['valid']:
+            valid_by_k.setdefault(int(row['k']), []).append(row)
+    request_budget_rate_by_k = {
+        str(k): sum(r.get('termination') == 'request_budget' for r in rows_k) / len(rows_k)
+        for k, rows_k in sorted(valid_by_k.items()) if rows_k
+    }
+    terminations_by_k: dict[str, dict[str, int]] = {}
+    for k, rows_k in sorted(valid_by_k.items()):
+        counts: dict[str, int] = {}
+        for r in rows_k:
+            term = str(r.get('termination') or 'unknown')
+            counts[term] = counts.get(term, 0) + 1
+        terminations_by_k[str(k)] = dict(sorted(counts.items()))
+
     if excluded:
         inferred.update(verdict=None, turn=None, interval=None)
     curve_doc = with_header(
@@ -489,6 +511,8 @@ def execute_curve(
             'excluded_incomplete_samples': not complete,
             'sampling_status': 'complete' if complete else 'incomplete',
             'excluded_high_invalid_rate': excluded,
+            'request_budget_rate_by_k': request_budget_rate_by_k,
+            'terminations_by_k': terminations_by_k,
             **inferred,
         },
     )

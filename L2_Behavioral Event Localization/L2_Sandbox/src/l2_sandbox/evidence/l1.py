@@ -215,6 +215,12 @@ class L1Package:
                         pass
         return (self.manifest.get('model') or {}).get('model_version')
 
+    def termination(self) -> str | None:
+        status = self.manifest.get('status')
+        if isinstance(status, dict) and isinstance(status.get('termination'), str) and status['termination']:
+            return status['termination']
+        return None
+
     def outcome(self) -> dict[str, Any]:
         """Project the shared L1 research endpoint; preserve native grade fields."""
         try:
@@ -229,6 +235,7 @@ class L1Package:
             'valid': study['study_valid'],
             'y': study['study_outcome_y'],
             'reason': study['zero_reason'] or study['study_classification'],
+            'termination': self.termination(),
             'modelVersion': self.model_version(),
         }
 
