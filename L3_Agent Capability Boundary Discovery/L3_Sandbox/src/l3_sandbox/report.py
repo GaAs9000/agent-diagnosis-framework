@@ -296,6 +296,17 @@ def summarize(directory: Path) -> dict:
         "cells": list(cells.values()), "contrasts": contrasts,
         "m2_baseline": {"exported": False, "rows": [], "complete_cohorts": _baseline_cohorts(jobs, selected, cells),
                         "reason": "independent_parent_identity_export_not_enabled"}}
+    family = plan.get("family_manifest", {})
+    manifest = family.get("manifest", {})
+    summary["family_metadata"] = {
+        "definition": manifest.get("family_definition", "unknown"),
+        "manifest_sha256": family.get("sha256"),
+        "manifest_path": family.get("path"),
+        "lineage_status": manifest.get("lineage_status", "unknown"),
+        "verified_meaning": manifest.get("family_verified_meaning", "unknown"),
+        "n_tasks": len(tasks),
+        "n_families": len({task["family_id"] for task in tasks if task.get("family_id")}),
+    }
     write(directory / "summary.json", summary)
     out = io.StringIO()
     fieldnames = list(next(iter(cells.values()))) if cells else ["task_id", "condition_id"]
@@ -304,7 +315,7 @@ def summarize(directory: Path) -> dict:
     for cell in cells.values():
         writer.writerow({key: json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else value for key, value in cell.items()})
     safe_path(directory / "summary.csv").write_text(out.getvalue(), encoding="utf-8")
-    safe_path(directory / "report.md").write_text(_markdown(summary), encoding="utf-8")
+    safe_path(directory / "report.md").write_text(_markdown(summary, plan), encoding="utf-8")
     return summary
 
 
@@ -354,16 +365,76 @@ def _usage(rows, field):
             "unknown_trials": sum(not _number(value) for value in values)}
 
 
-def _markdown(summary):
+def _display(value):
+    return "unknown" if value is None else f"{value:.4f}" if isinstance(value, float) else str(value)
+
+
+def _counts(values):
+    return "; ".join(f"{key}: {value}" for key, value in sorted(values.items())) or "none observed"
+
+
+def _pooled(cells):
+    """Descriptive slot-weighted means, never an average of unequal cell means."""
+    n = sum(cell["nvalid"] for cell in cells)
+    result = {field: sum(cell[field] for cell in cells) for field in ("nexpected", "nvalid", "nmissing", "nzero")}
+    for field, unknown in (("mean", None), ("delivery_rate", "delivery_unknown"), ("dim1_rate", "dim1_unknown")):
+        known = all(not cell["nvalid"] or (cell[field] is not None and (unknown is None or not cell[unknown])) for cell in cells)
+        result[field] = sum(cell[field] * cell["nvalid"] for cell in cells if cell["nvalid"]) / n if n and known else None
+    result["terminations"] = dict(sum((Counter(cell["terminations"]) for cell in cells), Counter()))
+    for field in ("model_requests", "tool_calls"):
+        result[field] = {key: sum(cell[field][key] for cell in cells) for key in ("known_total", "unknown_trials")}
+    return result
+
+
+def _use(value):
+    return f"{value['known_total']} (unknown trials: {value['unknown_trials']})"
+
+
+def _markdown(summary, plan=None):
+    plan = plan or {}
     lines = [f"# L3 report: {summary['experiment_id']}", "", summary["interpretation"], "",
              f"Frozen slots: {summary['nexpected']}; valid: {summary['nvalid']}; missing: {summary['nmissing']}.",
              f"Attempts: {summary['nattempts']}; invalid: {summary['ninvalid_attempts']}; replacement slots: {summary['nreplacement_trials']}.",
              "", "Attempts are not independent samples. Missing outcomes are not zero and do not establish no effect.",
-             "Model version drift: " + str(summary["model_version_drift"]), "",
-             "| Contrast | Paired tasks | Estimate | 95% family bootstrap CI | Status |",
-             "|---|---:|---:|---|---|"]
+             "Observed means and delivery/legal rates below describe valid observed slots only; incomplete cells are not complete-cohort estimates.",
+             "Model version drift: " + str(summary["model_version_drift"]), ""]
+    family = summary.get("family_metadata", {})
+    lines += [f"Families: {family.get('n_tasks', 'unknown')} tasks / {family.get('n_families', 'unknown')} families; definition: {family.get('definition', 'unknown')}.",
+              f"Frozen manifest SHA-256: {family.get('manifest_sha256') or 'unknown'}; path: {family.get('manifest_path') or 'unknown'}.",
+              f"Template lineage: {family.get('lineage_status', 'unknown')}; statistical independence is not certified.",
+              f"Family verification meaning: {family.get('verified_meaning', 'unknown')}.", "",
+              "## Per-condition observations", "",
+              "| Condition | Expected | Valid | Missing | Observed mean completion | Delivery rate | Legal rate | Zeros | Requests used | Tools used | Terminations (all observed valid slots) |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|"]
+    groups = defaultdict(list)
+    for cell in summary["cells"]:
+        groups[cell["condition_id"]].append(cell)
+    for cid, cells in groups.items():
+        cell = _pooled(cells)
+        lines.append(f"| {cid} | {cell['nexpected']} | {cell['nvalid']} | {cell['nmissing']} | {_display(cell['mean'])} | {_display(cell['delivery_rate'])} | {_display(cell['dim1_rate'])} | {cell['nzero']} | {_use(cell['model_requests'])} | {_use(cell['tool_calls'])} | {_counts(cell['terminations'])} |")
+    budgets = {json.dumps(job.get("config", {}).get("budget", {}), sort_keys=True) for job in plan.get("jobs", [])}
+    lines += ["", "Frozen execution budgets (check tool and wall-clock ceilings alongside termination counts):"]
+    lines += [f"- `{budget}`" for budget in sorted(budgets)]
+    lines += ["", "Request/tool totals above include selected valid outcomes only; attempt totals below include failed attempts and replacements.",
+              "", "## Per-task observations", "",
+              "| Task | Family | Condition | Valid / expected | Missing | Observed mean | Delivery rate | Legal rate | Zeros | Terminations |",
+              "|---|---|---|---:|---:|---:|---:|---:|---:|---|"]
+    for cell in summary["cells"]:
+        lines.append(f"| {cell['task_id']} | {cell.get('family_id') or 'unknown'} | {cell['condition_id']} | {cell['nvalid']}/{cell['nexpected']} | {cell['nmissing']} | {_display(cell['mean'])} | {_display(cell['delivery_rate'])} | {_display(cell['dim1_rate'])} | {cell['nzero']} | {_counts(cell['terminations'])} |")
+    lines += ["", "## Predetermined contrasts", "",
+              "Contrasts use paired complete task cells; they differ from pooled observed-slot means when cells are incomplete.", "",
+              "| Contrast (condition weights) | Paired tasks | Estimate | Minimum meaningful effect | 95% family bootstrap CI | Status |",
+              "|---|---:|---:|---:|---|---|"]
     for contrast in summary["contrasts"]:
-        lines.append(f"| {contrast['name']} | {contrast['n_tasks_paired']}/{contrast['n_tasks_expected']} | {contrast['estimate']} | {contrast['ci95'] or contrast['ci_reason']} | {contrast['status']} |")
-    lines += ["", "No automatic E3/E4 significance, causal mechanism, or capability conclusion is produced.",
+        weights = _counts(contrast["weights"])
+        lines.append(f"| {contrast['name']} ({weights}) | {contrast['n_tasks_paired']}/{contrast['n_tasks_expected']} | {_display(contrast['estimate'])} | {_display(contrast['minimum_effect'])} | {contrast['ci95'] or contrast['ci_reason']} | {contrast['status']} |")
+    lines += ["", "## Usage across all attempts", "",
+              "| Measure | Known total | Trials with unknown usage |", "|---|---:|---:|"]
+    for field, value in summary["attempt_usage"].items():
+        lines.append(f"| {field} | {value['known_total']} | {value['unknown_trials']} |")
+    unknown_receipts = sum(cell.get("unknown_usage_count", 0) for cell in summary["cells"])
+    lines += ["", f"Selected valid outcomes contain {unknown_receipts} HTTP attempts with unknown usage; known token totals may be incomplete.",
+              "Actual monetary cost is unknown; reconcile with the provider bill before estimating subsequent batches.",
+              "No automatic E3/E4 significance, causal mechanism, or capability conclusion is produced.",
               "M2 export is disabled until independent parent identity and full configuration matching are supported.", ""]
     return "\n".join(lines)
