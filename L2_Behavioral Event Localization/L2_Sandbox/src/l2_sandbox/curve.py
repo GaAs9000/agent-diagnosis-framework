@@ -64,10 +64,18 @@ class TokenBucketRateLimiter:
                 self._tok_tokens = min(self.tpm, self._tok_tokens + float(estimate) - float(actual))
 
 
+def sampling_identity(plan: dict[str, Any]) -> dict[str, Any]:
+    """Paid evidence depends on sampling inputs, never downstream inference code."""
+    header = plan.get('input_sha256') or {}
+    return {'parent_index_sha256': header.get('parent_index_sha256'),
+            'actor_config_sha256': header.get('actor_config_sha256'),
+            **{key: plan[key] for key in ('episode_id', 'turns', 'grid', 'n1', 'n2', 'stride', 'seed')}}
+
+
 def ensure_plan_identity(output_dir: Path, plan: dict[str, Any]) -> None:
     existing = Path(output_dir) / 'plan.json'
-    if existing.is_file() and read_json(existing) != plan:
-        raise IntegrityError('Existing output belongs to a different parent or curve plan')
+    if existing.is_file() and sampling_identity(read_json(existing)) != sampling_identity(plan):
+        raise IntegrityError('Existing output belongs to a different parent or sampling plan')
     if not existing.is_file() and Path(output_dir).exists():
         if any((Path(output_dir) / name).exists() for name in ('branches', 'outcomes.jsonl', 'curve.json')):
             raise IntegrityError('Existing execution artifacts lack plan identity')
@@ -115,8 +123,7 @@ def build_curve_plan(
 
     return with_header(
         {'parent_index_sha256': parent.index_sha256, 'parent_content_sha256': parent.content_identity(),
-         'actor_config_sha256': digest(parent.json('raw/resolved_config.json')), 'implementation_sha256': digest({name: sha_file(Path(__file__).parent / name)
-             for name in ('curve.py', 'io.py', 'evidence/l1.py', 'stats.py')})},
+         'actor_config_sha256': digest(parent.json('raw/resolved_config.json'))},
         {
             'episode_id': parent.episode_id,
             'family_id': parent.family_id,
@@ -151,7 +158,7 @@ def infer_curve_from_samples(
     *,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
-    """Implements the exact v0.3 Section 3 `curve()` algorithm."""
+    """Infer the sparse curve; the V0 upper-bound guard remains pending D1 review."""
     full_grid = sorted(set(grid) | {T})
     v0_upper = upper(s1.get(0, []), alpha)
     v1 = {k: _mean(vals) for k, vals in s1.items()} | {T: float(Y)}
@@ -248,7 +255,7 @@ def execute_curve(
     *,
     resume_fn: Callable[..., Any] | None = None,
     max_concurrency: int | None = None,
-    max_retries_per_slot: int = 2,
+    cache_only: bool = False,
     max_invalid_rate: float = 0.05,
     rpm: float | None = None,
     tpm: float | None = None,
@@ -260,15 +267,17 @@ def execute_curve(
     fresh_parent = L1Package(parent.root)
     expected = build_curve_plan(fresh_parent, n1=plan['n1'], n2=plan['n2'], stride=plan['stride'],
                                 alpha=plan['alpha'], max_concurrency=plan['max_concurrency'])
-    # Cost estimates are presentation only; all actor and curve inputs must agree.
-    expected['estimated_cost_usd'] = plan.get('estimated_cost_usd')
-    if expected != plan:
-        raise IntegrityError('Curve plan no longer matches parent/actor/implementation inputs')
+    # Sampling identity survives changes to inference, accounting, and implementation.
+    if sampling_identity(expected) != sampling_identity(plan):
+        raise IntegrityError('Curve plan no longer matches parent/actor/sampling inputs')
     ensure_plan_identity(l2_dir, plan)
     parent = fresh_parent
+    plan = {**plan, 'terminal_outcome': expected['terminal_outcome'],
+            'stage1_checkpoints': expected['stage1_checkpoints'],
+            'estimated_branches': expected['estimated_branches']}
     limiter = TokenBucketRateLimiter(rpm=rpm, tpm=tpm)
-    if max_retries_per_slot < 0 or not 0 <= max_invalid_rate <= 1:
-        raise L2Error('Invalid retry count or invalid-rate threshold')
+    if not 0 <= max_invalid_rate < 1:
+        raise L2Error('Invalid-rate threshold must be in [0,1)')
     if resume_fn is None:
         try:
             from c3_sandbox.l1.core.orchestrator import run as l1_run
@@ -297,47 +306,31 @@ def execute_curve(
     branches_root = l2_dir / 'branches'
     outcomes_path = l2_dir / 'outcomes.jsonl'
     rows = read_jsonl(outcomes_path) if outcomes_path.is_file() else []
-    outcome_header = with_header({'plan_sha256': digest(plan)}, {})
-    if any(any(r.get(key) != value for key, value in outcome_header.items()) for r in rows):
-        raise IntegrityError('Persisted outcomes belong to a different plan or implementation')
-    outcomes_by_trial = {r['trial']: r for r in rows}
-    if len(outcomes_by_trial) != len(rows):
-        raise IntegrityError('Duplicate persisted attempt identity')
+    outcome_header = with_header({'sampling_sha256': digest(sampling_identity(plan))}, {})
+    # Derived rows are rebuilt from each visited package under the current outcome policy.
+    outcomes_by_trial = {}
     trial_pattern = re.compile(r'k([0-9]+)-(s[12])-i([0-9]+)(?:-r([1-9][0-9]*))?')
-    # Validate the COMPLETE persisted history before any write or model send, including retries.
-    known_dirs = list(branches_root.iterdir()) if branches_root.exists() else []
-    for trial in set(outcomes_by_trial) | {d.name for d in known_dirs}:
-        match = trial_pattern.fullmatch(trial)
+    previous = {row['trial']: row for row in rows}
+    # Reproject retained attempts for accounting, without a global lineage gate or rehash.
+    retained = set(previous) | {path.name for path in branches_root.iterdir()} if branches_root.exists() else set(previous)
+    for name in sorted(retained):
+        match = trial_pattern.fullmatch(name)
         if match is None:
-            raise IntegrityError(f'Unknown branch attempt identity: {trial}')
-        k, stage, slot = int(match[1]), match[2], int(match[3])
-        canonical_trial = f'k{k:03d}-{stage}-i{slot:02d}' + (f'-r{int(match[4])}' if match[4] else '')
-        if trial != canonical_trial:
-            raise IntegrityError(f'Noncanonical branch attempt identity: {trial}')
-        if k >= T or slot >= (n1 if stage == 's1' else n2) or (stage == 's1' and k not in plan['stage1_checkpoints']):
-            raise IntegrityError(f'Branch attempt outside plan: {trial}')
-        row = outcomes_by_trial.get(trial)
-        if row and (row.get('k') != k or row.get('stage') != stage):
-            raise IntegrityError(f'Persisted attempt does not match slot: {trial}')
-        branch_dir = branches_root / trial
-        if (branch_dir / 'manifest.json').is_file():
-            pkg = L1Package(branch_dir)
-            pkg.validate_branch(parent, k)
-            out = pkg.outcome()
-            valid = bool(out['valid'] and out['y'] is not None)
-            if row and (bool(row.get('valid')) != valid or row.get('y') != (float(out['y']) if valid else None)):
-                raise IntegrityError(f'Persisted outcome does not match branch: {trial}')
-            if row is None:
-                outcomes_by_trial[trial] = {'trial': trial, 'k': k, 'stage': stage, 'valid': valid,
-                    'y': float(out['y']) if valid else None, 'reason': out.get('reason'),
-                    'modelVersion': out.get('modelVersion'), 'reused': False}
-        elif row and row.get('valid'):
-            raise IntegrityError(f'Cached valid branch is missing: {trial}')
-        elif row is None:
-            outcomes_by_trial[trial] = {'trial': trial, 'k': k, 'stage': stage, 'valid': False,
-                'y': None, 'reason': 'interrupted_attempt', 'modelVersion': None, 'reused': False}
-    if not (l2_dir / 'plan.json').is_file():
-        write_json(l2_dir / 'plan.json', plan)
+            continue
+        directory = branches_root / name
+        try:
+            if (directory / 'manifest.json').is_file():
+                out = L1Package(directory).outcome()
+            else:
+                out = {'valid': False, 'y': None,
+                       'reason': previous.get(name, {}).get('reason') or 'interrupted_attempt', 'modelVersion': None}
+        except (L2Error, KeyError, TypeError, ValueError) as exc:
+            out = {'valid': False, 'y': None, 'reason': str(exc), 'modelVersion': None}
+        valid = bool(out['valid'] and out['y'] is not None)
+        outcomes_by_trial[name] = {**outcome_header, 'trial': name, 'k': int(match[1]), 'stage': match[2],
+            'valid': valid, 'y': float(out['y']) if valid else None, 'reason': out.get('reason'),
+            'modelVersion': out.get('modelVersion'), 'reused': False, 'selected': False}
+    write_json(l2_dir / 'plan.json', plan)
     branches_root.mkdir(parents=True, exist_ok=True)
     outcomes_lock = threading.Lock()
 
@@ -345,33 +338,38 @@ def execute_curve(
         with outcomes_lock:
             outcomes_by_trial[row['trial']] = {**outcome_header, **row}
             ordered = sorted(outcomes_by_trial.values(), key=lambda r: (r['stage'], r['k'], r['trial']))
-            # Atomic replacement makes interrupted writes resume from the previous complete history.
-            tmp = outcomes_path.with_suffix('.jsonl.tmp')
-            write_jsonl(tmp, [{**outcome_header, **r} for r in ordered])
-            tmp.replace(outcomes_path)
+            write_jsonl(outcomes_path, ordered)
 
-    # Recover completed/unrecorded attempts and interrupted directories only after all identities validate.
-    if len(outcomes_by_trial) != len(rows):
-        recovered = next(iter(outcomes_by_trial.values()))
-        persist(recovered)
+    maximum_valid = plan['estimated_branches']['total_max']
+
+    def irrecoverable() -> bool:
+        invalid = sum(not row['valid'] for row in outcomes_by_trial.values() if row.get('selected'))
+        return invalid > max_invalid_rate * maximum_valid / (1 - max_invalid_rate)
 
     def _run_slot(stage: str, k: int, slot_idx: int) -> float | None:
         base_trial = f'k{k:03d}-{stage}-i{slot_idx:02d}'
-        with outcomes_lock:
-            persisted = [(int(trial_pattern.fullmatch(name)[4] or 0), row)
-                         for name, row in outcomes_by_trial.items()
-                         if name == base_trial or name.startswith(base_trial + '-r')]
-        for _, row in sorted(persisted):
-            if row['valid']:
-                return float(row['y'])
-        for attempt in range(max_retries_per_slot + 1):
+        names = {name for name in previous if name == base_trial or name.startswith(base_trial + '-r')}
+        names.update(path.name for path in branches_root.glob(base_trial + '*')
+                     if trial_pattern.fullmatch(path.name) and
+                     (path.name == base_trial or path.name.startswith(base_trial + '-r')))
+        attempts = sorted(int(trial_pattern.fullmatch(name)[4] or 0) for name in names)
+        next_attempt = 0
+        while True:
+            if attempts:
+                attempt = attempts.pop(0)
+                next_attempt = max(next_attempt, attempt + 1)
+            else:
+                if cache_only:
+                    raise L2Error(f'Cache-only analysis requires missing sample {base_trial}; explicit sampling required')
+                with outcomes_lock:
+                    if irrecoverable():
+                        return None
+                attempt = next_attempt
+                next_attempt += 1
             trial_name = base_trial if attempt == 0 else f'{base_trial}-r{attempt}'
             branch_dir = branches_root / trial_name
-            row = outcomes_by_trial.get(trial_name)
-            if row is not None:
-                if row['valid']:
-                    return float(row['y'])
-                continue
+            if not branch_dir.resolve().is_relative_to(branches_root.resolve()):
+                raise IntegrityError(f'Branch output redirects outside branches: {trial_name}')
             # Never rewrite a directory, even an interrupted attempt without a manifest.
             if branch_dir.exists():
                 if (branch_dir / 'manifest.json').is_file():
@@ -379,8 +377,15 @@ def execute_curve(
                     b_pkg.validate_branch(parent, k)
                     b_out = b_pkg.outcome()
                 else:
-                    b_out = {'valid': False, 'y': None, 'reason': 'interrupted_attempt', 'modelVersion': None}
+                    b_out = {'valid': False, 'y': None,
+                             'reason': previous.get(trial_name, {}).get('reason') or 'interrupted_attempt', 'modelVersion': None}
             else:
+                if trial_name in previous:
+                    old = previous[trial_name]
+                    if old.get('valid'):
+                        raise IntegrityError(f'Cached valid branch is missing: {trial_name}')
+                    persist({**old, **outcome_header, 'selected': True})
+                    continue
                 try:
                     if accepts_limiter:
                         runner(parent, k, branch_dir, request_limiter=limiter)
@@ -398,7 +403,7 @@ def execute_curve(
             row = {'trial': trial_name, 'k': k, 'stage': stage,
                    'valid': bool(b_out['valid'] and b_out['y'] is not None),
                    'y': float(b_out['y']) if b_out['valid'] and b_out['y'] is not None else None,
-                   'reason': b_out.get('reason'), 'modelVersion': b_out.get('modelVersion'), 'reused': False}
+                   'reason': b_out.get('reason'), 'modelVersion': b_out.get('modelVersion'), 'reused': False, 'selected': True}
             persist(row)
             if row['valid']:
                 return float(row['y'])
@@ -431,28 +436,40 @@ def execute_curve(
     s2_samples_holder: dict[int, list[float]] = {}
 
     def _s2_loader(s2_turns: list[int]) -> dict[int, list[float]]:
+        nonlocal maximum_valid
+        maximum_valid = len(s1_k) * n1 + len(s2_turns) * n2
         res = _run_stage_batch('s2', s2_turns, n2)
         s2_samples_holder.update(res)
         return res
 
-    inferred = infer_curve_from_samples(
-        T=T,
-        Y=Y,
-        grid=[int(x) for x in plan['grid']],
-        s1=s1_samples,
-        s2_runner_or_map=_s2_loader,
-        alpha=alpha,
-    )
-
+    complete_stage1 = all(len(s1_samples[k]) == n1 for k in s1_k)
+    if complete_stage1:
+        inferred = infer_curve_from_samples(
+            T=T, Y=Y, grid=[int(x) for x in plan['grid']], s1=s1_samples,
+            s2_runner_or_map=_s2_loader, alpha=alpha,
+        )
+        complete = all(len(samples) == n2 for samples in s2_samples_holder.values())
+    else:
+        inferred = {'verdict': None, 'turn': None, 'interval': None, 'v_hat': {}, 'turn_drops': {}}
+        complete = False
+    if not complete:
+        inferred.update(verdict=None, turn=None, interval=None, candidate_turn=None,
+                        v_hat={}, v2={}, turn_drops={})
+        inferred.pop('thresholds', None)
+    if not s2_samples_holder:
+        maximum_valid = len(s1_k) * n1
     outcomes_rows = sorted(outcomes_by_trial.values(), key=lambda r: (r['stage'], r['k'], r['trial']))
-    if not outcomes_path.is_file():
-        write_jsonl(outcomes_path, outcomes_rows)
+    write_jsonl(outcomes_path, outcomes_rows)
 
     total_attempted = len(outcomes_rows)
     invalid_count = sum(1 for r in outcomes_rows if not r['valid'])
-    invalid_rate = (invalid_count / total_attempted) if total_attempted > 0 else 0.0
+    selected = [row for row in outcomes_rows if row.get('selected')]
+    selected_invalid = sum(not row['valid'] for row in selected)
+    invalid_rate = selected_invalid / len(selected) if selected else 0.0
     excluded = invalid_rate > max_invalid_rate
 
+    if excluded:
+        inferred.update(verdict=None, turn=None, interval=None)
     curve_doc = with_header(
         {
             'plan_sha256': sha_file(Path(l2_dir) / 'plan.json') if (Path(l2_dir) / 'plan.json').is_file() else digest(plan),
@@ -466,6 +483,11 @@ def execute_curve(
             'total_attempted_branches': total_attempted,
             'invalid_branches': invalid_count,
             'invalid_rate': invalid_rate,
+            'invalid_rate_scope': 'selected_attempts',
+            'selected_attempted_branches': len(selected),
+            'selected_invalid_branches': selected_invalid,
+            'excluded_incomplete_samples': not complete,
+            'sampling_status': 'complete' if complete else 'incomplete',
             'excluded_high_invalid_rate': excluded,
             **inferred,
         },

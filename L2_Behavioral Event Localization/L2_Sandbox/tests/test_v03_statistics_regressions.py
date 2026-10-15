@@ -3,7 +3,7 @@ import random
 import pytest
 from l2_sandbox import CODE_VERSION
 from l2_sandbox.curve import infer_curve_from_samples
-from l2_sandbox.io import L2Error, code_fingerprint, write_json
+from l2_sandbox.io import L2Error, write_json
 from l2_sandbox.predicates import RULE_VOCABULARY
 from l2_sandbox.score import evaluate_hypotheses, score_episode, score_values, summarize_runs
 from l2_sandbox.stats import clustered_bootstrap, fisher_exact_one_sided, holm_adjust, lower_drop, mantel_haenszel_pool, permutation_one_sided, upper
@@ -20,14 +20,16 @@ def test_score_only_active_current_bound_outputs(tmp_path):
     write_json(tmp_path/'plan.json', {'episode_id': 'ep', 'turns': 2, 'terminal_outcome': 0})
     binding = {'parent_index_sha256': 'parent', 'payload_sha256': 'input'}
     doc = {'analyst': 'rules@1', 'episode_id': 'ep', 'code_version': CODE_VERSION,
-           'code_fingerprint': code_fingerprint(), 'input_sha256': binding, 'values': [.8, .4]}
+           'code_fingerprint': 'old-fixture-fingerprint', 'input_sha256': binding, 'values': [.8, .4]}
     write_json(tmp_path/'values/rules.json', doc)
     write_json(tmp_path/'values/inactive.json', {**doc, 'analyst': 'llm:old', 'episode_id': 'other'})
     kwargs = dict(active_analysts=['rules@1'], expected_input_bindings={'values': {'rules@1': binding}})
     result = score_episode(tmp_path, **kwargs)
     assert list(result['analysts']) == ['rules@1']
     assert result['analysts']['rules@1']['cost']['basis'] == 'configured_estimate'
-    for field, wrong in [('episode_id', 'other'), ('input_sha256', {'parent_index_sha256': 'other'}), ('code_fingerprint', 'old')]:
+    write_json(tmp_path/'values/rules.json', {**doc, 'code_fingerprint': 'old', 'code_version': 'old'})
+    assert score_episode(tmp_path, **kwargs)['analysts']['rules@1']
+    for field, wrong in [('episode_id', 'other'), ('input_sha256', {'parent_index_sha256': 'other'})]:
         write_json(tmp_path/'values/rules.json', {**doc, field: wrong})
         with pytest.raises(L2Error, match='Stale or unbound'):
             score_episode(tmp_path, **kwargs)

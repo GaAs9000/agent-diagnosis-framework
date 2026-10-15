@@ -26,7 +26,6 @@ DEFAULTS: dict[str, Any] = {
         'rpm': None,
         'tpm': None,
         'max_invalid_rate': 0.05,
-        'max_retries_per_slot': 2,
         'cost_per_branch_usd': 0.01,
     },
     'model': {

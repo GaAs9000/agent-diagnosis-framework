@@ -1,4 +1,5 @@
 """A sealed live inventory is order-independent and remains content-strict."""
+from pathlib import Path
 import pytest
 from l2_sandbox.evidence.l1 import L1Package
 from l2_sandbox.io import IntegrityError, sha_file, write_json
@@ -22,15 +23,9 @@ def test_live_inventory_hyphenated_siblings_compare_in_same_order(tmp_path):
     assert L1Package(root).episode_id == 'ep_ordering'
 
 
-@pytest.mark.parametrize('mutation', ['content', 'unlisted', 'missing'])
-def test_inventory_order_fix_still_rejects_integrity_changes(tmp_path, mutation):
+def test_l2_uses_declared_seal_without_rewalking_inventory(tmp_path, monkeypatch):
     root = sealed_live_package(tmp_path / 'episode')
-    rubric = root / 'benchmark/source/data/rubrics/officeval_001.json'
-    if mutation == 'content':
-        rubric.write_text('{"rubric":"tampered"}')
-    elif mutation == 'unlisted':
-        (root / 'extra.txt').write_text('unlisted')
-    else:
-        rubric.unlink()
-    with pytest.raises(IntegrityError, match='file inventory mismatch'):
-        L1Package(root)
+    def no_scan(*args, **kwargs):
+        pytest.fail('L2 must leave full evidence verification to L1')
+    monkeypatch.setattr(Path, 'rglob', no_scan)
+    assert L1Package(root).index_sha256

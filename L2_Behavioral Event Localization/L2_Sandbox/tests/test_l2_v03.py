@@ -479,7 +479,7 @@ def test_invalid_branch_rerun_and_trajectory_exclusion(tmp_path):
 
     out_flaky = tmp_path / 'l2_flaky'
     write_json(out_flaky / 'plan.json', plan)
-    c_flaky = execute_curve(parent, out_flaky, plan, resume_fn=flaky_resume, max_concurrency=1, max_retries_per_slot=2)
+    c_flaky = execute_curve(parent, out_flaky, plan, resume_fn=flaky_resume, max_concurrency=1)
     assert c_flaky['invalid_branches'] == 1
     assert (out_flaky / 'branches/k000-s1-i00-r1/manifest.json').is_file()
 
@@ -488,5 +488,5 @@ def test_invalid_branch_rerun_and_trajectory_exclusion(tmp_path):
 
     out_bad = tmp_path / 'l2_bad'
     write_json(out_bad / 'plan.json', plan)
-    c_bad = execute_curve(parent, out_bad, plan, resume_fn=always_bad_resume, max_concurrency=1, max_retries_per_slot=1)
+    c_bad = execute_curve(parent, out_bad, plan, resume_fn=always_bad_resume, max_concurrency=1)
     assert c_bad['excluded_high_invalid_rate'] is True

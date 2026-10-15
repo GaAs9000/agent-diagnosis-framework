@@ -1,71 +1,66 @@
-# L2 0.1 实现与设计合同（历史档案）
+# L2 v0.3 运行指南
 
-本文保留 v0.1 的实现记录，其中旧命令、Schema、封装与实验状态机不再适用于 v0.3。
-当前实现、安装与两个 CLI 命令见 [README](../README.md)；设计见
-[DESIGN_INPUT_v0.3.md](DESIGN_INPUT_v0.3.md)，研究边界见 [RESEARCH_PROTOCOL.md](RESEARCH_PROTOCOL.md)。
+L2 读取已封签的 L1 父轨迹，提取事实，预测检查点价值，再用原样续跑测量价值曲线和检验行为假说。设计合同见 [DESIGN_INPUT_v0.3.md](DESIGN_INPUT_v0.3.md)，研究约束见 [RESEARCH_PROTOCOL.md](RESEARCH_PROTOCOL.md)。
 
-## 模块
+## 安装与输入
 
-```text
-src/l2_sandbox/
-  evidence/l1.py          L1 0.2 内置校验、可选现有 L1 校验、0.1 有限兼容
-  evidence/references.py  原索引绑定的 JSON/JSONL/字节引用、按需复制原始请求响应
-  evidence/view.py        单 Episode 白名单视图和分页/字节预算
-  facts/build.py         确定性事实、事件、版本与覆盖
-  facts/docx_probe.py    安全的直接 OOXML 探针
-  analyst/backend.py    复用已有 L1 原生 ModelBackend 的薄适配层
-  analyst/run.py        单 Analyst 请求、工具检索、有限输出修复
-  analyst/rules.py      明确标注的非 LLM 规则基线
-  validation.py         Schema、引用、事件/版本定位和 untested 边界
-  package.py            诊断封口、事实投影/对象重解析/原始模型记录核验
-  experiments/plans.py  冻结计划与能力阻塞
-  experiments/controller.py  显式授权的原样续跑、回执及描述性导入
-  evaluation/metrics.py 外部真值驱动的基础指标与任务家族划分
-  portable.py           UTF-8 打包/解包、默认解压回验
-  cli.py                单一命令入口
+在 `L2_Sandbox/` 下使用 Python 3.12+，联合安装本仓库中的 L1 与 L2：
+
+```bash
+python -m pip install -e '../../L1_sandbox/C3_Experimental_Sandbox[l1]' -e '.[test]'
+python -m pytest -q
+l2 --help
 ```
 
-这是独立安装包，没有按设计建议写入 `src/c3_sandbox/l2`，避免覆盖现有 L1 命名空间。模型协议仍复用 `c3_sandbox.l1.models.native`；没有悄悄实现第二套 API 协议。产出包的实例可以脱离 L1 代码检查引用；真实模型与恢复入口需要已有 L1。
+离线分析也通过 L1 的统一结局模块判定交付与评分，L1 因此是必需依赖；安装时从上述本地路径提供，不假设它已发布到 PyPI。缺少 L1 时请执行联合安装命令。真实续跑和 LLM 分析另需对应镜像、任务资产及环境变量凭证。L2 不下载模型或任务，也不重建官方评分器。输入为 L1 父执行包目录；输出目录必须与父包互不包含。
 
-## 输入与事实
+## 两个命令
 
-仅发布 `retrospective`、`strict` profile。原 Episode 评分可见，但不允许访问兄弟分支、私有 Verifier 源码或 Rubric 源文件。`prefix` 和 `privileged` 明确拒绝，不提供未通过防泄漏验收的伪前缀分析。
+所有 `l2 run` 调用（包括 dry-run）都必须显式传入 `--p0`。下例的数值仅演示语法，正式实验应替换为对应配置下、独立 M2 队列测出的基线，并记录来源。
 
-L1 0.2 输入内置检查：文件清单/摘要、事件链/顺序/链接、规范化工具调用与原生响应一致、stdout/stderr 与 Observation 一致、送达内容出现在实际后续请求、快照文件/目录/内容摘要、重算差异、成品映射、配置与终态、检查点映像绑定。它不是官方评分语义的重新实现，也不执行源包的 Python Verifier。已安装 L1 校验器时另外调用；没有时报告确切检查集合。0.1 必须经过已安装 L1 校验器，只有限映射历史记录。
+```bash
+# 本地事实、规则预测与成本估计；LLM 缓存未命中时标为 deferred。
+l2 run /path/to/parent --output runs/episode --analysts rules --p0 0.4 \
+  --baseline-provenance 'M2 cohort identifier, configuration hash and parent exclusion'
 
-FactRecord 保存 `origin=recorded/derived`、原始引用、事件 ID、可用性、派生规则和覆盖范围。派生的对象状态包括解析器标识、配置摘要、输出摘要、源文件字节摘要以及所有对应快照中的文件路径。原始模型自述使用 `model_output_text`，不升级为真实工具动作。
+# --execute 允许付费分析器请求及 L1 续跑。
+l2 run /path/to/parent --output runs/episode --p0 0.4 \
+  --baseline-provenance 'M2 cohort identifier, configuration hash and parent exclusion' \
+  --analysts rules,llm_raw:configs/analyst.gemini.json,llm:configs/analyst.gemini.json \
+  --execute --rpm 60 --tpm 100000
 
-对象探针检查整个 `word/document.xml` 中的表格/段落、递归行数量、没有文本且没有绘图元素的行、直接表格/单元格边框、段落直接间距等。只提供直接 XML 属性；空文本不等于视觉空行，缺少直接属性不等于继承样式没有属性。跨版本只比较文档级结构计数，不以表格编号伪造语义身份。DTD/entity、重复 ZIP 成员、加密、超限输入拒绝或标 unsupported。
+l2 summarize runs/episode1 runs/episode2 \
+  --holdout-family family1 --output runs/summary.json
+```
 
-## 诊断与模型运行
+`c3-l2` 是相同入口的别名。`--p0` 必须为有限的 [0,1] 数；提供该值并不等于程序验证过采样来源。`--baseline-provenance` 写入基线记录，当前仍标记 `cohort_verified: false`。
 
-输出合同由 `schemas/contracts.json` 分发，包含 FactRecord、EventLocalization、Hypothesis、Diagnosis、Manifest 和 Index 定义。通过 `submit_diagnosis(diagnosis_json)` 提交，支持事件、事件集合、区间和终态粒度。引用不存在、事实未完整读过、事件无绑定支持、声明的文件版本不在支持事实中、无实验就输出 supported 等情况均拒绝。
+Python API `report.run_episode` 同样要求显式提供 `p0`；程序化实验应同时记录来源。M1 专用脚本显式传入 0.5，并声明它是工程占位值，历史 M1 记录不改写。
 
-模型记录包含请求前落盘、原生响应、元数据、全部工具请求/返回、失败尝试、结构修复、最终接受记录。Verifier 将接受的诊断反查至原始模型响应，不只检查输出 JSON 的形状。源索引固定，分析结束后核验源文件未改变。
+曲线默认参数为 `--n1 12 --n2 24 --stride 4 --alpha 0.05`。`--config` 可提供 `curve.rpm`、`curve.tpm`，对应 CLI 参数优先。模型配置只允许环境变量名引用凭证，禁止内嵌密钥。
 
-自然语言的“证据是否蕴含结论”不能由 Schema 证明。程序显式记录 semantic_entailment 未认证；不把字面引用通过、第二模型同意或规则基线标签当作因果真值。
+## 当前模块与数据流
 
-## 单次结构化基线
+| 模块 | 职责 |
+|---|---|
+| `evidence/l1.py`、`evidence/view.py` | 读取并校验父证据，构建分析器可见的父轨迹视图 |
+| `facts/build.py`、`facts/docx_probe.py` | 确定性提取 `{turn, type, value}` 事实及 DOCX 结构变化 |
+| `analysts/rules.py`、`analysts/llm.py` | 第一次预测检查点价值；集中损失时第二次提出谓词假说 |
+| `predicates.py` | 求值 `all`、`any`、`not` 与 `{fact, where}` |
+| `curve.py`、`stats.py` | 稀疏网格和区间细化续跑、无效分支处置、置信界及统计检验 |
+| `score.py`、`report.py` | 假说检验、技能分、跨家族汇总和报告编排 |
+| `cli.py`、`config.py`、`io.py` | 命令、配置、产物绑定及缓存支持 |
 
-`structured-once` 仅提供初始结构化视图和按预算可容纳的完整事实记录，不开放检索工具；遗漏数量记录在案，因结构修复可能增加请求，因此名称指不再检索新证据，不保证只有一次 HTTP 请求。
+A 组 `rules@1` 始终存在；`llm_raw:<config>` 为 B 组，`llm:<config>` 默认是父轨迹加事实的 C 组。R 组用 `--analysts reference --reference-scores scores.json`，必须提供每个检查点 `0..T-1` 的实际官方快照得分。分析器不可读取分支动作、分支事实或逐分支结局；第二次调用只增加允许的检查点级曲线摘要。
 
-当前提供 rules、structured-once、analyst 三种模式。**没有交付可直接用于论文的完整等信息 raw-log 基线与独立评测结果**；不同方法可读范围、实际字节和遗漏应在试验中审计，不因为它们从同一文件出发就自动声称等信息。
+## 输出与续跑
 
-## 实验范围
+本地准备阶段输出 `baseline.json`、`plan.json`、`facts.jsonl`、`values/` 和 `report.md`。执行阶段另产出 `branches/<trial>/`、`outcomes.jsonl`、`curve.json`、`scores.json`；检出集中损失时才提出并记录 `hypotheses/`。`diffuse_loss` 不触发第二次分析器调用，但可能已经完成两阶段曲线采样。
 
-`resume_unchanged` 桥接已安装 L1 的 `run(config, output, parent=..., checkpoint_id=...)`，不重置配置或预算。终态评分无效不阻止一个本来符合资格的检查点。授权范围固定分支数，全部失败保留。
+已有有效分支按采样条件幂等复用；父轨迹或采样条件不匹配时拒绝混用。规则与统计结果可重新计算；付费分析器响应按实际模型配置、提示和输入负载缓存，分析实现变化本身不应触发付费重跑。正常任务失败与基础设施异常必须分别处理，未交付不自动视为基础设施故障。缺失假说检验所需回合事实时，结果保留 `untestable`。
 
-信息注入、通用提醒的真实注入都需要 L1 审计接口；本版只生成 blocked 计划。没有猴子补丁、未记录的对话改写、任意 Agent 代码修复或假工具 Observation。受限基线续跑并不具备干预对比，验证导入明确输出 not_identifiable，而非 supported。
+## 结果边界
 
-`execute` 在没有现有 L1 恢复实现、未授权或模板 blocked 时拒绝调用。跨机器恢复对 L1 镜像、状态和协议的要求由 L1 负责；本包不声称接管其执行隔离或恢复资格认证。
+M1 实测概要见 [M1_PILOT_20261014.md](M1_PILOT_20261014.md)，探索性行为诊断见 [L2_POSTHOC_20261014.md](L2_POSTHOC_20261014.md)。工程验收通过、单条程序修复和事后相关性都不等于 L2 独立定位有效性。`diffuse_loss` 只表示当前参数下未检出集中下跌；占位 p0 的技能分不能证明分析器优越。
 
-## 阶段解释
-
-| 设计门槛 | 本版实现 | 本次验证范围 |
-|---|---|---|
-| M1 | 读取、事实、对象、覆盖、离线报告 | 九份实际源记录及单元/负向测试 |
-| M2 | 原生后端桥接、只读循环、引用验证、失败留存 | 确定性模型端口测试；真实 Analyst 待本机凭证 |
-| M3 | 冻结计划、原样续跑、结果导入 | 控制器测试替身；无真实对照干预，信息模板 blocked |
-| M4 | 基础指标/任务家族工具和试验说明 | 无独立任务研究评测，无准确率/创新性主张 |
-
-因此本版名称是 **只读定位与假说系统，附受限实验接口**，不是“已经通过因果验证的完整研究系统”。
+正式比较须冻结配置和任务家族、测量 M2 基线，并使用独立样本。`summarize` 只有在显式指定留出家族且具备配对 C/A 数据时才计算对应的升级证据。历史 `examples/` 不作为当前 v0.3 运行合同。

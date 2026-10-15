@@ -4,8 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Sequence
 from .analysts import probability, validate_values, validate_hypotheses
-from . import CODE_VERSION
-from .analysts.llm import (analyst_tag, predict_values_llm, propose_hypotheses_llm, build_call1_input, build_call2_input, CALL1_SYSTEM_PROMPT, CALL2_SYSTEM_PROMPT)
+from .analysts.llm import (analyst_tag, predict_values_llm, propose_hypotheses_llm, build_call1_input, build_call2_input, CALL1_SYSTEM_PROMPT, CALL2_SYSTEM_PROMPT, request_model_config)
 from .analysts.rules import (
     REFERENCE_ANALYST_ID,
     RULES_ANALYST_ID,
@@ -17,7 +16,7 @@ from .config import load as load_config
 from .curve import build_curve_plan, execute_curve, ensure_plan_identity
 from .evidence.l1 import L1Package
 from .facts.build import build_facts
-from .io import code_fingerprint, validate_output_location, L2Error, digest, read_json, sha_file, with_header, write_json, write_jsonl
+from .io import atomic_write, validate_output_location, L2Error, digest, read_json, with_header, write_json, write_jsonl
 from .score import score_episode
 
 
@@ -53,7 +52,7 @@ def render_report_md(
         "",
         f"- **曲线判定**：`{curve_doc.get('verdict')}`",
         f"- **定位回合 / 区间**：回合 `{curve_doc.get('turn')}`，区间 `{curve_doc.get('interval')}`",
-        f"- **分支统计**：尝试 `{curve_doc.get('total_attempted_branches')}`，无效 `{curve_doc.get('invalid_branches')}`（无效率 `{curve_doc.get('invalid_rate', 0.0):.2%}`，是否剔除：`{curve_doc.get('excluded_high_invalid_rate')}`）",
+        f"- **分支统计**：尝试 `{curve_doc.get('selected_attempted_branches', curve_doc.get('total_attempted_branches'))}`，无效 `{curve_doc.get('selected_invalid_branches', curve_doc.get('invalid_branches'))}`（无效率 `{curve_doc.get('invalid_rate', 0.0):.2%}`，是否剔除：`{curve_doc.get('excluded_high_invalid_rate')}`）",
     ])
 
     if scores_doc and scores_doc.get('analysts'):
@@ -83,7 +82,8 @@ def run_episode(
     output_dir: Path | None = None,
     analysts: Sequence[str] = ('rules',),
     execute: bool = False,
-    p0: float = 0.5,
+    cache_only: bool = False,
+    p0: float,
     n1: int = 12,
     n2: int = 24,
     stride: int = 4,
@@ -122,7 +122,6 @@ def run_episode(
                             max_concurrency=max_concurrency)
     ensure_plan_identity(l2_dir, plan)
     facts = build_facts(parent)
-    fingerprint = code_fingerprint()
 
     # Parse requested analysts (`rules`, `reference`, `llm:<config_path>`, `llm_raw:<config_path>`)
     parsed_specs = []
@@ -152,19 +151,10 @@ def run_episode(
     parsed_specs = list({spec['id']: spec for spec in parsed_specs}.values())
     if any(spec['kind'] == 'reference' for spec in parsed_specs):
         predict_values_reference(facts, parent.turns, p0, float(plan['terminal_outcome']), reference_snapshot_scores)
-    def preserve_previous(path):
-        if path.is_file():
-            archive = l2_dir / 'history' / path.parent.name / (path.stem + '@' + sha_file(path) + path.suffix)
-            if not archive.exists():
-                archive.parent.mkdir(parents=True, exist_ok=True)
-                archive.write_bytes(path.read_bytes())
-
     l2_dir.mkdir(parents=True, exist_ok=True)
-    facts_path = write_jsonl(l2_dir / 'facts.jsonl', facts)
-    facts_sha = sha_file(facts_path)
+    write_jsonl(l2_dir / 'facts.jsonl', facts)
     write_json(l2_dir / 'plan.json', plan)
     baseline = {'p0': p0, 'provenance': baseline_provenance, 'cohort_verified': False}
-    preserve_previous(l2_dir / 'baseline.json')
     write_json(l2_dir / 'baseline.json', with_header(plan['input_sha256'], baseline))
     bindings = {'values': {}, 'hypotheses': {}}
 
@@ -180,35 +170,53 @@ def run_episode(
                 payload['curve_summary'] = build_call2_input(parent, p0, curve, None, include_facts=False)['curve_summary']
             if spec['kind'] == 'reference':
                 payload['reference_scores'] = {str(k): v for k, v in reference_snapshot_scores.items()}
-        return {'parent_index_sha256': parent.index_sha256, 'facts_sha256': facts_sha,
-                'payload_sha256': digest(payload), 'analyst_config_sha256': digest(spec),
-                'prompt_sha256': digest(CALL1_SYSTEM_PROMPT if call == 1 else CALL2_SYSTEM_PROMPT),
-                'implementation_sha256': fingerprint}
+        if spec['kind'] == 'llm':
+            return {'payload_sha256': digest(payload),
+                    'model_sha256': digest(request_model_config(spec['config']['model'])),
+                    'prompt_sha256': digest(CALL1_SYSTEM_PROMPT if call == 1 else CALL2_SYSTEM_PROMPT)}
+        return {'payload_sha256': digest(payload)}
 
-    def cached(path, inputs, kind, curve=None):
-        if not path.is_file():
-            return None
-        try:
-            doc = read_json(path)
-            if not isinstance(doc, dict):
-                return None
-            if (doc.get('input_sha256') != inputs or doc.get('code_version') != CODE_VERSION or
-                    doc.get('code_fingerprint') != fingerprint or doc.get('episode_id') != parent.episode_id):
-                return None
-            if kind == 'values':
-                validate_values(doc.get('values'), parent.turns)
-            else:
-                validate_hypotheses(doc.get('hypotheses'), curve)
-            return doc
-        except (L2Error, ValueError, TypeError, KeyError):
-            return None
+    def cached(path, inputs, kind, spec, curve=None):
+        # Older files may have a tag derived from unrelated config/code. Match actual inputs.
+        candidates = [path, *sorted(path.parent.glob('*.json'))]
+        cfg = spec['config']['model']
+        legacy_tag_hash = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT,
+                                  'mode': 'facts' if spec['include_facts'] else 'raw', 'model_config': cfg})[:16]
+        legacy_id = f"llm:{cfg.get('model') or 'unknown'}@{legacy_tag_hash}"
+        legacy_config_hash = digest({**spec, 'id': legacy_id})
+        for candidate in dict.fromkeys(candidates):
+            if not candidate.is_file():
+                continue
+            try:
+                doc = read_json(candidate)
+                if not isinstance(doc, dict) or doc.get('episode_id') != parent.episode_id:
+                    continue
+                old = doc.get('input_sha256') or {}
+                legacy_match = (old.get('payload_sha256') == inputs['payload_sha256'] and
+                                old.get('prompt_sha256') == inputs['prompt_sha256'] and
+                                old.get('analyst_config_sha256') in (digest(spec), legacy_config_hash))
+                if old != inputs and not legacy_match:
+                    continue
+                if kind == 'values':
+                    validate_values(doc.get('values'), parent.turns)
+                else:
+                    validate_hypotheses(doc.get('hypotheses'), curve)
+                if old != inputs or doc.get('analyst') != spec['id'] or candidate != path:
+                    doc = {**doc, 'input_sha256': inputs, 'analyst': spec['id']}
+                    write_json(path, doc)
+                return doc
+            except (L2Error, ValueError, TypeError, KeyError):
+                continue
+        return None
 
     call1_outputs = {}
     deferred = []
     for spec in parsed_specs:
         v_path = l2_dir / 'values' / _safe_filename(spec['id'])
         inputs = binding(spec, 1)
-        doc = cached(v_path, inputs, 'values')
+        doc = cached(v_path, inputs, 'values', spec) if spec['kind'] == 'llm' else None
+        if doc is None and spec['kind'] == 'llm' and cache_only:
+            raise L2Error('Cache-only analysis requires a missing LLM prediction; explicit execution required')
         if doc is None and spec['kind'] == 'llm' and not execute:
             deferred.append(spec['id'])
             continue
@@ -221,16 +229,14 @@ def run_episode(
                 result = predict_values_llm(parent, p0, spec['config']['model'], facts,
                                             include_facts=spec['include_facts'], llm_caller=llm_caller)
             validate_values(result['values'], parent.turns)
-            doc = with_header(inputs, {**result, 'episode_id': parent.episode_id, 'code_fingerprint': fingerprint})
-            preserve_previous(v_path)
+            doc = with_header(inputs, {**result, 'episode_id': parent.episode_id})
             write_json(v_path, doc)
         bindings['values'][spec['id']] = inputs
         call1_outputs[spec['id']] = doc
 
     if not execute:
         rep_text = render_report_md(plan, None, None)
-        preserve_previous(l2_dir / 'report.md')
-        (l2_dir / 'report.md').write_text(rep_text, encoding='utf-8')
+        atomic_write(l2_dir / 'report.md', rep_text.encode('utf-8'))
         return {
             'episode_id': parent.episode_id,
             'l2_dir': str(l2_dir),
@@ -248,7 +254,7 @@ def run_episode(
         plan,
         resume_fn=resume_fn,
         rpm=rpm, tpm=tpm,
-        max_concurrency=max_concurrency,
+        max_concurrency=max_concurrency, cache_only=cache_only,
     )
 
     # 5. Analyst Call 2: Propose Predicate Hypotheses (only on concentrated_*)
@@ -261,11 +267,13 @@ def run_episode(
             h_path = hyps_dir / fname
             in_sha = binding(spec, 2, curve_doc)
             bindings['hypotheses'][spec['id']] = in_sha
-            existing = cached(h_path, in_sha, 'hypotheses', curve_doc)
+            existing = cached(h_path, in_sha, 'hypotheses', spec, curve_doc) if spec['kind'] == 'llm' else None
             if existing is not None:
                 call2_outputs[spec['id']] = existing
                 continue
 
+            if spec['kind'] == 'llm' and cache_only:
+                raise L2Error('Cache-only analysis requires a missing LLM hypothesis; explicit execution required')
             if spec['kind'] in ('rules', 'reference'):
                 hyps = propose_hypotheses_rules(facts, curve_doc)
             else:
@@ -282,16 +290,14 @@ def run_episode(
                 )
             validate_hypotheses(hyps, curve_doc)
             doc = with_header(in_sha, {'analyst': spec['id'], 'hypotheses': hyps,
-                                      'episode_id': parent.episode_id, 'code_fingerprint': fingerprint})
-            preserve_previous(h_path)
+                                      'episode_id': parent.episode_id})
             write_json(h_path, doc)
             call2_outputs[spec['id']] = doc
 
     # 6. Score value predictions and test predicate hypotheses
     scores_doc = score_episode(l2_dir, p0=p0, alpha=alpha, active_analysts=list(call1_outputs), expected_input_bindings=bindings)
     rep_text = render_report_md(plan, curve_doc, scores_doc)
-    preserve_previous(l2_dir / 'report.md')
-    (l2_dir / 'report.md').write_text(rep_text, encoding='utf-8')
+    atomic_write(l2_dir / 'report.md', rep_text.encode('utf-8'))
 
     return {
         'episode_id': parent.episode_id,

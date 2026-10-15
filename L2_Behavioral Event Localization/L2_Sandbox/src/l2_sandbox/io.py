@@ -2,6 +2,8 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 from . import CODE_VERSION
@@ -77,18 +79,25 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def write_json(path: Path, value: Any) -> Path:
+def atomic_write(path: Path, data: bytes) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(canonical(value) + b'\n')
+    fd, name = tempfile.mkstemp(prefix='.' + p.name + '.', dir=p.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+        os.replace(name, p)
+    finally:
+        Path(name).unlink(missing_ok=True)
     return p
+
+
+def write_json(path: Path, value: Any) -> Path:
+    return atomic_write(path, canonical(value) + b'\n')
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> Path:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(b''.join(canonical(r) + b'\n' for r in rows))
-    return p
+    return atomic_write(path, b''.join(canonical(r) + b'\n' for r in rows))
 
 
 def with_header(input_sha256: dict[str, str] | str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -100,21 +109,13 @@ def with_header(input_sha256: dict[str, str] | str, payload: dict[str, Any]) -> 
     }
 
 
-def code_fingerprint() -> str:
-    """Content identity of the installed L2 implementation, independent of timestamps."""
-    root = Path(__file__).parent
-    return digest({p.relative_to(root).as_posix(): sha_file(p) for p in sorted(root.rglob('*.py'))})
-
-
 def validate_output_location(source: Path, output: Path) -> None:
     """Keep generated artifacts disjoint from immutable input, including symlink aliases."""
     source, output = Path(source).resolve(), Path(output).absolute()
     resolved = output.resolve()
     if resolved.is_relative_to(source) or source.is_relative_to(resolved):
         raise IntegrityError('L2 output and L1 source must be disjoint')
-    # System temp-directory aliases are fine; artifact paths themselves must not redirect writes.
-    if output.is_symlink() or (output.exists() and any(p.is_symlink() for p in output.rglob('*'))):
-        raise IntegrityError('Symlink in L2 output artifact tree')
-    for ancestor in output.parents:
-        if ancestor.is_symlink() and str(ancestor) not in ('/tmp', '/var'):
-            raise IntegrityError('L2 output redirects into L1 source')
+    # Only owned write directories need containment; unrelated symlinks are harmless.
+    for name in ('values', 'hypotheses', 'branches'):
+        if not (output / name).resolve().is_relative_to(resolved):
+            raise IntegrityError(f'L2 owned output directory redirects outside output: {name}')

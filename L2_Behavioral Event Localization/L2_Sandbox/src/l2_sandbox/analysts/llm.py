@@ -80,12 +80,18 @@ def build_call2_input(
     return payload
 
 
+def request_model_config(model_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Identity of request content/routing, excluding accounting and execution controls."""
+    return {key: model_cfg[key] for key in ('adapter', 'kind', 'model', 'base_url', 'parameters')
+            if key in model_cfg}
+
+
 def analyst_tag(model_cfg: dict[str, Any], *, include_facts: bool = True) -> str:
     model_name = str(model_cfg.get('model') or 'unknown')
     mode_tag = 'facts' if include_facts else 'raw'
     from ..config import reject_inline_secrets
     reject_inline_secrets(model_cfg)
-    prompt_sha = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT, 'mode': mode_tag, 'model_config': model_cfg})[:16]
+    prompt_sha = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT, 'mode': mode_tag, 'model_config': request_model_config(model_cfg)})[:16]
     return f'llm:{model_name}@{prompt_sha}'
 
 

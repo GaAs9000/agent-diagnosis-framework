@@ -58,6 +58,8 @@ def make_l1_episode(
     if parent_pkg is not None:
         benchmark, task_id = parent_pkg.benchmark, parent_pkg.task_id
 
+    if benchmark == 'lhtb' and task_id == 'officeval_003':
+        task_id = 'sokoban'
     ext = '.docx' if is_docx else '.xlsx'
     old_data = docx_bytes(empty_row=True, black=False) if is_docx else b'XLSX_OLD'
     new_data = docx_bytes(empty_row=False, black=True) if is_docx else b'XLSX_NEW'
@@ -204,41 +206,45 @@ def make_l1_episode(
     else:
         write_json(root / 'artifacts/inventory.json', {'episode_id': eid, 'files': [{'path': f'out{ext}', 'sha256': 'abc', 'size_bytes': 10}]})
 
-    exec_valid = 'valid'
-    eval_valid = 'valid'
-    if terminal_case == 'scored':
-        raw = {'status': 'ok', 'dim1_pass': completion_rate > 0, 'total_score': completion_rate * 10, 'max_score': 10}
-        proj = {
-            'evaluation_validity': 'valid',
-            'completion_rate': float(completion_rate),
-            'official_dimensions': {'dim1_pass': completion_rate > 0, 'passed': bool(passed)},
-        }
-    elif terminal_case == 'empty_submission':
-        raw = {'status': 'error', 'error': 'FileNotFoundError: submission empty'}
-        proj = {'evaluation_validity': 'invalid', 'completion_rate': None}
-        eval_valid = 'invalid'
-    elif terminal_case == 'non_ok_grade':
-        raw = {'status': 'parse_error', 'error': 'BadZipFile'}
-        proj = {'evaluation_validity': 'invalid', 'completion_rate': None}
-        eval_valid = 'invalid'
-    elif terminal_case == 'scorer_crash':
+    # Keep synthetic evidence structurally faithful to the native grader. The
+    # shared endpoint must exercise the same health gates as production evidence.
+    from c3_sandbox.l1.evaluation.officeval import interpret
+    from c3_sandbox.l1.evaluation.lhtb import interpret_lhtb
+    exec_valid = 'invalid' if terminal_case == 'execution_invalid' else 'valid'
+    process = {'container_exit_code': 0, 'stop_reason': None}
+    if benchmark == 'lhtb':
+        band = 1 if passed else 0
+        code = 0 if passed else 1
+        raw = {'status': 'ok', 'error': None, 'task_id': task_id,
+               'reward': float(passed), 'raw_reward': band, 'band': band,
+               'scoring_case': 'official_score' if passed else 'official_below_pass_band',
+               'protocol': {'pytest_exit': code}}
+        proj = interpret_lhtb(raw, task_id)
+        process['container_exit_code'] = code
+        xml = root / 'grading/worker-output/pytest.xml'
+        xml.parent.mkdir(parents=True, exist_ok=True)
+        xml.write_text('<testsuite><testcase name="test_sokoban_progress">'
+                       '<failure message="AssertionError: Band 0 &lt; pass threshold 1."/>'
+                       '</testcase></testsuite>')
+    else:
+        is_scored = terminal_case == 'scored'
+        error = ('FileNotFoundError: submission empty' if terminal_case == 'empty_submission'
+                 else 'BadZipFile: damaged delivery' if terminal_case == 'non_ok_grade' else None)
+        raw = {'id': task_id[-3:], 'file_name': f'out{ext}',
+               'status': 'error' if error else 'ok', 'error': error,
+               'dim1_pass': is_scored and completion_rate > 0, 'dim1_reason': '',
+               'dim2_items': [], 'total_score': completion_rate * 10 if is_scored else 0,
+               'max_score': 10}
+        proj = interpret(raw, task_id)
+        write_json(root / 'grading/worker-output/worker.json',
+                   {'official_returned': True, 'exception': None})
+    if terminal_case in ('scorer_crash', 'execution_invalid'):
         raw = None
         proj = {'evaluation_validity': 'invalid'}
-        eval_valid = 'invalid'
-    elif terminal_case == 'execution_invalid':
-        raw = None
-        proj = {'evaluation_validity': 'invalid'}
-        exec_valid = 'invalid'
-        eval_valid = 'invalid'
-    else:  # 'failed_zero'
-        raw = {'status': 'ok', 'dim1_pass': False, 'total_score': 0, 'max_score': 10}
-        proj = {
-            'evaluation_validity': 'valid',
-            'completion_rate': 0.0,
-            'official_dimensions': {'dim1_pass': False, 'passed': False},
-        }
-
-    write_json(root / 'official_grade.json', {'official_raw': raw, 'projection': proj, 'status': 'ok' if eval_valid == 'valid' else 'error'})
+        process['container_exit_code'] = 1
+    eval_valid = proj['evaluation_validity']
+    write_json(root / 'official_grade.json', {'official_raw': raw, 'projection': proj,
+               'process': process, 'status': 'ok' if eval_valid == 'valid' else 'error'})
     manifest = {
         'schema_version': '0.2.0',
         'recording_mode': 'test_fixture',
@@ -248,6 +254,7 @@ def make_l1_episode(
         'status': {
             'termination': 'assistant_finished' if exec_valid == 'valid' else 'model_transport_error',
             'execution_validity': exec_valid,
+            'evidence_completeness': 'complete',
             'evaluation_validity': eval_valid,
         },
         'counts': {'model_requests': sum(1 for e in events if e['kind'] == 'model.request')},

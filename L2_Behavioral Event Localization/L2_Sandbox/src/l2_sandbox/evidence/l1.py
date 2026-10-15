@@ -4,7 +4,7 @@ import copy
 import re
 from pathlib import Path
 from typing import Any
-from ..io import IntegrityError, L2Error, digest, loads, read_json, read_jsonl, sha_bytes, sha_file
+from ..io import IntegrityError, L2Error, digest, loads, read_json, read_jsonl, sha_file
 
 
 def diff_snapshots(before: dict, after: dict) -> list[dict]:
@@ -69,18 +69,6 @@ class L1Package:
         files = index.get('files')
         if not isinstance(files, list):
             raise IntegrityError('L1 evidence index lacks file inventory')
-        actual = []
-        for path in sorted(self.root.rglob('*')):
-            if path.is_symlink():
-                raise IntegrityError('Symlink in L1 evidence package')
-            if path.is_dir() or path == index_path:
-                continue
-            actual.append({'path': path.relative_to(self.root).as_posix(),
-                           'sha256': sha_file(path), 'size_bytes': path.stat().st_size})
-        # pathlib orders by path components; the wire inventory orders full
-        # POSIX strings (e.g. rubrics-en/ sorts before rubrics/).
-        if sorted(actual, key=lambda row: row['path']) != sorted(files, key=lambda row: row['path']):
-            raise IntegrityError('L1 evidence index file inventory mismatch')
         if index.get('episode_id') != read_json(self.root / 'manifest.json').get('episode_id'):
             raise IntegrityError('L1 evidence index episode mismatch')
 
@@ -166,8 +154,8 @@ class L1Package:
         return out
 
     def content_identity(self) -> str:
-        return digest({p.relative_to(self.root).as_posix(): sha_file(p)
-                       for p in sorted(self.root.rglob('*')) if p.is_file()})
+        # L1 owns sealing the inventory; L2 binds to that immutable seal.
+        return self.index_sha256
 
     def validate_resume_checkpoint(self, k: int) -> dict:
         cp = self.checkpoints().get(k)
@@ -226,68 +214,21 @@ class L1Package:
         return (self.manifest.get('model') or {}).get('model_version')
 
     def outcome(self) -> dict[str, Any]:
-        """Evaluates outcome y according to v0.3 Section 3.1:
-        - Agent-caused results are scored (valid=True):
-          * execution_validity == 'valid' & scorer ok -> L1 projection (`completion_rate` for OfficeVal, `passed` for LHTB)
-          * execution_validity == 'valid' & (empty submission OR scorer status != ok) -> 0.0
-        - Infrastructure failures (execution_validity != 'valid' OR scorer crashed / official_raw missing) -> valid=False, y=None
-        """
-        status = self.manifest.get('status') or {}
-        exec_valid = status.get('execution_validity') == 'valid'
-        eval_valid = status.get('evaluation_validity') == 'valid'
-        mv = self.model_version()
+        """Project the shared L1 research endpoint; preserve native grade fields."""
+        try:
+            from c3_sandbox.l1.evaluation.study import study_outcome
+        except ModuleNotFoundError as exc:
+            raise L2Error('Install the local L1 c3-experimental-sandbox package alongside L2 to read research outcomes') from exc
 
-        if not exec_valid:
-            return {'valid': False, 'y': None, 'reason': 'execution_invalid', 'modelVersion': mv}
-
-        inv = self.json('artifacts/inventory.json') if (self.root / 'artifacts/inventory.json').is_file() else {'files': []}
-        has_files = bool(inv.get('files'))
-        if not has_files:
-            return {'valid': True, 'y': 0.0, 'reason': 'empty_submission_zero', 'modelVersion': mv}
-
-        if not (self.root / 'official_grade.json').is_file():
-            return {'valid': False, 'y': None, 'reason': 'missing_official_grade', 'modelVersion': mv}
-
-        g = self.json('official_grade.json')
-        raw = g.get('official_raw')
-        proj = g.get('projection') if isinstance(g.get('projection'), dict) else {}
-        err_text = str(g.get('error') or (raw if isinstance(raw, dict) else {}).get('error') or '')
-
-        # Scorer crash / infrastructure failure
-        infra_markers = (
-            'TimeoutExpired', 'TimeoutError', 'Docker', 'Container', 'ModuleNotFoundError',
-            'ImportError', 'ConnectionError', 'MemoryError', 'PermissionError', 'SubprocessError',
-            'scorer_crash', 'infra_error',
-        )
-        if (
-            raw is None
-            or g.get('status') in ('infra_error', 'timeout')
-            or g.get('error_kind') == 'infrastructure'
-            or any(m in err_text for m in infra_markers)
-        ):
-            return {'valid': False, 'y': None, 'reason': 'scorer_exception', 'modelVersion': mv}
-
-        # Execution valid, scorer returned non-ok (e.g., damaged or unparseable submission) -> 0.0
-        raw_status = raw.get('status') if isinstance(raw, dict) else g.get('status')
-        if not eval_valid or (raw_status is not None and raw_status != 'ok'):
-            return {'valid': True, 'y': 0.0, 'reason': 'non_ok_grade_zero', 'modelVersion': mv}
-
-        if self.benchmark == 'lhtb':
-            dims = proj.get('official_dimensions') if isinstance(proj.get('official_dimensions'), dict) else {}
-            passed = dims.get('passed') if 'passed' in dims else proj.get('passed')
-            if isinstance(passed, bool):
-                return {'valid': True, 'y': 1.0 if passed else 0.0, 'reason': 'scored', 'modelVersion': mv}
-            return {'valid': False, 'y': None, 'reason': 'projection_passed_missing', 'modelVersion': mv}
-
-        cr = proj.get('completion_rate')
-        if isinstance(cr, (int, float)) and not isinstance(cr, bool):
-            return {'valid': True, 'y': max(0.0, min(1.0, float(cr))), 'reason': 'scored', 'modelVersion': mv}
-        # Fallback if legacy fixture only put total_score/max_score in official_raw
-        if isinstance(raw, dict) and isinstance(raw.get('total_score'), (int, float)) and isinstance(raw.get('max_score'), (int, float)) and raw['max_score'] > 0:
-            if raw.get('dim1_pass') is False:
-                return {'valid': True, 'y': 0.0, 'reason': 'scored', 'modelVersion': mv}
-            return {'valid': True, 'y': max(0.0, min(1.0, float(raw['total_score']) / float(raw['max_score']))), 'reason': 'scored', 'modelVersion': mv}
-        return {'valid': False, 'y': None, 'reason': 'projection_completion_rate_missing', 'modelVersion': mv}
+        study = study_outcome(
+            self.root, allow_test_fixture=self.manifest.get('recording_mode') == 'test_fixture')
+        return {
+            **study,
+            'valid': study['study_valid'],
+            'y': study['study_outcome_y'],
+            'reason': study['zero_reason'] or study['study_classification'],
+            'modelVersion': self.model_version(),
+        }
 
     def is_failed_trajectory(self) -> bool:
         """Section 3: Only failed trajectories are analyzed (OfficeVal dim1 failed or LHTB not passed, or y < 1.0)."""

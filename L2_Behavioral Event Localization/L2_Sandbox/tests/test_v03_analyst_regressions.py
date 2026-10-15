@@ -26,14 +26,14 @@ def test_dryrun_paid_calls_zero_and_rules_required(tmp_path):
         calls.append(args)
         return {'values': [0.5, 0.5]}
     for specs in [('llm',), ('llm_raw',)]:
-        result = report.run_episode(parent, output_dir=output, analysts=specs, llm_caller=caller)
+        result = report.run_episode(parent, p0=0.5, output_dir=output, analysts=specs, llm_caller=caller)
         assert 'rules@1' in result['values']
         assert result['deferred_analysts']
     assert calls == []
     # Even a corrupt cache cannot authorize a call.
     tag = analyst_tag(report.load_config()['model'])
     write_json(output / 'values' / report._safe_filename(tag), {'values': [2]})
-    report.run_episode(parent, output_dir=output, analysts=('llm',), llm_caller=caller)
+    report.run_episode(parent, p0=0.5, output_dir=output, analysts=('llm',), llm_caller=caller)
     assert calls == []
 
 
@@ -47,29 +47,29 @@ def test_config_and_reference_bindings_change(tmp_path, monkeypatch):
         calls.append(args)
         return {'values': [0.4, 0.3]}
     write_json(cfg, {'model': {'parameters': {'temperature': 0.1}}})
-    first = report.run_episode(parent, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}', 'reference'), reference_snapshot_scores={0: 0.2, 1: 0.1}, llm_caller=caller)
-    second = report.run_episode(parent, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}', 'reference'), reference_snapshot_scores={0: 0.8, 1: 0.7}, llm_caller=caller)
+    first = report.run_episode(parent, p0=0.5, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}', 'reference'), reference_snapshot_scores={0: 0.2, 1: 0.1}, llm_caller=caller)
+    second = report.run_episode(parent, p0=0.5, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}', 'reference'), reference_snapshot_scores={0: 0.8, 1: 0.7}, llm_caller=caller)
     assert len(calls) == 1
     assert first['scores']['bindings']['values']['reference@1'] != second['scores']['bindings']['values']['reference@1']
     write_json(cfg, {'model': {'parameters': {'temperature': 0.9}}})
-    third = report.run_episode(parent, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}',), llm_caller=caller)
+    third = report.run_episode(parent, p0=0.5, output_dir=tmp_path/'out', execute=True, analysts=(f'llm:{cfg}',), llm_caller=caller)
     assert len(calls) == 2
     assert len([a for a in third['scores']['active'] if a.startswith('llm:')]) == 1
-    assert list((tmp_path/'out/history/values').glob('reference*'))
+    assert not (tmp_path/'out/history').exists()
 
 
 def test_output_overlap_and_plan_identity_reject_before_write(tmp_path):
     parent = make_l1_episode(tmp_path / 'parent', num_turns=2)
     for output in (parent, parent/'nested', tmp_path):
         with pytest.raises(L2Error):
-            report.run_episode(parent, output_dir=output)
+            report.run_episode(parent, p0=0.5, output_dir=output)
     assert not (parent/'facts.jsonl').exists()
     output = tmp_path/'out'
-    report.run_episode(parent, output_dir=output)
+    report.run_episode(parent, p0=0.5, output_dir=output)
     before = (output/'facts.jsonl').read_bytes()
     other = make_l1_episode(tmp_path/'other', num_turns=2)
     with pytest.raises(L2Error):
-        report.run_episode(other, output_dir=output)
+        report.run_episode(other, p0=0.5, output_dir=output)
     assert (output/'facts.jsonl').read_bytes() == before
 
 

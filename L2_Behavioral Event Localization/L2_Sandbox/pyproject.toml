@@ -6,8 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "l2-evidence-analyst"
 version = "0.3.0"
 description = "L2 v0.3 Behavioral Event Localization: value curves, predicate hypotheses, and scoring over L1 evidence"
-requires-python = ">=3.11"
-dependencies = ["lxml>=5,<7"]
+requires-python = ">=3.12"
+dependencies = ["lxml>=5,<7", "c3-experimental-sandbox>=0.2.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]

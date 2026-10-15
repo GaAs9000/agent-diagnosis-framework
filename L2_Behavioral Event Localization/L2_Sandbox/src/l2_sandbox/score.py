@@ -7,7 +7,7 @@ from . import CODE_VERSION
 from .analysts.rules import linear_decay_values
 from .evidence.l1 import L1Package
 from .facts.build import build_facts
-from .io import L2Error, code_fingerprint, read_json, read_jsonl, sha_file, with_header, write_json
+from .io import L2Error, read_json, read_jsonl, sha_file, with_header, write_json
 from .predicates import RULE_VOCABULARY, eval_predicate_on_turn, validate_predicate
 from .stats import clustered_bootstrap, holm_adjust, mantel_haenszel_pool, permutation_one_sided
 
@@ -254,9 +254,13 @@ def score_episode(
     terminal_y = float(plan['terminal_outcome'])
 
     outcomes_path = l2_dir / 'outcomes.jsonl'
-    outcomes = read_jsonl(outcomes_path) if outcomes_path.is_file() else []
+    outcomes = [row for row in read_jsonl(outcomes_path) if row.get('selected', True)] if outcomes_path.is_file() else []
     curve_path = l2_dir / 'curve.json'
     curve_doc = read_json(curve_path) if curve_path.is_file() else {'verdict': None, 'v_hat': {}, 'turn_drops': {}}
+
+    excluded = bool(curve_doc.get('excluded_high_invalid_rate') or curve_doc.get('excluded_incomplete_samples'))
+    if excluded:
+        outcomes = []  # Incomplete/excluded curves cannot produce scientific analyst scores.
 
     # Load branch facts on demand for Stage 2 branches
     branch_facts_by_trial: dict[str, list[dict[str, Any]]] = {}
@@ -286,7 +290,7 @@ def score_episode(
     def validate_output(doc, kind):
         analyst = str(doc.get('analyst', ''))
         expected = bindings.get(kind, {}).get(analyst)
-        if not expected or doc.get('input_sha256') != expected or doc.get('episode_id') != plan['episode_id'] or doc.get('code_version') != CODE_VERSION or doc.get('code_fingerprint') != code_fingerprint():
+        if not expected or doc.get('input_sha256') != expected or doc.get('episode_id') != plan['episode_id']:
             raise L2Error(f'Stale or unbound {kind} output for {analyst}')
 
     if values_dir.is_dir():
@@ -322,6 +326,8 @@ def score_episode(
                 outcomes,
                 alpha=alpha,
             )
+            if excluded:
+                h_eval.update(status='unscored', explanation_covered=None)
             if not (hf.is_file() and a_name in bindings.get('hypotheses', {})) and curve_doc.get('verdict') in ('concentrated_turn', 'concentrated_interval'):
                 h_eval.update(status='unscored', explanation_covered=None)
             is_llm = a_name.startswith('llm:')
@@ -382,6 +388,7 @@ def score_episode(
             'p0': p0,
             'verdict': curve_doc.get('verdict'),
             'excluded_high_invalid_rate': bool(curve_doc.get('excluded_high_invalid_rate', False)),
+            'excluded_incomplete_samples': bool(curve_doc.get('excluded_incomplete_samples', False)),
             'analysts': analyst_scores,
             'vocabulary_strata': vocab_strata,
         },
@@ -403,7 +410,7 @@ def summarize_runs(l2_dirs: Sequence[Path], *, heldout_families: Sequence[str] |
             continue
         input_hashes[str(p.name)] = sha_file(sp)
         s_doc = read_json(sp)
-        if s_doc.get('excluded_high_invalid_rate'):
+        if s_doc.get('excluded_high_invalid_rate') or s_doc.get('excluded_incomplete_samples'):
             excluded_episodes.append(s_doc['episode_id'])
             continue
         episodes.append(s_doc)

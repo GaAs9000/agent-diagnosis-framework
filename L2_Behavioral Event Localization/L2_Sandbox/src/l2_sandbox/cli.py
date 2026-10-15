@@ -23,7 +23,7 @@ def main(argv=None) -> int:
     run_p.add_argument('--analysts', default='rules', help='Comma-separated analysts, e.g. rules,llm:config.json')
     run_p.add_argument('--execute', action='store_true', help='Authorize paid Analyst calls and L1 continuations')
     run_p.add_argument('--output', type=Path, default=None, help='Output directory (defaults to l2/<episode_id>/)')
-    run_p.add_argument('--p0', type=float, default=0.5, help='Externally supplied baseline p_0 in [0,1]; origin unverified')
+    run_p.add_argument('--p0', type=float, required=True, help='Required external baseline p_0 in [0,1]; origin unverified')
     run_p.add_argument('--n1', type=int, default=12, help='Stage 1 replicates per grid checkpoint')
     run_p.add_argument('--n2', type=int, default=24, help='Stage 2 replicates per selected interval checkpoint')
     run_p.add_argument('--stride', type=int, default=4, help='Stage 1 checkpoint grid stride')
