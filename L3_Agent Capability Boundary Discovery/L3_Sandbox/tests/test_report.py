@@ -282,3 +282,60 @@ def test_never_started_report_retains_missing_frozen_slots(tmp_path, monkeypatch
     result = report.summarize(tmp_path)
     assert result["nmissing"] == 1
     assert result["nvalid"] == result["nattempts"] == 0
+
+
+def test_baseline_design_exports_m2_baseline_and_resolves_parent_excluded_p0(tmp_path, monkeypatch):
+    plan, rows, save = experiment(tmp_path, monkeypatch, tasks=1, replicates=5)
+    plan["design"] = "baseline"
+    plan["conditions"] = [{"condition_id": "requests_035"}]
+    plan["analysis"] = {"primary_comparison": ["requests_035"], "bootstrap_samples": 100, "seed": 7, "minimum_effect": 0.1}
+    plan["jobs"] = [j for j in plan["jobs"] if j["condition_id"] == "control"]
+    for idx, job in enumerate(plan["jobs"]):
+        job["condition_id"] = "requests_035"
+        job["trial_id"] = f"t0-requests_035-{idx}"
+        job["config"] = {"model": {"endpoint": "https://example.invalid/v1", "temperature": 1}, "budget": {"max_model_requests": 35}}
+    outcomes = [0.0, 0.2, 0.4, 0.6, 0.8]
+    new_rows = []
+    for idx, job in enumerate(plan["jobs"]):
+        new_rows.append({
+            **{k: v for k, v in job.items() if k != "config"},
+            "attempt": 0,
+            "accepted": True,
+            "study_valid": True,
+            "study_outcome_y": outcomes[idx],
+            "endpoint_version": "study-outcome-v1",
+            "model_versions": ["v1"],
+            "delivery_exists": outcomes[idx] > 0,
+            "legal_delivery": outcomes[idx] > 0,
+            "dim1_pass": outcomes[idx] > 0,
+            "known_total_tokens": 10,
+            "unknown_usage_count": 0,
+            "termination": "submitted",
+            "model_requests": 5,
+            "tool_calls": 4,
+            "expected_index_sha256": f"{idx + 1:064x}",
+        })
+    rows[:] = new_rows
+    import hashlib
+    from l3_sandbox.common import digest, write
+    cfg = {"model": {"endpoint": "https://example.invalid/v1", "temperature": 1}, "budget": {"max_model_requests": 35}}
+    parent_ep = tmp_path / "parent_ep"
+    write(parent_ep / "manifest.json", {"episode_id": "ep_t0_0", "task": {"task_id": "t0"}, "config_sha256": digest(cfg)})
+    write(parent_ep / "raw/resolved_config.json", cfg)
+    write(parent_ep / "evidence_index.json", {"files": []})
+    parent_idx_sha = hashlib.sha256((parent_ep / "evidence_index.json").read_bytes()).hexdigest()
+    rows[0]["expected_index_sha256"] = parent_idx_sha
+    save()
+    result = report.summarize(tmp_path)
+    assert result["m2_baseline"]["exported"] is True
+    assert (tmp_path / "m2_baseline.json").exists()
+    cohorts = result["m2_baseline"]["complete_cohorts"]
+    assert len(cohorts) == 1
+    assert cohorts[0]["p0"] == pytest.approx(0.4)
+    assert cohorts[0]["trials"][0]["p0_excluding_self"] == pytest.approx(0.5)
+    resolved = report.resolve_baseline_p0(tmp_path, parent_ep)
+    assert resolved["p0"] == pytest.approx(0.5)
+    assert resolved["used_n"] == 4
+    assert resolved["parent_in_cohort"] is True
+    assert resolved["excluded_trial_id"] == "t0-requests_035-0"
+

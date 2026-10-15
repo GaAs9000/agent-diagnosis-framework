@@ -169,3 +169,59 @@ def test_condition_adapter_changes_only_public_prompt_and_provenance(tmp_path, m
         assert variant.provenance['l3_condition']['appendix_sha256'] == digest(appendix)
         config['l3_appendix'] = 'unexpected'
         with pytest.raises(L3Error, match='differs'): ConditionOfficeVal(config).load(task.task_id)
+
+
+def test_m2_dev_baseline_config_and_slot_reuse(prepared, tmp_path, monkeypatch):
+    import hashlib
+    from l3_sandbox import run
+    _, _, _ = prepared
+    pilot_dir = tmp_path / 'pilot'
+    pilot_spec = read(SANDBOX / 'configs/budget_pilot.json')
+    pilot_spec['base_config'] = str(REPO / 'L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json')
+    pilot_spec['family_manifest'] = str((SANDBOX / 'configs' / pilot_spec['family_manifest']).resolve())
+    pilot_spec_path = tmp_path / 'pilot_spec.json'
+    write(pilot_spec_path, pilot_spec)
+    pilot_plan = plan.create_plan(pilot_spec_path, pilot_dir)
+
+    # Create one completed verified slot in pilot_dir for officeval_004 replicate 0 under requests_035
+    match_job = next(j for j in pilot_plan['jobs'] if j['task_id'] == 'officeval_004' and j['condition_id'] == 'requests_035' and j['replicate'] == 0)
+    ep = pilot_dir / 'runs' / match_job['trial_id'] / 'attempt_000/episode'
+    write(ep / 'manifest.json', {'recording_mode': 'live', 'lineage': None, 'task': {'task_id': 'officeval_004'}, 'config_sha256': match_job['config_sha256']})
+    write(ep / 'raw/resolved_config.json', match_job['config'])
+    write(ep / 'official_grade.json', {'y': 0.25})
+    write(ep / 'artifacts/inventory.json', {})
+    (ep / 'trajectory.jsonl').write_text('')
+    (ep / 'state_changes.jsonl').write_text('')
+    sealed = {name: hashlib.sha256((ep / name).read_bytes()).hexdigest()
+              for name in ('official_grade.json', 'artifacts/inventory.json', 'trajectory.jsonl', 'state_changes.jsonl')}
+    write(ep / 'evidence_index.json', sealed)
+    expected = hashlib.sha256((ep / 'evidence_index.json').read_bytes()).hexdigest()
+    monkeypatch.setattr(run, '_verify_package', lambda package, anchor: {'verified': True})
+    monkeypatch.setattr(run, '_summarize', lambda package, frozen_job, attempt: {
+        'study_valid': True, 'study_outcome_y': 0.25, 'endpoint_version': 'study-outcome-v1', 'model_versions': ['v1']
+    })
+    row = {**{k: v for k, v in match_job.items() if k != 'config'}, 'attempt': 0,
+           'binding': run._binding(pilot_plan, match_job), 'accepted': True, 'status': 'completed',
+           'expected_index_sha256': expected, 'study_valid': True, 'study_outcome_y': 0.25,
+           'endpoint_version': 'study-outcome-v1', 'model_versions': ['v1']}
+    run._save_receipt(ep.parent / 'receipt.json', row)
+    write(pilot_dir / 'run_results.json', {'rows': [row]})
+
+    m2_spec = read(SANDBOX / 'configs/m2_dev_baseline.json')
+    m2_spec['base_config'] = str(REPO / 'L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json')
+    m2_spec['family_manifest'] = str((SANDBOX / 'configs' / m2_spec['family_manifest']).resolve())
+    m2_spec['reuse_from'] = [str(pilot_dir)]
+    m2_spec_path = tmp_path / 'm2_spec.json'
+    write(m2_spec_path, m2_spec)
+
+    m2_dir = tmp_path / 'm2'
+    m2_plan = plan.create_plan(m2_spec_path, m2_dir)
+    assert m2_plan['design'] == 'baseline'
+    assert m2_plan['workload']['trial_slots'] == 45
+    assert len({j['family_id'] for j in m2_plan['jobs']}) == 9
+    assert m2_plan['reuse_from'] == [str(pilot_dir.resolve())]
+    seeded = read(m2_dir / 'run_results.json')['rows']
+    assert len(seeded) == 1
+    assert seeded[0]['task_id'] == 'officeval_004'
+    assert seeded[0]['reused_from']['trial_id'] == match_job['trial_id']
+

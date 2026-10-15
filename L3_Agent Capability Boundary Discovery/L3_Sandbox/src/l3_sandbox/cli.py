@@ -22,6 +22,10 @@ def main(argv=None):
     report.add_argument('directory', type=Path)
     check = sub.add_parser('check-plan', help='Check frozen code, inputs, configuration and local images')
     check.add_argument('directory', type=Path)
+    p0_cmd = sub.add_parser('resolve-p0', help='Resolve parent-excluded M2 baseline p_0 for a parent L1 episode')
+    p0_cmd.add_argument('source', type=Path, help='L3 trial directory, summary.json, or m2_baseline.json')
+    p0_cmd.add_argument('--parent', type=Path, required=True, help='Parent L1 episode directory')
+    p0_cmd.add_argument('--condition', default=None, help='Optional condition_id filter')
     args = parser.parse_args(argv)
     try:
         if args.command == 'plan':
@@ -35,6 +39,9 @@ def main(argv=None):
         elif args.command == 'summarize':
             from .report import summarize
             result = summarize(args.directory)
+        elif args.command == 'resolve-p0':
+            from .report import resolve_baseline_p0
+            result = resolve_baseline_p0(args.source, args.parent, condition_id=args.condition)
         else:
             from .plan import verify_plan
             plan = verify_plan(args.directory)

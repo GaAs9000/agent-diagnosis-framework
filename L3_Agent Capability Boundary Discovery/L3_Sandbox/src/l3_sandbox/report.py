@@ -267,7 +267,7 @@ def summarize(directory: Path) -> dict:
     analysis = plan.get("analysis", {})
     contrasts = []
     comparison = analysis.get("primary_comparison")
-    if comparison:
+    if isinstance(comparison, list) and len(comparison) == 2:
         contrasts.append(_contrast("primary", {comparison[0]: 1, comparison[1]: -1}, tasks, cells, analysis, drift, unknown_versions))
     if plan.get("design") == "structure_budget":
         axes = {_condition_axes(condition): condition["condition_id"] for condition in conditions}
@@ -294,8 +294,7 @@ def summarize(directory: Path) -> dict:
         "model_versions": version_set, "model_version_drift": drift,
         "unknown_model_version_trials": sorted(trial for trial, row in selected.items() if not _versions(row)),
         "cells": list(cells.values()), "contrasts": contrasts,
-        "m2_baseline": {"exported": False, "rows": [], "complete_cohorts": _baseline_cohorts(jobs, selected, cells),
-                        "reason": "independent_parent_identity_export_not_enabled"}}
+        "m2_baseline": _m2_baseline_summary(plan, jobs, selected, cells)}
     family = plan.get("family_manifest", {})
     manifest = family.get("manifest", {})
     summary["family_metadata"] = {
@@ -308,6 +307,8 @@ def summarize(directory: Path) -> dict:
         "n_families": len({task["family_id"] for task in tasks if task.get("family_id")}),
     }
     write(directory / "summary.json", summary)
+    if summary["m2_baseline"]["exported"]:
+        write(directory / "m2_baseline.json", summary["m2_baseline"])
     out = io.StringIO()
     fieldnames = list(next(iter(cells.values()))) if cells else ["task_id", "condition_id"]
     writer = csv.DictWriter(out, fieldnames=fieldnames)
@@ -328,7 +329,7 @@ def _version_strata(rows):
 
 
 def _baseline_cohorts(jobs, selected, cells):
-    """Actual complete cohorts, retained for a future identity-aware M2 export."""
+    """Complete task/condition cohorts with per-trial anchors for parent-excluded p0."""
     cohorts = []
     for (tid, cid), cell in cells.items():
         if cell["status"] != "complete":
@@ -352,11 +353,153 @@ def _baseline_cohorts(jobs, selected, cells):
         identity = {"task_id": tid, "condition_id": cid, "config": config,
                     "config_sha256": digest(config), "endpoint": endpoint, "model_version": version,
                     "outcome_endpoint_version": next(iter(endpoint_versions))}
+        has_anchors = (
+            len(observed) >= 2
+            and all(isinstance(r.get("expected_index_sha256"), str) and len(r["expected_index_sha256"]) == 64
+                    for r in observed)
+            and len({r["expected_index_sha256"] for r in observed}) == len(observed)
+        )
+        trials = []
+        for job, row in zip(frozen, observed):
+            others = [r["study_outcome_y"] for r in observed if r["trial_id"] != job["trial_id"]]
+            trials.append({
+                "trial_id": job["trial_id"],
+                "replicate": job.get("replicate"),
+                "attempt": row.get("attempt", 0),
+                "episode_id": row.get("episode_id"),
+                "expected_index_sha256": row.get("expected_index_sha256"),
+                "package_path": row.get("package_path"),
+                "study_outcome_y": row["study_outcome_y"],
+                "p0_excluding_self": mean(others) if others and has_anchors else None,
+            })
         cohorts.append({**identity, "key": digest(identity), "n": cell["nvalid"], "p0": cell["mean"],
                         "sample_variance": cell["sample_variance"],
                         "trial_ids": [job["trial_id"] for job in frozen],
-                        "selected_parent_exclusion_supported": False})
+                        "trials": trials,
+                        "selected_parent_exclusion_supported": has_anchors})
     return cohorts
+
+
+def _m2_baseline_summary(plan, jobs, selected, cells):
+    cohorts = _baseline_cohorts(jobs, selected, cells)
+    exportable = [c for c in cohorts if c["selected_parent_exclusion_supported"]]
+    rows = [
+        {
+            "cohort_key": c["key"],
+            "task_id": c["task_id"],
+            "condition_id": c["condition_id"],
+            "config_sha256": c["config_sha256"],
+            "model_version": c["model_version"],
+            "outcome_endpoint_version": c["outcome_endpoint_version"],
+            "trial_id": t["trial_id"],
+            "episode_id": t["episode_id"],
+            "expected_index_sha256": t["expected_index_sha256"],
+            "study_outcome_y": t["study_outcome_y"],
+            "p0_excluding_self": t["p0_excluding_self"],
+            "n_excluding_self": c["n"] - 1,
+        }
+        for c in exportable
+        for t in c["trials"]
+    ]
+    exported = bool(plan.get("design") == "baseline" and cohorts and len(exportable) == len(cohorts))
+    return {
+        "exported": exported,
+        "rows": rows if exported else [],
+        "complete_cohorts": cohorts,
+        "reason": None if exported else "independent_parent_identity_export_not_enabled",
+    }
+
+
+def resolve_baseline_p0(source: Path, parent_episode: Path, *, condition_id: str | None = None) -> dict:
+    """Resolve task/config-matched baseline p_0 while strictly excluding the parent episode itself."""
+    import hashlib
+    from c3_sandbox.l1.evaluation.study import ENDPOINT_VERSION
+
+    source = safe_path(source)
+    parent_episode = safe_path(parent_episode)
+    if source.is_dir():
+        summary_doc = read(source / "summary.json") if (source / "summary.json").is_file() else summarize(source)
+        baseline_doc = summary_doc.get("m2_baseline") or {}
+    else:
+        doc = read(source)
+        baseline_doc = doc.get("m2_baseline") if isinstance(doc, dict) and "m2_baseline" in doc else doc
+    cohorts = (baseline_doc or {}).get("complete_cohorts") or []
+    if not cohorts:
+        raise L3Error("No complete baseline cohorts available in source")
+
+    manifest_path = parent_episode / "manifest.json"
+    cfg_path = parent_episode / "raw/resolved_config.json"
+    idx_path = parent_episode / "evidence_index.json"
+    if not (manifest_path.is_file() and cfg_path.is_file() and idx_path.is_file()):
+        raise L3Error("Parent episode lacks manifest.json, raw/resolved_config.json, or evidence_index.json")
+    manifest = read(manifest_path)
+    resolved_cfg = read(cfg_path)
+    parent_cfg_sha = digest(resolved_cfg)
+    if manifest.get("config_sha256") != parent_cfg_sha:
+        raise L3Error("Parent episode manifest config_sha256 disagrees with raw/resolved_config.json")
+    parent_task_id = (manifest.get("task") or {}).get("task_id") or (manifest.get("task") or {}).get("id")
+    parent_episode_id = manifest.get("episode_id")
+    parent_index_sha = hashlib.sha256(idx_path.read_bytes()).hexdigest()
+
+    traj_path = parent_episode / "trajectory.jsonl"
+    parent_versions = sorted({
+        json.loads(line).get("data", {}).get("reported_model_version")
+        for line in (traj_path.read_text(encoding="utf-8").splitlines() if traj_path.is_file() else [])
+        if line.strip() and json.loads(line).get("kind") == "model.parsed"
+        and json.loads(line).get("data", {}).get("reported_model_version")
+    })
+
+    matched = [
+        c for c in cohorts
+        if c.get("task_id") == parent_task_id
+        and c.get("config_sha256") == parent_cfg_sha
+        and (condition_id is None or c.get("condition_id") == condition_id)
+    ]
+    if not matched:
+        raise L3Error(f"No complete baseline cohort matches task={parent_task_id} and config_sha256={parent_cfg_sha}")
+    if len(matched) > 1:
+        raise L3Error("Multiple baseline cohorts match parent task/config; specify condition_id")
+    cohort = matched[0]
+    if not cohort.get("selected_parent_exclusion_supported"):
+        raise L3Error("Matched cohort lacks sealed episode anchors required for parent exclusion")
+    if parent_versions and cohort.get("model_version") not in parent_versions:
+        raise L3Error("Parent episode modelVersion differs from baseline cohort modelVersion")
+    if cohort.get("outcome_endpoint_version") != ENDPOINT_VERSION:
+        raise L3Error("Baseline cohort outcome_endpoint_version differs from current study endpoint")
+
+    trials = cohort.get("trials") or []
+    excluded = [
+        t for t in trials
+        if t.get("expected_index_sha256") == parent_index_sha
+        or (parent_episode_id and t.get("episode_id") and t.get("episode_id") == parent_episode_id)
+    ]
+    if len(excluded) > 1:
+        raise L3Error("Parent episode matches multiple cohort slots; duplicate baseline evidence")
+    remaining = [t for t in trials if t not in excluded]
+    if not remaining:
+        raise L3Error("No baseline trials remain after excluding parent episode")
+
+    p0_val = mean(float(t["study_outcome_y"]) for t in remaining)
+    excluded_id = excluded[0]["trial_id"] if excluded else None
+    return {
+        "p0": p0_val,
+        "task_id": parent_task_id,
+        "condition_id": cohort["condition_id"],
+        "config_sha256": parent_cfg_sha,
+        "model_version": cohort["model_version"],
+        "outcome_endpoint_version": cohort["outcome_endpoint_version"],
+        "cohort_key": cohort["key"],
+        "cohort_n": len(trials),
+        "used_n": len(remaining),
+        "parent_in_cohort": bool(excluded),
+        "excluded_trial_id": excluded_id,
+        "parent_index_sha256": parent_index_sha,
+        "provenance": (
+            f"L3 cohort {cohort['key'][:16]} ({cohort['condition_id']}); "
+            f"used {len(remaining)}/{len(trials)} valid runs; "
+            f"excluded_parent_trial={excluded_id or 'external_verified_distinct'}"
+        ),
+    }
 
 
 def _usage(rows, field):

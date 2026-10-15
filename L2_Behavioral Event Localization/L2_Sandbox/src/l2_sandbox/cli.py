@@ -6,7 +6,7 @@ from pathlib import Path
 from . import __version__
 from .io import L2Error, write_json, read_json
 from .config import load as load_config
-from .report import run_episode
+from .report import resolve_m2_baseline_p0, run_episode
 from .score import summarize_runs
 
 
@@ -23,7 +23,10 @@ def main(argv=None) -> int:
     run_p.add_argument('--analysts', default='rules', help='Comma-separated analysts, e.g. rules,llm:config.json')
     run_p.add_argument('--execute', action='store_true', help='Authorize paid Analyst calls and L1 continuations')
     run_p.add_argument('--output', type=Path, default=None, help='Output directory (defaults to l2/<episode_id>/)')
-    run_p.add_argument('--p0', type=float, required=True, help='Required external baseline p_0 in [0,1]; origin unverified')
+    p0_group = run_p.add_mutually_exclusive_group(required=True)
+    p0_group.add_argument('--p0', type=float, help='Required external baseline p_0 in [0,1]; origin unverified')
+    p0_group.add_argument('--baseline', type=Path, help='L3 M2 baseline directory or summary JSON (parent-excluded p_0)')
+    run_p.add_argument('--baseline-condition', default=None, help='Optional condition_id when resolving --baseline')
     run_p.add_argument('--n1', type=int, default=12, help='Stage 1 replicates per grid checkpoint')
     run_p.add_argument('--n2', type=int, default=24, help='Stage 2 replicates per selected interval checkpoint')
     run_p.add_argument('--stride', type=int, default=4, help='Stage 1 checkpoint grid stride')
@@ -57,12 +60,20 @@ def main(argv=None) -> int:
                 if not isinstance(raw, dict) or any(not k.isdigit() or str(int(k)) != k for k in raw):
                     raise L2Error('Reference scores must use canonical integer checkpoint keys')
                 reference = {int(k): v for k, v in raw.items()}
+            p0_val = args.p0
+            provenance = args.baseline_provenance
+            verified_cohort = False
+            if args.baseline is not None:
+                resolved_b = resolve_m2_baseline_p0(args.baseline, args.l1_run, condition_id=args.baseline_condition)
+                p0_val = resolved_b['p0']
+                provenance = resolved_b['provenance']
+                verified_cohort = True
             res = run_episode(
                 args.l1_run,
                 output_dir=args.output,
                 analysts=analyst_list,
                 execute=args.execute,
-                p0=args.p0,
+                p0=p0_val,
                 n1=args.n1,
                 n2=args.n2,
                 stride=args.stride,
@@ -71,7 +82,8 @@ def main(argv=None) -> int:
                 rpm=args.rpm if args.rpm is not None else cfg['curve'].get('rpm'),
                 tpm=args.tpm if args.tpm is not None else cfg['curve'].get('tpm'),
                 reference_snapshot_scores=reference,
-                baseline_provenance=args.baseline_provenance,
+                baseline_provenance=provenance,
+                cohort_verified=verified_cohort,
             )
             emit(res)
             return 0

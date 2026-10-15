@@ -168,12 +168,14 @@ class L1Package:
         if obj.get('checkpoint_id') != cp['checkpoint_id']:
             raise IntegrityError(f'Checkpoint {k} identity mismatch')
         budget, used = cfg.get('budget', {}), cp['budget_used']
-        for limit, counter in (('max_model_requests', 'model_requests'),
-                               ('max_tool_calls', 'tool_calls'),
-                               ('wall_time_seconds', 'agent_seconds'),
-                               ('max_total_tokens', 'known_total_tokens')):
-            if budget.get(limit) is not None and float(used.get(counter, 0)) >= float(budget[limit]):
-                raise IntegrityError(f'Checkpoint {k} has no remaining {limit}')
+        for limit, counter, inclusive in (('max_model_requests', 'model_requests', True),
+                                          ('max_tool_calls', 'tool_calls', False),
+                                          ('wall_time_seconds', 'agent_seconds', True),
+                                          ('max_total_tokens', 'known_total_tokens', True)):
+            if budget.get(limit) is not None:
+                val, cap = float(used.get(counter, 0)), float(budget[limit])
+                if (val >= cap) if inclusive else (val > cap):
+                    raise IntegrityError(f'Checkpoint {k} has no remaining {limit}')
         return cp
 
     def validate_branch(self, parent: 'L1Package', k: int) -> None:

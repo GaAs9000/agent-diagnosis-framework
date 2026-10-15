@@ -76,6 +76,72 @@ def render_report_md(
     return '\n'.join(lines) + '\n'
 
 
+def resolve_m2_baseline_p0(
+    source_path: Path,
+    parent_dir: Path,
+    *,
+    condition_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolves parent-excluded M2 baseline p_0 from an L3 summary/directory for `parent_dir`."""
+    parent = L1Package(Path(parent_dir))
+    src = Path(source_path)
+    doc = read_json(src / 'summary.json') if src.is_dir() else read_json(src)
+    baseline_doc = doc.get('m2_baseline') if isinstance(doc, dict) and 'm2_baseline' in doc else doc
+    cohorts = (baseline_doc or {}).get('complete_cohorts') if isinstance(baseline_doc, dict) else None
+    if not isinstance(cohorts, list) or not cohorts:
+        raise L2Error('No complete baseline cohorts available in baseline source')
+
+    parent_cfg_sha = digest(parent.json('raw/resolved_config.json'))
+    manifest_cfg_sha = parent.manifest.get('config_sha256')
+    if manifest_cfg_sha is not None and manifest_cfg_sha != parent_cfg_sha:
+        raise L2Error('Parent manifest config_sha256 disagrees with raw/resolved_config.json')
+    matched = [
+        c for c in cohorts
+        if c.get('task_id') == parent.task_id
+        and c.get('config_sha256') == parent_cfg_sha
+        and (condition_id is None or c.get('condition_id') == condition_id)
+    ]
+    if not matched:
+        raise L2Error(f'No complete baseline cohort matches task={parent.task_id} and config_sha256={parent_cfg_sha}')
+    if len(matched) > 1:
+        raise L2Error('Multiple baseline cohorts match parent task/config; specify --baseline-condition')
+    cohort = matched[0]
+    if not cohort.get('selected_parent_exclusion_supported'):
+        raise L2Error('Matched cohort lacks sealed episode anchors required for parent exclusion')
+    parent_ver = parent.model_version()
+    if parent_ver and parent_ver != 'unknown' and cohort.get('model_version') and cohort.get('model_version') != parent_ver:
+        raise L2Error('Parent episode modelVersion differs from baseline cohort modelVersion')
+
+    trials = cohort.get('trials') or []
+    excluded = [
+        t for t in trials
+        if t.get('expected_index_sha256') == parent.index_sha256
+        or (parent.episode_id and t.get('episode_id') == parent.episode_id)
+    ]
+    if len(excluded) > 1:
+        raise L2Error('Parent episode matches multiple cohort slots; duplicate baseline evidence')
+    remaining = [t for t in trials if t not in excluded]
+    if not remaining:
+        raise L2Error('No baseline trials remain after excluding parent episode')
+    p0_val = sum(float(t['study_outcome_y']) for t in remaining) / len(remaining)
+    excluded_id = excluded[0]['trial_id'] if excluded else None
+    return {
+        'p0': probability(p0_val, 'p0'),
+        'cohort_verified': True,
+        'cohort_key': cohort.get('key'),
+        'condition_id': cohort.get('condition_id'),
+        'cohort_n': len(trials),
+        'used_n': len(remaining),
+        'parent_in_cohort': bool(excluded),
+        'excluded_trial_id': excluded_id,
+        'provenance': (
+            f"L3 cohort {str(cohort.get('key', ''))[:16]} ({cohort.get('condition_id')}); "
+            f"used {len(remaining)}/{len(trials)} valid runs; "
+            f"excluded_parent_trial={excluded_id or 'external_verified_distinct'}"
+        ),
+    }
+
+
 def run_episode(
     l1_run_dir: Path,
     *,
@@ -92,6 +158,7 @@ def run_episode(
     rpm: float | None = None,
     tpm: float | None = None,
     baseline_provenance: str = "external supplied p0; cohort origin and parent exclusion unverified",
+    cohort_verified: bool = False,
     resume_fn: Callable[..., Any] | None = None,
     llm_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     reference_snapshot_scores: dict[int, float] | None = None,
@@ -154,7 +221,7 @@ def run_episode(
     l2_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(l2_dir / 'facts.jsonl', facts)
     write_json(l2_dir / 'plan.json', plan)
-    baseline = {'p0': p0, 'provenance': baseline_provenance, 'cohort_verified': False}
+    baseline = {'p0': p0, 'provenance': baseline_provenance, 'cohort_verified': bool(cohort_verified)}
     write_json(l2_dir / 'baseline.json', with_header(plan['input_sha256'], baseline))
     bindings = {'values': {}, 'hypotheses': {}}
 

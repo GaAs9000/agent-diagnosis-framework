@@ -1,0 +1,112 @@
+{
+  "schema_version": "l3-plan-0.1",
+  "experiment_id": "officeval-m2-dev-baseline-v1",
+  "purpose": "pilot",
+  "design": "baseline",
+  "base_config": "../../../L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.gemini-35lite.t1.json",
+  "tasks": [
+    {
+      "task_id": "officeval_003",
+      "family_id": "word-table-structure",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Development family representative for word-table-structure (M2 development baseline)."
+    },
+    {
+      "task_id": "officeval_004",
+      "family_id": "word-template-formatting",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Development family representative for word-template-formatting (reuses 3 pilot slots at 35 requests)."
+    },
+    {
+      "task_id": "officeval_010",
+      "family_id": "word-diagram-edit",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Development family representative for word-diagram-edit (reuses 3 pilot slots at 35 requests)."
+    },
+    {
+      "task_id": "officeval_033",
+      "family_id": "word-price-computation",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "word",
+      "selection_reason": "Development family representative for word-price-computation (M2 development baseline)."
+    },
+    {
+      "task_id": "officeval_050",
+      "family_id": "image-to-editable-ppt",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "powerpoint",
+      "selection_reason": "Development family representative for image-to-editable-ppt (reuses 3 pilot slots at 35 requests)."
+    },
+    {
+      "task_id": "officeval_060",
+      "family_id": "ppt-static-relayout",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "powerpoint",
+      "selection_reason": "Development family representative for ppt-static-relayout (M2 development baseline)."
+    },
+    {
+      "task_id": "officeval_070",
+      "family_id": "ppt-diagram-edits",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "powerpoint",
+      "selection_reason": "Development family representative for ppt-diagram-edits (M2 development baseline)."
+    },
+    {
+      "task_id": "officeval_085",
+      "family_id": "excel-chart-creation",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "excel",
+      "selection_reason": "Development family representative for excel-chart-creation (reuses 3 pilot slots at 35 requests)."
+    },
+    {
+      "task_id": "officeval_090",
+      "family_id": "office-extraction-aggregation",
+      "family_verified": true,
+      "split": "development",
+      "file_type": "excel",
+      "selection_reason": "Development family representative for office-extraction-aggregation (M2 development baseline)."
+    }
+  ],
+  "exclude_task_ids": [],
+  "conditions": [
+    {
+      "condition_id": "requests_035",
+      "max_model_requests": 35,
+      "context": "original"
+    }
+  ],
+  "replicates": 5,
+  "shared_budget": {
+    "max_tool_calls": 140,
+    "wall_time_seconds": 10800,
+    "max_total_tokens": null
+  },
+  "limits": {
+    "max_concurrency": 2,
+    "rpm": 30,
+    "tpm": 10000000,
+    "max_http_attempts": 6300,
+    "max_replacements_per_slot": 2
+  },
+  "analysis": {
+    "minimum_effect": 0.1,
+    "bootstrap_samples": 2000,
+    "seed": 20261015
+  },
+  "schedule_seed": 20261015,
+  "family_manifest": "../../../L1_sandbox/C3_Experimental_Sandbox/benchmarks/officeval/family_split.json",
+  "reuse_from": [
+    "../validation/budget_pilot_20261015"
+  ]
+}

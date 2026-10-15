@@ -16,7 +16,15 @@ Output ONLY a JSON object: {"values": [v_0, v_1, ..., v_{T-1}]}."""
 CALL2_SYSTEM_PROMPT = """You are an L2 behavioral localization analyst.
 Given the parent trajectory, optional turn facts, task baseline p_0, and the value curve summary,
 propose testable behavioral predicate hypotheses for the localized drop.
-Each predicate must use only `all`, `any`, `not`, and `{"fact": "<type>", "where": {...}}`.
+Each predicate must use only boolean combinators `{"all": [...]}`, `{"any": [...]}`, `{"not": <pred>}`, and atomic predicates `{"fact": "<type>", "where": {...}}` (string values in `where` support `*` wildcards; nested keys use dot notation like `arguments.command`).
+Valid `fact` types and their `where` fields are:
+- `tool_requested`: `name`, `arguments.command` (or `arguments.<arg>`), `call_id`, `request_id`
+- `tool_exit`: `ok` (bool), `exit_code` (int), `stop_reason`, `output_complete` (bool), `name`, `stderr_preview`
+- `file_transition`: `path` (e.g. `"submission/*"`), `change` (`"created"`, `"modified"`, `"deleted"`)
+- `object_structure_change`: `file_path`, `before_sha256`, `after_sha256`, `before_summary.<key>`, `after_summary.<key>`
+- `model_output_text`: `text`, `request_id`
+- `protocol_error` / `execution_error`: `kind`, `code`, `message`
+- `termination`: `termination`, `execution_validity`, `evaluation_validity`
 Output ONLY a JSON object: {"hypotheses": [{"turn": <int>, "predicate": <dict>, "effect": <negative float>, "rationale": "<str>"}]}."""
 
 FORBIDDEN_BRANCH_KEYS = {'branches', 'outcomes', 'branch_receipts', 'branch_facts', 's1_samples', 's2_samples'}

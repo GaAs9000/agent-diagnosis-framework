@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import random
 import re
+import shutil
 import subprocess
 
 from .common import L3Error, canonical, digest, read, safe_path, sha_file, write
@@ -16,7 +17,7 @@ from .families import load_family_manifest, validate_family_selection
 VERSION = 'l3-plan-0.1'
 SPEC_KEYS = {'schema_version', 'experiment_id', 'purpose', 'design', 'base_config',
              'tasks', 'conditions', 'replicates', 'shared_budget', 'limits', 'analysis',
-             'schedule_seed', 'exclude_task_ids', 'family_manifest'}
+             'schedule_seed', 'exclude_task_ids', 'family_manifest', 'reuse_from'}
 
 
 def _keys(value, allowed, required, name):
@@ -36,12 +37,16 @@ def _identifier(value):
 
 
 def validate_spec(spec):
-    _keys(spec, SPEC_KEYS, SPEC_KEYS - {'exclude_task_ids', 'family_manifest'}, 'study spec')
+    _keys(spec, SPEC_KEYS, SPEC_KEYS - {'exclude_task_ids', 'family_manifest', 'reuse_from'}, 'study spec')
     if 'family_manifest' in spec and (not isinstance(spec['family_manifest'], str) or not spec['family_manifest']):
         raise L3Error('family_manifest must be a nonempty path')
+    if 'reuse_from' in spec:
+        reuse = spec['reuse_from']
+        if not isinstance(reuse, list) or any(not isinstance(p, str) or not p.strip() for p in reuse):
+            raise L3Error('reuse_from must be a list of nonempty directory paths')
     if spec['schema_version'] != VERSION or spec['purpose'] not in ('pilot', 'validation'):
         raise L3Error('Unknown study version or purpose')
-    if spec['design'] not in ('budget', 'structure_budget'):
+    if spec['design'] not in ('baseline', 'budget', 'structure_budget'):
         raise L3Error('Unknown experimental design')
     _identifier(spec['experiment_id'])
     if type(spec['schedule_seed']) is not int:
@@ -80,6 +85,8 @@ def validate_spec(spec):
         if c['condition_id'] in seen or axis in axes or c['context'] not in ('original', 'structure', 'placebo'):
             raise L3Error('Duplicate or unknown condition')
         seen.add(c['condition_id']); axes.add(axis)
+    if spec['design'] == 'baseline' and (len(conditions) != 1 or conditions[0]['context'] != 'original'):
+        raise L3Error('Baseline design requires a single original-context condition')
     if spec['design'] == 'budget' and any(c['context'] != 'original' for c in conditions):
         raise L3Error('Budget design cannot mix input transforms')
     if spec['design'] == 'structure_budget':
@@ -103,9 +110,13 @@ def validate_spec(spec):
         raise L3Error('Replacement cap must be integer 0..2')
     analysis = spec['analysis']
     fields = {'primary_comparison', 'minimum_effect', 'bootstrap_samples', 'seed'}
-    _keys(analysis, fields, fields, 'analysis')
-    pair = analysis['primary_comparison']
-    if not isinstance(pair, list) or len(pair) != 2 or len(set(pair)) != 2 or not set(pair) <= seen:
+    required_analysis = fields - ({'primary_comparison'} if spec['design'] == 'baseline' else set())
+    _keys(analysis, fields, required_analysis, 'analysis')
+    pair = analysis.get('primary_comparison')
+    if spec['design'] == 'baseline':
+        if pair is not None:
+            raise L3Error('Baseline design does not define a primary comparison')
+    elif not isinstance(pair, list) or len(pair) != 2 or len(set(pair)) != 2 or not set(pair) <= seen:
         raise L3Error('Primary comparison must name treatment and control conditions')
     if type(analysis['minimum_effect']) not in (int, float) or not 0 < analysis['minimum_effect'] <= 1:
         raise L3Error('minimum_effect must be in (0,1]')
@@ -165,6 +176,85 @@ def load_native_task(config, task_id):
     return NativeOfficeVal(config['benchmark']).load(task_id)
 
 
+def _seed_reused_slots(directory: Path, plan: dict, reuse_dirs: list[Path]) -> int:
+    """Import verified accepted native episodes from prior frozen L3 runs matching exact job config."""
+    from . import report, run
+    from .limiter import RequestLimiter
+
+    available: dict[tuple[str, str, int, str], tuple[Path, dict, dict]] = {}
+    for src_dir in reuse_dirs:
+        src_plan = verify_plan(src_dir, verify_images=False, verify_execution=False)
+        res_path = src_dir / 'run_results.json'
+        raw_rows = read(res_path).get('rows', []) if res_path.is_file() else []
+        verified_rows = report._verified_rows(src_dir, src_plan, raw_rows)
+        by_trial: dict[str, list[dict]] = {}
+        for row in verified_rows:
+            if row.get('accepted') is True and row.get('study_valid') is True:
+                by_trial.setdefault(row['trial_id'], []).append(row)
+        for candidates in by_trial.values():
+            chosen = min(candidates, key=lambda r: r.get('attempt', 0))
+            key = (chosen['task_id'], chosen['condition_id'], int(chosen['replicate']), chosen['config_sha256'])
+            available.setdefault(key, (src_dir, src_plan, chosen))
+
+    seeded_rows = []
+    for job in plan['jobs']:
+        key = (job['task_id'], job['condition_id'], int(job['replicate']), job['config_sha256'])
+        match = available.get(key)
+        if match is None:
+            continue
+        src_dir, src_plan, src_row = match
+        src_attempt = int(src_row['attempt'])
+        src_episode = src_dir / 'runs' / src_row['trial_id'] / f'attempt_{src_attempt:03d}' / 'episode'
+        dest_attempt = directory / 'runs' / job['trial_id'] / 'attempt_000'
+        dest_episode = dest_attempt / 'episode'
+        dest_attempt.mkdir(parents=True, exist_ok=False)
+        shutil.copytree(src_episode, dest_episode, symlinks=False)
+        expected = src_row['expected_index_sha256']
+        run._evidence(dest_episode, job, expected)
+        summary = run._summarize(dest_episode, job, 0)
+        if not run._execution_healthy(dest_episode, summary):
+            raise L3Error('Reused attempt failed health verification')
+        row = {k: v for k, v in job.items() if k != 'config'}
+        row.update(
+            attempt=0,
+            binding=run._binding(plan, job),
+            accepted=True,
+            status='completed',
+            replacement_of=None,
+            episode=str(dest_episode),
+            code_provenance=provenance_inventory(),
+            expected_index_sha256=expected,
+            reused_from={
+                'experiment_id': src_plan['experiment_id'],
+                'directory': str(src_dir),
+                'trial_id': src_row['trial_id'],
+                'attempt': src_attempt,
+            },
+        )
+        row.update(summary)
+        run._verify_identity(row, job, 0)
+        run._save_receipt(dest_attempt / 'receipt.json', row)
+        seeded_rows.append(row)
+
+    if seeded_rows:
+        limiter = RequestLimiter(
+            directory,
+            rpm=plan['limits'].get('rpm'),
+            tpm=plan['limits'].get('tpm'),
+            max_http_attempts=plan['limits']['max_http_attempts'],
+        )
+        seeded_rows.sort(key=lambda r: (r['trial_id'], r['attempt']))
+        status = 'complete' if len(seeded_rows) == len(plan['jobs']) else 'seeded'
+        write(directory / 'run_results.json', {
+            'experiment_id': plan['experiment_id'],
+            'status': status,
+            'rows': seeded_rows,
+            'runner_errors': [],
+            'http_admissions': limiter.snapshot(),
+        })
+    return len(seeded_rows)
+
+
 def create_plan(spec_path: Path, directory: Path) -> dict:
     from c3_sandbox.l1.core.config import resolve, validate
     from c3_sandbox.l1.core.orchestrator import build_execution_contract_prompt
@@ -172,6 +262,12 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
     if directory.exists():
         raise L3Error('Plan destination exists; use another directory')
     spec = validate_spec(read(spec_path))
+    reuse_dirs: list[Path] = []
+    for raw_reuse in spec.get('reuse_from', []):
+        rpath = Path(raw_reuse)
+        rpath = (spec_path.parent / rpath).resolve() if not rpath.is_absolute() else rpath.resolve()
+        verify_plan(rpath, verify_images=False, verify_execution=False)
+        reuse_dirs.append(rpath)
     family_snapshot = None
     if spec.get('family_manifest'):
         family_path = Path(spec['family_manifest'])
@@ -257,9 +353,17 @@ def create_plan(spec_path: Path, directory: Path) -> dict:
         'execution_status': 'unexecuted'}
     if family_snapshot:
         plan['family_manifest'] = family_snapshot
+    if reuse_dirs:
+        plan['reuse_from'] = [str(p) for p in reuse_dirs]
     directory.mkdir(parents=True, mode=0o700)
-    write(directory / 'plan.json', plan)
-    (directory / 'plan.sha256').write_text(sha_file(directory / 'plan.json') + '\n')
+    try:
+        write(directory / 'plan.json', plan)
+        (directory / 'plan.sha256').write_text(sha_file(directory / 'plan.json') + '\n')
+        if reuse_dirs:
+            _seed_reused_slots(directory, plan, reuse_dirs)
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     return plan
 
 

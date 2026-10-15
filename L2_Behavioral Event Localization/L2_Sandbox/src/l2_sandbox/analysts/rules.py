@@ -64,24 +64,36 @@ def propose_hypotheses_rules(
     if verdict not in ('concentrated_turn', 'concentrated_interval'):
         return []
 
-    target_turn = curve_summary.get('turn') or curve_summary.get('candidate_turn')
-    if not isinstance(target_turn, int) or target_turn < 1:
+    candidate_turns: list[int] = []
+    primary = curve_summary.get('turn') if verdict == 'concentrated_turn' else (curve_summary.get('turn') or curve_summary.get('candidate_turn'))
+    if isinstance(primary, int) and not isinstance(primary, bool) and primary >= 1:
+        candidate_turns.append(int(primary))
+    if verdict == 'concentrated_interval':
         interval = curve_summary.get('interval')
-        if isinstance(interval, list) and len(interval) == 2:
-            target_turn = int(interval[0]) + 1
-        else:
-            return []
+        drops = curve_summary.get('turn_drops') or {}
+        if isinstance(interval, (list, tuple)) and len(interval) == 2:
+            lo, hi = int(interval[0]) + 1, int(interval[1])
+            ordered = sorted(
+                range(max(1, lo), hi + 1),
+                key=lambda t: (-float(drops.get(str(t), drops.get(t, 0.0)) or 0.0), t),
+            )
+            for t in ordered:
+                if t not in candidate_turns:
+                    candidate_turns.append(t)
 
-    hyps: list[Hypothesis] = []
-    for name, pred in RULE_VOCABULARY.items():
-        if eval_predicate_on_turn(pred, facts, target_turn):
-            hyps.append({
-                'turn': int(target_turn),
-                'predicate': copy.deepcopy(pred),
-                'effect': -0.25,
-                'rationale': f'Rule vocabulary predicate `{name}` holds on parent turn {target_turn}.',
-            })
-    return hyps
+    for target_turn in candidate_turns:
+        hyps: list[Hypothesis] = []
+        for name, pred in RULE_VOCABULARY.items():
+            if eval_predicate_on_turn(pred, facts, target_turn):
+                hyps.append({
+                    'turn': int(target_turn),
+                    'predicate': copy.deepcopy(pred),
+                    'effect': -0.25,
+                    'rationale': f'Rule vocabulary predicate `{name}` holds on parent turn {target_turn}.',
+                })
+        if hyps:
+            return hyps
+    return []
 
 
 def predict_values_reference(

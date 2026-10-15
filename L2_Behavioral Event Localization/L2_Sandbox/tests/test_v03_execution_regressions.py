@@ -125,6 +125,20 @@ def test_stage2_interior_unqualified_or_exhausted_checkpoint_rejected(tmp_path):
     with pytest.raises(IntegrityError, match='unqualified'):
         build_curve_plan(parent, stride=2)
     obj['qualification']['eligible'] = True
+    # F11: tool_calls == max_tool_calls is eligible in L1 when model_requests remain
+    cfg = read_json(parent.root / 'raw/resolved_config.json')
+    max_tools = int(cfg['budget']['max_tool_calls'])
+    obj['budget_used']['tool_calls'] = max_tools
+    write_json(cp, obj)
+    reseal(parent.root)
+    assert build_curve_plan(parent, stride=2)['turns'] == 2
+    # Exceeding max_tool_calls (> max_tool_calls) is rejected
+    obj['budget_used']['tool_calls'] = max_tools + 1
+    write_json(cp, obj)
+    reseal(parent.root)
+    with pytest.raises(IntegrityError, match='remaining max_tool_calls'):
+        build_curve_plan(parent, stride=2)
+    obj['budget_used']['tool_calls'] = 1
     obj['budget_used']['model_requests'] = 35
     write_json(cp, obj)
     reseal(parent.root)

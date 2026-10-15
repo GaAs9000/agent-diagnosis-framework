@@ -90,3 +90,43 @@ def test_invalid_hypotheses_are_rejected(tmp_path, hyp):
 def test_reference_unavailable_without_scores():
     with pytest.raises(L2Error, match='unavailable'):
         predict_values_reference([], 2, 0.5, 0.0)
+
+
+def test_call2_prompt_documents_fact_schema_and_rules_interval_fallback():
+    from l2_sandbox.analysts.llm import CALL2_SYSTEM_PROMPT
+    from l2_sandbox.analysts.rules import propose_hypotheses_rules
+    from l2_sandbox.predicates import RULE_VOCABULARY
+
+    # F12: Group B/C prompt explicitly lists the v0.3 fact types and key where fields
+    for token in (
+        'tool_requested', 'tool_exit', 'file_transition', 'object_structure_change',
+        'model_output_text', 'protocol_error', 'execution_error', 'termination',
+        'arguments.command', 'ok', 'path', 'submission/*',
+    ):
+        assert token in CALL2_SYSTEM_PROMPT
+
+    # F13: On concentrated_interval, if candidate_turn has no vocabulary match on parent,
+    # rules analyst falls back to the highest-drop turn in (a, b] with a match.
+    facts = [
+        {'turn': 1, 'type': 'tool_requested', 'value': {'name': 'run', 'arguments': {'command': 'ls'}}},
+        {'turn': 1, 'type': 'tool_exit', 'value': {'ok': True, 'exit_code': 0}},
+        {'turn': 2, 'type': 'tool_requested', 'value': {'name': 'run', 'arguments': {'command': 'python bad.py'}}},
+        {'turn': 2, 'type': 'tool_exit', 'value': {'ok': False, 'exit_code': 1}},
+        {'turn': 3, 'type': 'tool_requested', 'value': {'name': 'run', 'arguments': {'command': 'cat log.txt'}}},
+        {'turn': 3, 'type': 'tool_exit', 'value': {'ok': True, 'exit_code': 0}},
+    ]
+    curve_interval = {
+        'verdict': 'concentrated_interval',
+        'turn': None,
+        'interval': [0, 3],
+        'candidate_turn': 3,
+        'turn_drops': {'1': 0.05, '2': 0.25, '3': 0.30},
+    }
+    hyps = propose_hypotheses_rules(facts, curve_interval)
+    assert len(hyps) == 1
+    assert hyps[0]['turn'] == 2
+    assert hyps[0]['predicate'] == RULE_VOCABULARY['tool_execution_anomaly']
+    # On concentrated_turn, only the localized turn itself is inspected
+    curve_turn = {**curve_interval, 'verdict': 'concentrated_turn', 'turn': 3}
+    assert propose_hypotheses_rules(facts, curve_turn) == []
+
