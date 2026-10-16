@@ -64,11 +64,14 @@ def lower_drop(
     *,
     seed: str = 'l2-v03-drop',
 ) -> float:
-    """One-sided (1 - alpha) lower confidence bound for V(c_before) - V(c_after).
+    """Nominal one-sided lower bound for V(c_before) - V(c_after).
 
     - Uses Newcombe one-sided lower bound for boolean samples (or single-sample Wilson when
       `vals_after` is the deterministic terminal state Y).
-    - Uses bootstrap one-sided lower bound for bounded continuous scores in [0, 1].
+    - For bounded continuous scores, takes the smaller of the percentile-bootstrap
+      bound and the corresponding Wilson/Newcombe-style bound, for all samples.
+      This conservative current policy is not limited to zero-variance samples;
+      its finite-sample coverage is not universally certified by calibration.
     """
     vals_before = _bounded_sample(vals_before)
     n1 = len(vals_before)
@@ -110,7 +113,8 @@ def lower_drop(
         for _ in range(n_boot)
     )
     idx = min(n_boot - 1, max(0, int(math.floor(alpha * (n_boot - 1)))))
-    # Guard zero-variance small samples with Newcombe bound
+    # Current F21 policy: conservatively cap every continuous two-sample bound,
+    # including nonconstant samples; do not treat this as only a zero-variance guard.
     p1 = sum(float(x) for x in vals_before) / n1
     p2 = sum(float(x) for x in after_list) / n2
     l1, _ = wilson_bounds(vals_before, alpha=alpha, one_sided=True)

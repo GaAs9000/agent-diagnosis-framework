@@ -158,7 +158,11 @@ def infer_curve_from_samples(
     *,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
-    """Infer the sparse curve; the V0 upper-bound guard remains pending D1 review."""
+    """Infer the sparse curve using the retained D1 V0 upper-bound policy.
+
+    The alpha split and bounds remain unchanged; calibration is conditional on
+    tested scenarios and does not provide a general joint-error guarantee.
+    """
     full_grid = sorted(set(grid) | {T})
     v0_upper = upper(s1.get(0, []), alpha)
     v1 = {k: _mean(vals) for k, vals in s1.items()} | {T: float(Y)}
