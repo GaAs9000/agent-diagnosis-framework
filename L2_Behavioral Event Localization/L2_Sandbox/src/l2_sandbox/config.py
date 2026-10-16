@@ -1,4 +1,4 @@
-"""Configuration loader with inline-secret rejection (L2 v0.3 Section 7.2)."""
+"""Configuration loader with inline-secret rejection (L2 v0.4)."""
 from __future__ import annotations
 import copy
 import math
@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 from .io import L2Error, read_json
+
+CODE_VERSION = '0.4.0'
+DELIVER_REMINDER = '请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。'
+RULE_REMINDER_TEMPLATE = '请检查交付物是否满足以下要求，不满足就修正后重新保存：{rule}'
 
 SECRET_KEYS = {'api_key', 'password', 'authorization', 'secret', 'access_token', 'token', 'private_key'}
 

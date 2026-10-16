@@ -180,7 +180,14 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         parent_cp=read_json(cp_file)
         if not parent_cp['qualification']['eligible']: raise EvidenceError('Checkpoint is not qualified')
         previous_config=read_json(parent/'raw/resolved_config.json')
-        if config!=previous_config: raise ConfigurationError('Cold resume currently requires the same resolved config; branch policy changes are not silently applied')
+        base_config=copy.deepcopy(config); prev_base=copy.deepcopy(previous_config)
+        child_iv=base_config.get('agent',{}).pop('intervention',None)
+        parent_iv=prev_base.get('agent',{}).pop('intervention',None)
+        if base_config!=prev_base:
+            raise ConfigurationError('Cold resume currently requires the same resolved config; branch policy changes are not silently applied')
+        if child_iv!=parent_iv:
+            if child_iv is None or child_iv['at_request']<=parent_cp.get('budget_used',{}).get('model_requests',0):
+                raise ConfigurationError('Branch intervention on cold resume must target a request strictly after the checkpoint')
         lineage={'parent_episode_id':parent_manifest['episode_id'],'parent_checkpoint_id':checkpoint_id,
                  'parent_index_sha256':pv['index_sha256'],'parent_checkpoint_sha256':file_digest(parent/f'checkpoints/{checkpoint_id}.json')}
     output.mkdir(parents=True,exist_ok=False,mode=0o700)
@@ -326,7 +333,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         prepared=True
         status.update(protocol_validity='valid',execution_validity='valid',termination='running')
         iv_cfg = config['agent'].get('intervention')
-        if iv_cfg and parent_cp is None and request_count == iv_cfg['at_request'] - 1:
+        parent_iv = previous_config.get('agent', {}).get('intervention') if parent_cp is not None else None
+        if iv_cfg and iv_cfg != parent_iv and request_count == iv_cfg['at_request'] - 1:
             conversation = _inject_user_intervention(conversation, iv_cfg['message'])
         checkpoint()
         while request_count<config['budget']['max_model_requests']:

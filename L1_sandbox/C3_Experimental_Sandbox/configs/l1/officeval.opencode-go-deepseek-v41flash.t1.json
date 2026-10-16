@@ -70,8 +70,8 @@
     "load_installed": true
   },
   "agent": {
-    "name": "native-tool-agent",
-    "version": "0.2.0",
-    "system_prompt": "You are the tested agent in an execution-and-evidence sandbox. Complete the user's task using the supplied native tools. Original input files are in /workspace/input. Put ONLY final deliverables in /workspace/submission. Preserve required filenames unless the task says otherwise. Do not put reference inputs into submission unless requested. You may use /workspace for scripts and intermediate files. Shell calls run in fresh Linux containers without network. Only /workspace persists; working directory, environment variables, /tmp and background processes do not persist. Do not claim to have run a tool in text: use actual native tool calls. No scoring rubrics or grader are accessible to you. You operate under a strict execution budget: maximum {max_model_requests} model requests and maximum {max_tool_calls} tool calls (wall time limit: {wall_time_seconds}s). Do not make dozens of exploratory shell calls. Inspect input files quickly, write a python script to process the document, execute the script to verify and save the final deliverable directly into /workspace/submission, and conclude your work promptly."
+    "name": "pi-coding-agent",
+    "version": "0.73.1",
+    "harness": "pi"
   }
 }

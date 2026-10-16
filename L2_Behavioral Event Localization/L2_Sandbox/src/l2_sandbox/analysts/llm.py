@@ -1,108 +1,156 @@
-"""LLM Analyst (`llm:<model>@<prompt_sha>`, Groups B & C) with strict information boundary (L2 v0.3 Section 2.3 & 5)."""
+"""LLM Analyst (`llm:<model>@<prompt_sha>`, Groups B & C) with strict information boundary (L2 v0.4 §5.1-5.2, F24)."""
 from __future__ import annotations
 import copy
+from pathlib import Path
 from typing import Any, Callable
+
 from ..evidence.l1 import L1Package
 from ..evidence.view import build_trajectory_view
-from ..io import L2Error, Unsupported, canonical, digest, loads
-from ..predicates import validate_predicate
-from . import Hypothesis, Values, probability, validate_values, validate_hypotheses
+from ..facts.build import FACT_FIELD_WHITELIST, format_fact_field_whitelist
+from ..io import L2Error, Unsupported, canonical, digest, loads, read_json, write_json
+from . import Hypothesis, Origin, validate_hypotheses, validate_origins
 
-CALL1_SYSTEM_PROMPT = """You are an L2 trajectory value predictor.
-Given the parent trajectory, optional turn facts, and task baseline success rate p_0,
-predict V(c_k) in [0, 1] for every checkpoint k = 0 .. T-1.
-Output ONLY a JSON object: {"values": [v_0, v_1, ..., v_{T-1}]}."""
+CALL1_SYSTEM_PROMPT = """You are an L2 defect-origin analyst (Call 1).
+Given the agent trajectory, the terminal official evaluation view, and (for Group C) turn-indexed facts and cross-run contrast:
+For every target defect in `terminal_official_grade.target_defects`, determine its origin category (`kind`) and origin turn (`turn`):
+- Candidate deliverable rule (L2 v0.4 §4.2): Unmodified initial template files in `input/*` at turn 0 do NOT count as candidate deliverables (`s(0) = 0`). A workspace candidate only exists after the agent creates or modifies a target Office file (`.docx`, `.pptx`, `.xlsx`) during turns `1..num_turns`.
+- `kind`: one of `"broken"`, `"undelivered"`, or `"never"`:
+  - `"broken"`: the rubric item was satisfied on a created/modified workspace candidate during the run and later overwritten/corrupted at turn `turn` (`1..num_turns`), remaining unsatisfied at the end.
+  - `"undelivered"`: the rubric item is satisfied on a surviving created/modified workspace candidate starting from turn `turn` (`1..num_turns`) through the end of the episode, but that candidate was never copied/saved to `submission/` (or `submission/` has an older version). When `terminal_official_grade.delivered_valid` is `false` and the agent wrote a surviving candidate Office file outside `submission/` that satisfies the requirement (or preserves template items), classify as `"undelivered"` at the turn (`1..num_turns`) when that candidate file was created/modified.
+  - `"never"`: the rubric item was never satisfied on any created/modified workspace candidate (`turn` must be `null`).
+- `turn`: integer turn index in `1..num_turns` for `"broken"` or `"undelivered"` (NEVER `0`), or `null` for `"never"`.
+IMPORTANT: Output Playbook:
+1. You MUST include exactly one entry for EVERY `defect` listed in `terminal_official_grade.target_defects`, copying the `defect` string verbatim.
+2. Output ONLY a valid JSON object (no markdown fences):
+{"origins": [{"defect": "<exact defect id>", "kind": "broken|undelivered|never", "turn": <int in 1..num_turns or null>, "rationale": "<concise explanation>"}]}"""
 
-CALL2_SYSTEM_PROMPT = """You are an L2 behavioral localization analyst.
-Given the parent trajectory, optional turn facts, task baseline p_0, and the value curve summary,
-propose testable behavioral predicate hypotheses for the localized drop.
-Each predicate must use only boolean combinators `{"all": [...]}`, `{"any": [...]}`, `{"not": <pred>}`, and atomic predicates `{"fact": "<type>", "where": {...}}` (string values in `where` support `*` wildcards; nested keys use dot notation like `arguments.command`).
-The following generated fact contract is identical for raw-trajectory and facts-assisted analysts; it describes fields, not observed values. Facts have `turn` (1-based integer), `type` (fact type string), and `value` (object). In `where`, value fields use unprefixed paths below; `value.<path>` also works. Envelope `turn` and `type` are accessible. Match scalars (string, number, bool, null), not whole objects or lists. A missing path never matches, including when the expected value is null. Optional fields may be absent; nullable fields may contain null.
-Valid `fact` types and their `where` fields are:
-- `tool_requested`: `name`, `call_id`, `request_id` (string or null); `arguments` (tool-defined object, default {}), with scalar paths such as `arguments.command` (string) or `arguments.<arg>` as defined by the tool, including nested argument paths.
-- `tool_exit`: `call_id`, `name` (string or null); `exit_code` (integer or null); `stop_reason` (string or null); `output_complete` (bool, defaults to true when absent in the observation); `ok` (bool, true exactly when exit_code == 0, stop_reason is null, and output_complete is true); `stderr_preview` (string, first 800 characters of stderr or empty string; NOTE: `stdout_preview` does NOT exist on `tool_exit` facts and must never be used in `where`).
-- `file_transition`: `path` (string or null; string matching supports patterns such as "submission/*"); `change` ("created", "modified", "deleted", or "directory_changed"); `before`, `after` (snapshot entry object or null for a missing side). File entry paths: `before.path`, `after.path`, `before.blob`, `after.blob`, `before.sha256`, `after.sha256` (strings); `before.size_bytes`, `after.size_bytes`, `before.mode`, `after.mode` (integers). Directory entries contain only path and mode. Additional snapshot entry fields, if present, retain their source names and scalar types.
-- `object_structure_change`: `file_path`, `before_sha256`, `after_sha256` (strings); `before_summary`, `after_summary` (DOCX direct-XML summary objects). Integer counts: `before_summary.paragraphs_recursive`, `after_summary.paragraphs_recursive`, `before_summary.tables_recursive`, `after_summary.tables_recursive`, `before_summary.top_level_tables`, `after_summary.top_level_tables`, `before_summary.rows_recursive`, `after_summary.rows_recursive`, `before_summary.textless_rows_without_drawing`, `after_summary.textless_rows_without_drawing`. Boolean flags: `before_summary.textless_rows_are_not_rendered_empty_row_judgements`, `after_summary.textless_rows_are_not_rendered_empty_row_judgements` (always true). These count XML descendants (top_level_tables counts direct body tables); textless rows exclude drawing/pict/object content and are not rendered-empty-row judgements. Emitted only when both DOCX versions have supported nonempty summaries and those summaries differ; no rendered appearance or semantic object identity is inferred.
-- `model_output_text`: `text` (nonempty string), `request_id` (string or null).
-- `protocol_error`: `kind` (event kind string), plus the original event data without a fixed allowlist. Native optional fields: `code`, `message`, `reason`, `error_type`, `call_id`, `request_id`, `stop_phase` (strings), `transport_attempts` (integer). This type is selected when data.code == "protocol_error" or the event kind is "tool.rejected".
-- `execution_error`: `kind` (event kind string), plus the same original-event fields and types as protocol_error; applies to tool.error, episode.error, or model.error events not selected as protocol_error. Original event data can contain additional scalar or nested fields; use their exact source paths and types. If original data contains kind, it overrides the event kind in both error types.
-- `termination`: the episode.finished `status` object, or its event data when status is absent/empty. Native fields are `termination` (stop-reason string), `protocol_validity`, `execution_validity` ("valid", "invalid", "unknown"), `evaluation_validity` ("valid", "invalid", "not_run"), `task_outcome` ("success", "failure", "unknown"), `evidence_completeness` ("complete", "incomplete"). Additional original status/event fields retain their source names and types.
-Predicates are evaluated on independent resampled branches at the target turn: avoid parent-only variable names or one-off temporary script filenames that only exist in the parent trajectory; prefer structural/behavioral patterns (e.g., `file_transition` on `submission/*`, `tool_exit` with `ok: false`, or broad tool-category wildcards).
-Output ONLY a JSON object: {"hypotheses": [{"turn": <int>, "predicate": <dict>, "effect": <negative float>, "rationale": "<str>"}]}."""
+CALL2_SYSTEM_PROMPT = (
+    """You are an L2 behavioral mechanism analyst (Call 2).
+Given the agent trajectory, the defect table (`defects_table`), and (for Group C) turn-indexed facts and cross-run contrast:
+For localized defects in `defects_table.defects` that have an integer origin turn `j >= 1` (in `turn` or `two_point_turn`), propose 1 to 5 testable behavioral predicate hypotheses for turn `j`. (Do NOT propose hypotheses for defects where both `turn` and `two_point_turn` are `null` or `0`.)
+Each predicate must use ONLY boolean combinators `{"all": [...]}`, `{"any": [...]}`, `{"not": <pred>}`, and atomic predicates `{"fact": "<type>", "where": {...}}` (string values in `where` support `*` wildcards; nested keys use dot notation like `arguments.command`; envelope fields `turn` and `type` are also accessible).
 
-FORBIDDEN_BRANCH_KEYS = {'branches', 'outcomes', 'branch_receipts', 'branch_facts', 's1_samples', 's2_samples'}
+STRICT RULES (L2 v0.4 §5.1):
+1. You may ONLY reference `fact` types and `where` fields from the exported field whitelist below (retrieved from `facts/build.py`):
+"""
+    + format_fact_field_whitelist()
+    + """
+   Note: `stdout_preview` does NOT exist on `tool_exit` facts and must never be used.
+2. Predicates are evaluated across independent resampled branches at turn `j`: write predicates in terms of reproducible tool names (`name`), file paths (`submission/*`, `*.docx`, `*.pptx`, `*.xlsx`), or command structure (`*soffice*`, `*pdftoppm*`, `ok: false`). Do NOT bind to incidental variable names or exact prose strings that only appeared in the parent trajectory.
+3. Every hypothesis `defect` MUST exactly match a defect ID from `defects_table.defects` that has `turn >= 1` or `two_point_turn >= 1`, and `effect` MUST be a negative float (e.g. `-0.25`).
+
+Output ONLY a valid JSON object (no markdown fences):
+{"hypotheses": [{"defect": "<exact localized defect id>", "turn": <int>, "predicate": <dict>, "effect": <negative float>, "rationale": "<concise explanation>"}]}"""
+)
+
+FORBIDDEN_BRANCH_KEYS = {
+    'branches',
+    'outcomes',
+    'branch_receipts',
+    'branch_facts',
+    's1_samples',
+    's2_samples',
+}
+
+FORBIDDEN_CALL1_KEYS = FORBIDDEN_BRANCH_KEYS | {
+    'grades',
+    'snapshot_scores',
+    'defects_table',
+    'terminal_snapshot_score_s_T',
+    'max_snapshot_score',
+    'delivery_gap_g',
+    'undelivered_gap',
+    'peak_to_terminal_loss',
+    'deduction_by_kind',
+}
+
+
+def assert_no_forbidden_keys(payload: Any, forbidden: set[str], context: str) -> None:
+    if isinstance(payload, dict):
+        for k, v in payload.items():
+            if str(k) in forbidden:
+                raise L2Error(f'Information boundary violation in {context}: forbidden key `{k}`')
+            assert_no_forbidden_keys(v, forbidden, context)
+    elif isinstance(payload, list):
+        for item in payload:
+            assert_no_forbidden_keys(item, forbidden, context)
 
 
 def assert_no_branch_leakage(payload: Any) -> None:
-    """Enforces the Section 2 information boundary: Analyst inputs never contain branch-level outcomes or actions."""
-    if isinstance(payload, dict):
-        for k, v in payload.items():
-            if str(k) in FORBIDDEN_BRANCH_KEYS:
-                raise L2Error(f'Information boundary violation: forbidden branch key `{k}` in Analyst input')
-            assert_no_branch_leakage(v)
-    elif isinstance(payload, list):
-        for item in payload:
-            assert_no_branch_leakage(item)
+    assert_no_forbidden_keys(payload, FORBIDDEN_BRANCH_KEYS, 'Analyst input')
 
 
 def build_call1_input(
     parent: L1Package,
-    p0: float,
+    terminal_official_view: dict[str, Any],
     facts: list[dict[str, Any]] | None = None,
+    contrast: dict[str, Any] | None = None,
     *,
     include_facts: bool = True,
 ) -> dict[str, Any]:
-    """Constructs the Call 1 input for LLM Analysts (Group B when include_facts=False, Group C when True)."""
+    """L2 v0.4 §5.2 Call 1 input for LLM Analysts (Group B when include_facts=False, Group C when True).
+
+    Strictly excludes checkpoint snapshot scores s(k), defect table categories/origins/windows,
+    and any branch-level data.
+    """
     view = build_trajectory_view(parent)
     payload: dict[str, Any] = {
-        'task_baseline_p0': probability(p0, 'p0'),
+        'num_turns': parent.turns,
+        'terminal_official_grade': copy.deepcopy(terminal_official_view),
         'trajectory': view,
     }
-    if include_facts and facts is not None:
-        payload['facts'] = copy.deepcopy(facts)
-    assert_no_branch_leakage(payload)
+    if include_facts:
+        if facts is not None:
+            payload['facts'] = copy.deepcopy(facts)
+        if contrast is not None:
+            payload['contrast'] = copy.deepcopy(contrast)
+    assert_no_forbidden_keys(payload, FORBIDDEN_CALL1_KEYS, 'Call 1 input')
     return payload
 
 
 def build_call2_input(
     parent: L1Package,
-    p0: float,
-    curve_summary: dict[str, Any],
+    terminal_official_view: dict[str, Any],
+    defects_table: dict[str, Any],
     facts: list[dict[str, Any]] | None = None,
+    contrast: dict[str, Any] | None = None,
     *,
     include_facts: bool = True,
 ) -> dict[str, Any]:
-    """Constructs the Call 2 input for LLM Analysts.
+    """L2 v0.4 §5.2 Call 2 input for LLM Analysts.
 
-    `curve_summary` exposes only checkpoint-level V_hat, verdict, turn, and interval —
-    never branch-level outcomes or branch facts.
+    Includes Call 1's inputs plus `defects_table` (E1 defect categories, origin turns, and windows),
+    while strictly excluding any branch-level outcomes or branch facts.
     """
-    safe_curve = {
-        'verdict': curve_summary.get('verdict'),
-        'turn': curve_summary.get('turn'),
-        'interval': curve_summary.get('interval'),
-        'candidate_turn': curve_summary.get('candidate_turn'),
-        'v_hat': copy.deepcopy(curve_summary.get('v_hat') or {}),
-        'turn_drops': copy.deepcopy(curve_summary.get('turn_drops') or {}),
-    }
-    payload = build_call1_input(parent, p0, facts, include_facts=include_facts)
-    payload['curve_summary'] = safe_curve
+    payload = build_call1_input(
+        parent, terminal_official_view, facts, contrast, include_facts=include_facts
+    )
+    payload['defects_table'] = copy.deepcopy(defects_table)
     assert_no_branch_leakage(payload)
     return payload
 
 
 def request_model_config(model_cfg: dict[str, Any]) -> dict[str, Any]:
-    """Identity of request content/routing, excluding accounting and execution controls."""
-    return {key: model_cfg[key] for key in ('adapter', 'kind', 'model', 'base_url', 'parameters')
-            if key in model_cfg}
+    return {
+        key: model_cfg[key]
+        for key in ('adapter', 'kind', 'model', 'base_url', 'parameters')
+        if key in model_cfg
+    }
 
 
 def analyst_tag(model_cfg: dict[str, Any], *, include_facts: bool = True) -> str:
     model_name = str(model_cfg.get('model') or 'unknown')
     mode_tag = 'facts' if include_facts else 'raw'
     from ..config import reject_inline_secrets
+
     reject_inline_secrets(model_cfg)
-    prompt_sha = digest({'c1': CALL1_SYSTEM_PROMPT, 'c2': CALL2_SYSTEM_PROMPT, 'mode': mode_tag, 'model_config': request_model_config(model_cfg)})[:16]
+    prompt_sha = digest({
+        'c1': CALL1_SYSTEM_PROMPT,
+        'c2': CALL2_SYSTEM_PROMPT,
+        'whitelist': FACT_FIELD_WHITELIST,
+        'mode': mode_tag,
+        'model_config': request_model_config(model_cfg),
+    })[:16]
     return f'llm:{model_name}@{prompt_sha}'
 
 
@@ -131,63 +179,208 @@ def _resolve_model_backend(model_cfg: dict[str, Any]):
     return adapters[adapter](copy.deepcopy(model_cfg))
 
 
-def _default_llm_transport(model_cfg: dict[str, Any], system_prompt: str, user_payload: dict[str, Any]) -> dict[str, Any]:
-    from ..config import DEFAULTS, validate
-    model_cfg = copy.deepcopy(model_cfg)
-    model_cfg.setdefault('max_response_bytes', DEFAULTS['model']['max_response_bytes'])
-    validate({'model': model_cfg})
-    backend = _resolve_model_backend(model_cfg)
-    conv = backend.initial(system_prompt, canonical(user_payload).decode('utf-8'))
-    req = backend.request(conv, [])
-    if model_cfg.get('adapter') == 'openai-compatible' and not req.get('tools'):
-        req.pop('tools', None)
-        req.pop('tool_choice', None)
-    resp = backend.send(canonical(req), timeout=float(model_cfg.get('timeout_seconds', 120)))
-    if resp.metadata.get('body_truncated'):
-        raise L2Error('LLM Analyst response exceeded model.max_response_bytes')
-    parsed = backend.parse(resp.body, 'l2-analyst')
-    if not parsed.text:
-        raise L2Error('LLM Analyst returned empty text response')
-    text = parsed.text.strip()
+def _extract_json_obj(raw_text: str) -> dict[str, Any]:
+    text = raw_text.strip()
     if text.startswith('```'):
         lines = [ln for ln in text.splitlines() if not ln.strip().startswith('```')]
         text = '\n'.join(lines).strip()
-    return loads(text)
+    try:
+        return loads(text)
+    except Exception:
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end > start:
+            return loads(text[start : end + 1])
+        raise
 
 
-def predict_values_llm(
+def _default_llm_transport(
+    model_cfg: dict[str, Any],
+    system_prompt: str,
+    user_payload: dict[str, Any],
+    *,
+    cache_dir: Path | None = None,
+    validator: Callable[[dict[str, Any]], Any] | None = None,
+) -> dict[str, Any]:
+    import hashlib
+    import json
+    import time
+    from ..config import DEFAULTS, validate
+
+    model_cfg = copy.deepcopy(model_cfg)
+    model_cfg.setdefault('max_response_bytes', DEFAULTS['model']['max_response_bytes'])
+    validate({'model': model_cfg})
+
+    cache_req = {
+        'schema': 'l2_llm_analyst_cache_v0.4',
+        'model_config': request_model_config(model_cfg),
+        'system_prompt': system_prompt,
+        'user_payload': user_payload,
+    }
+    ckey = digest(cache_req)
+    cfile = (cache_dir / 'llm' / f'{ckey}.json') if cache_dir is not None else None
+    if cfile is not None and cfile.is_file():
+        cached = read_json(cfile)
+        if cached.get('cache_key') == ckey and isinstance(cached.get('parsed'), dict):
+            if validator is None:
+                return cached['parsed']
+            try:
+                validator(cached['parsed'])
+                return cached['parsed']
+            except Exception:
+                pass
+
+    backend = _resolve_model_backend(model_cfg)
+    last_err: Exception | None = None
+    prompt_to_send = system_prompt
+    max_attempts = 3 if validator is not None else 1
+    for attempt in range(max_attempts):
+        conv = backend.initial(prompt_to_send, canonical(user_payload).decode('utf-8'))
+        req = backend.request(conv, [])
+        if model_cfg.get('adapter') == 'openai-compatible' and not req.get('tools'):
+            req.pop('tools', None)
+            req.pop('tool_choice', None)
+        req_bytes = canonical(req)
+        t0 = time.time()
+        try:
+            resp = backend.send(req_bytes, timeout=float(model_cfg.get('timeout_seconds', 120)))
+            elapsed_s = round(time.time() - t0, 4)
+            if resp.metadata.get('body_truncated'):
+                raise L2Error('LLM Analyst response exceeded model.max_response_bytes')
+            parsed = backend.parse(resp.body, 'l2-analyst')
+            if not parsed.text:
+                raise L2Error('LLM Analyst returned empty text response')
+            obj = _extract_json_obj(parsed.text)
+            if validator is not None:
+                validator(obj)
+        except Exception as exc:
+            if 'exceeded model.max_response_bytes' in str(exc) or max_attempts == 1:
+                raise
+            last_err = exc
+            time.sleep(1.5 * (attempt + 1))
+            prompt_to_send = (
+                system_prompt
+                + f'\n\n[RETRY CORRECTION (attempt {attempt + 1})]: Your previous output failed validation with error: {exc}. '
+                'Fix the violation and return ONLY the valid JSON object.'
+            )
+            continue
+
+        raw_body_obj: Any = None
+        try:
+            raw_body_obj = json.loads(resp.body.decode('utf-8', errors='replace'))
+        except Exception:
+            raw_body_obj = None
+        usage = parsed.usage or (
+            raw_body_obj.get('usageMetadata') if isinstance(raw_body_obj, dict) else {}
+        ) or {}
+        if cfile is not None:
+            write_json(
+                cfile,
+                {
+                    'cache_key': ckey,
+                    'parsed': obj,
+                    'usage': usage,
+                    'http_status': resp.status,
+                    'elapsed_seconds': elapsed_s,
+                    'request_sha256': digest(req),
+                    'response_sha256': hashlib.sha256(resp.body).hexdigest(),
+                    'reported_model_version': (
+                        raw_body_obj.get('modelVersion') if isinstance(raw_body_obj, dict) else None
+                    ),
+                },
+            )
+        return obj
+    assert last_err is not None
+    raise last_err
+
+
+def predict_origins_llm(
     parent: L1Package,
-    p0: float,
+    terminal_official_view: dict[str, Any],
     model_cfg: dict[str, Any],
     facts: list[dict[str, Any]] | None = None,
+    contrast: dict[str, Any] | None = None,
     *,
     include_facts: bool = True,
+    cache_dir: Path | None = None,
     llm_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
-) -> Values:
-    """Call 1 for LLM Analyst: predicts V(c_k) for k = 0 .. T-1."""
-    inp = build_call1_input(parent, p0, facts, include_facts=include_facts)
-    caller = llm_caller or (lambda sys_p, u_inp: _default_llm_transport(model_cfg, sys_p, u_inp))
-    raw = caller(CALL1_SYSTEM_PROMPT, inp)
-    vals = validate_values(raw.get('values'), parent.turns)
-    return {'analyst': analyst_tag(model_cfg, include_facts=include_facts),
-            'analyst_group': 'C' if include_facts else 'B', 'values': vals}
+) -> list[Origin]:
+    """L2 v0.4 §5.1 Call 1 for LLM Analysts (Group B when include_facts=False, Group C when True)."""
+    target_defects = [str(d['defect']) for d in (terminal_official_view.get('target_defects') or [])]
+    if not target_defects:
+        return []
+    inp = build_call1_input(
+        parent, terminal_official_view, facts, contrast, include_facts=include_facts
+    )
+    tag = analyst_tag(model_cfg, include_facts=include_facts)
+    group = 'C' if include_facts else 'B'
+    if llm_caller is not None:
+        raw = llm_caller(CALL1_SYSTEM_PROMPT, inp)
+        return validate_origins(raw.get('origins'), target_defects, parent.turns, tag, analyst_group=group)
+    raw = _default_llm_transport(
+        model_cfg,
+        CALL1_SYSTEM_PROMPT,
+        inp,
+        cache_dir=cache_dir,
+        validator=lambda obj: validate_origins(obj.get('origins'), target_defects, parent.turns, tag, analyst_group=group),
+    )
+    return validate_origins(raw.get('origins'), target_defects, parent.turns, tag, analyst_group=group)
 
 
 def propose_hypotheses_llm(
     parent: L1Package,
-    p0: float,
-    curve_summary: dict[str, Any],
+    terminal_official_view: dict[str, Any],
+    defects_table: dict[str, Any],
     model_cfg: dict[str, Any],
     facts: list[dict[str, Any]] | None = None,
+    contrast: dict[str, Any] | None = None,
     *,
     include_facts: bool = True,
+    cache_dir: Path | None = None,
     llm_caller: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> list[Hypothesis]:
-    """Call 2 for LLM Analyst: only invoked on `concentrated_*` verdicts."""
-    verdict = curve_summary.get('verdict')
-    if verdict not in ('concentrated_turn', 'concentrated_interval'):
+    """L2 v0.4 §5.1 Call 2 for LLM Analysts."""
+    localized = [
+        str(d['defect'])
+        for d in (defects_table.get('defects') or [])
+        if (
+            (isinstance(d.get('turn'), int) and not isinstance(d.get('turn'), bool) and d['turn'] >= 1)
+            or (isinstance(d.get('two_point_turn'), int) and not isinstance(d.get('two_point_turn'), bool) and d['two_point_turn'] >= 1)
+        )
+    ]
+    if not localized:
         return []
-    inp = build_call2_input(parent, p0, curve_summary, facts, include_facts=include_facts)
-    caller = llm_caller or (lambda sys_p, u_inp: _default_llm_transport(model_cfg, sys_p, u_inp))
-    raw = caller(CALL2_SYSTEM_PROMPT, inp)
-    return validate_hypotheses(raw.get('hypotheses'), curve_summary)
+    inp = build_call2_input(
+        parent, terminal_official_view, defects_table, facts, contrast, include_facts=include_facts
+    )
+    tag = analyst_tag(model_cfg, include_facts=include_facts)
+    group = 'C' if include_facts else 'B'
+    if llm_caller is not None:
+        raw = llm_caller(CALL2_SYSTEM_PROMPT, inp)
+        return validate_hypotheses(
+            raw.get('hypotheses'),
+            parent.turns,
+            tag,
+            analyst_group=group,
+            allowed_defects=set(localized),
+        )
+    raw = _default_llm_transport(
+        model_cfg,
+        CALL2_SYSTEM_PROMPT,
+        inp,
+        cache_dir=cache_dir,
+        validator=lambda obj: validate_hypotheses(
+            obj.get('hypotheses'),
+            parent.turns,
+            tag,
+            analyst_group=group,
+            allowed_defects=set(localized),
+        ),
+    )
+    return validate_hypotheses(
+        raw.get('hypotheses'),
+        parent.turns,
+        tag,
+        analyst_group=group,
+        allowed_defects=set(localized),
+    )

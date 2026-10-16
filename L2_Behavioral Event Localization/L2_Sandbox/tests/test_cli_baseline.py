@@ -1,4 +1,4 @@
-"""The public run command never silently selects an unmeasured baseline."""
+"""L2 v0.4 CLI tests: optional p0/baseline, diagnose, verify, and summarize."""
 from pathlib import Path
 
 import pytest
@@ -6,44 +6,54 @@ import pytest
 from l2_sandbox import cli
 
 
-@pytest.mark.parametrize('execute', [False, True])
-def test_run_requires_p0_before_config_or_execution(tmp_path, monkeypatch, capsys, execute):
-    touched = []
-    monkeypatch.setattr(cli, 'load_config', lambda *_: touched.append('config'))
-    monkeypatch.setattr(cli, 'run_episode', lambda *a, **kw: touched.append('run'))
-    output = tmp_path / 'output'
-    argv = ['run', str(tmp_path / 'missing-parent'), '--output', str(output),
-            '--analysts', 'llm:missing-config.json', '--config', 'missing-config.json']
-    if execute:
-        argv.append('--execute')
-
-    with pytest.raises(SystemExit) as exc:
-        cli.main(argv)
-
-    assert exc.value.code == 2
-    assert '--p0' in capsys.readouterr().err
-    assert touched == []
-    assert not output.exists()
-
-
-@pytest.mark.parametrize('p0', [0.0, 0.37, 1.0])
-def test_explicit_p0_and_provenance_are_forwarded(tmp_path, monkeypatch, capsys, p0):
+def test_diagnose_runs_without_requiring_p0(tmp_path, monkeypatch, capsys):
     calls = []
 
-    def fake_run(parent, **kwargs):
+    def fake_diagnose(parent, **kwargs):
         calls.append((parent, kwargs))
         return {'executed': False}
 
-    monkeypatch.setattr(cli, 'run_episode', fake_run)
+    monkeypatch.setattr(cli, 'diagnose_episode', fake_diagnose)
     parent = tmp_path / 'parent'
-    provenance = 'frozen M2 baseline cohort; parent excluded'
-    assert cli.main(['run', str(parent), '--p0', str(p0),
-                     '--baseline-provenance', provenance]) == 0
+    assert cli.main(['diagnose', str(parent)]) == 0
     assert calls[0][0] == Path(parent)
-    assert calls[0][1]['p0'] == p0
-    assert calls[0][1]['baseline_provenance'] == provenance
+    assert calls[0][1]['p0'] is None
     assert calls[0][1]['execute'] is False
     assert '"executed": false' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('p0', [0.0, 0.37, 1.0])
+def test_explicit_p0_is_forwarded(tmp_path, monkeypatch, capsys, p0):
+    calls = []
+
+    def fake_diagnose(parent, **kwargs):
+        calls.append((parent, kwargs))
+        return {'executed': False}
+
+    monkeypatch.setattr(cli, 'diagnose_episode', fake_diagnose)
+    parent = tmp_path / 'parent'
+    assert cli.main(['diagnose', str(parent), '--p0', str(p0)]) == 0
+    assert calls[0][0] == Path(parent)
+    assert calls[0][1]['p0'] == p0
+    assert calls[0][1]['execute'] is False
+
+
+def test_verify_cli_forwards_mode_checkpoint_and_arms(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def fake_verify(parent, **kwargs):
+        calls.append((parent, kwargs))
+        return {'executed': False, 'mode': kwargs['mode']}
+
+    monkeypatch.setattr(cli, 'verify_episode', fake_verify)
+    parent = tmp_path / 'parent'
+    assert cli.main(['verify', str(parent), '--mode', 'intervention', '--checkpoint', '29', '--arms', 'plain,deliver', '--n', '24']) == 0
+    assert calls[0][0] == Path(parent)
+    assert calls[0][1]['mode'] == 'intervention'
+    assert calls[0][1]['k'] == 29
+    assert calls[0][1]['arms'] == ['plain', 'deliver']
+    assert calls[0][1]['n'] == 24
+    assert calls[0][1]['execute'] is False
 
 
 def test_unbound_baseline_json_is_rejected(tmp_path):
@@ -54,27 +64,6 @@ def test_unbound_baseline_json_is_rejected(tmp_path):
     write_json(summary, {'complete_cohorts': [{'n': 3, 'p0': .4}]})
     with pytest.raises(L2Error, match='Unverified baseline JSON'):
         resolve_m2_baseline_p0(summary, tmp_path / 'parent')
-
-
-def test_wrapper_delegates_all_semantics_and_cli_provenance(tmp_path, monkeypatch):
-    l3_report = pytest.importorskip('l3_sandbox.report')
-    from l2_sandbox.report import resolve_m2_baseline_p0
-    calls = []
-    resolved = {'p0': .6, 'cohort_verified': True, 'used_n': 2,
-                'provenance': 'sealed source; excluded_parent_trial=t0'}
-    def resolve(source, parent, *, condition_id=None):
-        calls.append((source, parent, condition_id))
-        return resolved
-    monkeypatch.setattr(l3_report, 'resolve_baseline_p0', resolve)
-    source, parent = tmp_path / 'source', tmp_path / 'parent'
-    assert resolve_m2_baseline_p0(source, parent, condition_id='requests_035') == resolved
-    assert calls == [(source, parent, 'requests_035')]
-    run_calls = []
-    monkeypatch.setattr(cli, 'run_episode', lambda *a, **kw: run_calls.append(kw) or {'executed': False})
-    assert cli.main(['run', str(parent), '--baseline', str(source)]) == 0
-    assert run_calls[0]['p0'] == .6
-    assert run_calls[0]['cohort_verified'] is True
-    assert run_calls[0]['baseline_provenance'] == resolved['provenance']
 
 
 def test_baseline_without_l3_has_clear_install_error(tmp_path, monkeypatch):

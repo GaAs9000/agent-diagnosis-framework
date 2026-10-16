@@ -17,6 +17,64 @@ DEFAULT_PROBE_CONFIG = {
     'max_objects': 5000,
 }
 
+PREVIEW_BINARIES = ('soffice', 'libreoffice', 'pdftoppm')
+
+FACT_FIELD_WHITELIST: dict[str, tuple[str, ...]] = {
+    'tool_requested': (
+        'name',
+        'call_id',
+        'request_id',
+        'arguments.command',
+        'arguments.path',
+        'arguments.offset',
+        'arguments.limit',
+    ),
+    'preview_rendered': ('name', 'command'),
+    'tool_exit': ('call_id', 'name', 'exit_code', 'stop_reason', 'output_complete', 'ok', 'stderr_preview'),
+    'file_transition': (
+        'path',
+        'change',
+        'before.path',
+        'after.path',
+        'before.blob',
+        'after.blob',
+        'before.sha256',
+        'after.sha256',
+        'before.size_bytes',
+        'after.size_bytes',
+        'before.mode',
+        'after.mode',
+    ),
+    'object_structure_change': (
+        'file_path',
+        'before_sha256',
+        'after_sha256',
+        'before_summary.paragraphs_recursive',
+        'after_summary.paragraphs_recursive',
+        'before_summary.tables_recursive',
+        'after_summary.tables_recursive',
+        'before_summary.top_level_tables',
+        'after_summary.top_level_tables',
+        'before_summary.rows_recursive',
+        'after_summary.rows_recursive',
+        'before_summary.textless_rows_without_drawing',
+        'after_summary.textless_rows_without_drawing',
+        'before_summary.textless_rows_are_not_rendered_empty_row_judgements',
+        'after_summary.textless_rows_are_not_rendered_empty_row_judgements',
+    ),
+    'model_output_text': ('text', 'request_id'),
+    'protocol_error': ('kind', 'code', 'message', 'reason', 'error_type', 'call_id', 'request_id', 'stop_phase', 'transport_attempts'),
+    'execution_error': ('kind', 'code', 'message', 'reason', 'error_type', 'call_id', 'request_id', 'stop_phase', 'transport_attempts'),
+    'termination': ('termination', 'protocol_validity', 'execution_validity', 'evaluation_validity', 'task_outcome', 'evidence_completeness'),
+}
+
+
+def format_fact_field_whitelist() -> str:
+    return '\n'.join(
+        f"- `{fact}`: " + ", ".join(f"`{f}`" for f in fields)
+        for fact, fields in FACT_FIELD_WHITELIST.items()
+    )
+
 
 def build_facts(pkg: L1Package, probe_config: dict | None = None) -> list[dict[str, Any]]:
     """Extracts turn-indexed `{turn, type, value}` facts from any L1Package (parent or branch)."""
@@ -65,16 +123,30 @@ def build_facts(pkg: L1Package, probe_config: dict | None = None) -> list[dict[s
                     'value': {'request_id': d.get('request_id'), 'text': d.get('text')},
                 })
             elif kind == 'tool.call':
+                args = d.get('arguments') or {}
+                tool_name = d.get('name')
                 facts.append({
                     'turn': turn,
                     'type': 'tool_requested',
                     'value': {
                         'call_id': d.get('call_id'),
                         'request_id': d.get('request_id'),
-                        'name': d.get('name'),
-                        'arguments': d.get('arguments') or {},
+                        'name': tool_name,
+                        'arguments': args,
                     },
                 })
+                if tool_name in ('run', 'bash') and isinstance(args, dict):
+                    cmd = str(args.get('command') or '')
+                    cmd_low = cmd.lower()
+                    if any(b in cmd_low for b in PREVIEW_BINARIES):
+                        facts.append({
+                            'turn': turn,
+                            'type': 'preview_rendered',
+                            'value': {
+                                'name': tool_name,
+                                'command': cmd,
+                            },
+                        })
             elif kind == 'tool.result':
                 res_path = (d.get('result') or {}).get('path')
                 obs = (pkg.json(res_path).get('observation') or {}) if res_path and (pkg.root / res_path).is_file() else {}

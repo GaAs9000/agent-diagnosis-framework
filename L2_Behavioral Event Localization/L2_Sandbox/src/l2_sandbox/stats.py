@@ -1,4 +1,4 @@
-"""Statistical bounds, permutation & Fisher tests, Holm step-down, Mantel-Haenszel, and cluster bootstrap (L2 v0.3)."""
+"""Statistical bounds, permutation & Fisher tests, Holm step-down, and cluster bootstrap (L2 v0.4 Section 6 & 7)."""
 from __future__ import annotations
 import itertools
 import math
@@ -35,28 +35,6 @@ def wilson_bounds(vals: Sequence[float], alpha: float = 0.05, *, one_sided: bool
     return max(0.0, center - half), min(1.0, center + half)
 
 
-def upper(vals: Sequence[float], alpha: float = 0.05, *, seed: str = 'l2-v03-upper') -> float:
-    """One-sided upper bound for V(c_k).
-
-    Continuous scores use a percentile bootstrap, whose finite-sample coverage
-    is approximate; the requested level is not a universal coverage guarantee.
-    """
-    vals = _bounded_sample(vals)
-    n = len(vals)
-    if n == 0:
-        return 1.0
-    if _is_boolean_sample(vals):
-        _, hi = wilson_bounds(vals, alpha=alpha, one_sided=True)
-        return hi
-    rng = random.Random(int(digest({'seed': seed, 'vals': sorted(round(float(x), 8) for x in vals), 'alpha': alpha})[:16], 16))
-    n_boot = 2000
-    means = sorted(sum(rng.choice(vals) for _ in range(n)) / n for _ in range(n_boot))
-    idx = min(n_boot - 1, max(0, int(math.floor((1.0 - alpha) * (n_boot - 1)))))
-    _, wilson_hi = wilson_bounds(vals, alpha=alpha, one_sided=True)
-    # Conservatively take max with Wilson upper when sample variance is 0
-    return max(means[idx], wilson_hi if max(vals) == min(vals) else means[idx])
-
-
 def lower_drop(
     vals_before: Sequence[float],
     vals_after: Sequence[float] | float,
@@ -70,8 +48,6 @@ def lower_drop(
       `vals_after` is the deterministic terminal state Y).
     - For bounded continuous scores, takes the smaller of the percentile-bootstrap
       bound and the corresponding Wilson/Newcombe-style bound, for all samples.
-      This conservative current policy is not limited to zero-variance samples;
-      its finite-sample coverage is not universally certified by calibration.
     """
     vals_before = _bounded_sample(vals_before)
     n1 = len(vals_before)
@@ -113,8 +89,6 @@ def lower_drop(
         for _ in range(n_boot)
     )
     idx = min(n_boot - 1, max(0, int(math.floor(alpha * (n_boot - 1)))))
-    # Current F21 policy: conservatively cap every continuous two-sample bound,
-    # including nonconstant samples; do not treat this as only a zero-variance guard.
     p1 = sum(float(x) for x in vals_before) / n1
     p2 = sum(float(x) for x in after_list) / n2
     l1, _ = wilson_bounds(vals_before, alpha=alpha, one_sided=True)
@@ -144,10 +118,8 @@ def fisher_exact_one_sided(y_p: Sequence[float], y_not_p: Sequence[float], *, di
     lo_x = max(0, total_k - n2)
     hi_x = min(n1, total_k)
     if direction <= 0:
-        # Lower tail: X <= k1
         num = sum(math.comb(total_k, x) * math.comb(total_n - total_k, n1 - x) for x in range(lo_x, k1 + 1))
     else:
-        # Upper tail: X >= k1
         num = sum(math.comb(total_k, x) * math.comb(total_n - total_k, n1 - x) for x in range(k1, hi_x + 1))
     return max(0.0, min(1.0, num / denom))
 
@@ -174,7 +146,6 @@ def permutation_one_sided(
     total_sum = sum(combined)
     obs_diff = (sum(float(x) for x in y_p) / n1) - (sum(float(x) for x in y_not_p) / n2)
 
-    # Use exact combinations when C(total_n, n1) <= 10000
     n_comb = math.comb(total_n, n1)
     if n_comb <= 10000:
         extreme = 0
@@ -216,38 +187,6 @@ def holm_adjust(p_values: Sequence[float]) -> list[float]:
     return adjusted
 
 
-def mantel_haenszel_pool(strata: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Descriptive MH-weighted mean difference; family-cluster CI on supported strata.
-
-    This effect is not an odds ratio or a fabricated MH significance test. A CI
-    requires retained outcomes, >=4 observations per group and >=2 families.
-    """
-    valid = [s for s in strata if s.get('n_p', 0) > 0 and s.get('n_not_p', 0) > 0]
-
-    def effect(rows):
-        weights = [(r['n_p'] * r['n_not_p']) / (r['n_p'] + r['n_not_p']) for r in rows]
-        return (sum(w * (r['mean_p'] - r['mean_not_p']) for w, r in zip(weights, rows)) / sum(weights)) if weights else None
-
-    eligible = [s for s in valid if s.get('family_id') and s['n_p'] >= 4 and s['n_not_p'] >= 4
-                and len(s.get('y_p', [])) == s['n_p'] and len(s.get('y_not_p', [])) == s['n_not_p']]
-    observed = []
-    for row in eligible:
-        yp, ynp = _bounded_sample(row['y_p']), _bounded_sample(row['y_not_p'])
-        observed.append({**row, 'mean_p': sum(yp) / len(yp), 'mean_not_p': sum(ynp) / len(ynp)})
-    ci = clustered_bootstrap(observed, effect, seed='l2-v03-predicate-effect')
-    return {
-        'status': 'evaluated' if ci['ci_95'][0] is not None else ('descriptive_only' if valid else 'untestable'),
-        'strata_count': len(valid),
-        'eligible_strata_count': len(eligible),
-        'family_count': ci['family_count'],
-        'pooled_effect': effect(valid),
-        'ci_effect_estimate': ci['estimate'],
-        'ci_95': ci['ci_95'],
-        'inference_method': 'family_cluster_bootstrap',
-        'p_value': None,
-    }
-
-
 def clustered_bootstrap(
     cases: Sequence[dict[str, Any]],
     stat_fn: Callable[[Sequence[dict[str, Any]]], float | None],
@@ -256,7 +195,7 @@ def clustered_bootstrap(
     n_boot: int = 2000,
     seed: str = 'l2-v03-cluster-boot',
 ) -> dict[str, Any]:
-    """Family-clustered bootstrap confidence interval (Section 4 & 5)."""
+    """Family-clustered bootstrap confidence interval (Section 7)."""
     point = stat_fn(cases)
     by_family: dict[str, list[dict[str, Any]]] = {}
     for c in cases:

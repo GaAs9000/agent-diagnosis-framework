@@ -1,419 +1,383 @@
-"""Hypothesis testing, Brier skill scoring, explanation coverage, and cross-trajectory pooling (L2 v0.3 Section 4 & 5)."""
+"""Defect origin scoring, mechanism hypothesis evaluation, and cross-trajectory pooling (L2 v0.4 Section 7)."""
 from __future__ import annotations
-import math
 from pathlib import Path
 from typing import Any, Sequence
-from . import CODE_VERSION
-from .analysts.rules import linear_decay_values
-from .evidence.l1 import L1Package
-from .facts.build import build_facts
 from .io import L2Error, read_json, read_jsonl, sha_file, with_header, write_json
-from .predicates import RULE_VOCABULARY, eval_predicate_on_turn, validate_predicate
-from .stats import clustered_bootstrap, holm_adjust, mantel_haenszel_pool, permutation_one_sided
+from .stats import clustered_bootstrap
+from .verify import evaluate_intervention, evaluate_partition, evaluate_two_point, load_branch_facts
 
 
-def brier_on_outcomes(
-    values: Sequence[float],
-    outcomes: Sequence[dict[str, Any]],
-) -> float | None:
-    """Computes equal-checkpoint-weighted Brier / squared error against observed branch outcomes (Section 5).
-
-    Each checkpoint k that has valid branches is weighted equally:
-      Brier_k = mean_i (values[k] - y_{k, i})^2
-      Brier   = mean_k Brier_k
-    """
-    by_k: dict[int, list[float]] = {}
-    for r in outcomes:
-        if not r.get('valid') or r.get('y') is None:
-            continue
-        if not isinstance(r.get('y'), (int, float)) or not math.isfinite(r['y']) or not 0 <= r['y'] <= 1:
-            raise L2Error('Invalid scored branch outcome')
-        k = int(r['k'])
-        if 0 <= k < len(values):
-            by_k.setdefault(k, []).append(float(r['y']))
-    if not by_k:
-        return None
-    cp_losses = []
-    for k, ys in sorted(by_k.items()):
-        pk = float(values[k])
-        cp_losses.append(sum((pk - y) ** 2 for y in ys) / len(ys))
-    return sum(cp_losses) / len(cp_losses)
+def _defect_key(d: dict[str, Any]) -> str:
+    return str(d.get('defect') or d.get('item_id') or '')
 
 
-def score_values(
-    analyst_values: Sequence[float],
-    outcomes: Sequence[dict[str, Any]],
-    num_turns: int,
-    p0: float,
-    terminal_y: float,
+def score_origins(
+    predicted_origins: Sequence[dict[str, Any]],
+    defects: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Computes Analyst Brier, Linear Decay Brier, and Skill Score = 1 - Brier(analyst) / Brier(linear_decay)."""
-    complete = (isinstance(analyst_values, (list, tuple)) and len(analyst_values) == num_turns and all(
-        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 <= v <= 1
-        for v in analyst_values))
-    if not complete:
-        return {'status': 'unscored', 'reason': 'incomplete_or_invalid_predictions',
-                'brier': None, 'linear_decay_brier': None, 'skill_score': None}
-    lin_vals = linear_decay_values(num_turns, p0, terminal_y)
-    b_analyst = brier_on_outcomes(analyst_values, outcomes)
-    b_linear = brier_on_outcomes(lin_vals, outcomes)
-    skill = (
-        1.0 - (b_analyst / b_linear)
-        if b_analyst is not None and b_linear is not None and b_linear > 1e-12
-        else None
-    )
+    """Evaluates Call 1 origin predictions `(defect, kind, turn)` against ground-truth `defects` (Section 7.1 & 7.2)."""
+    by_defect: dict[str, dict[str, Any]] = {
+        _defect_key(o): o for o in predicted_origins if isinstance(o, dict) and _defect_key(o)
+    }
+
+    item_evals: list[dict[str, Any]] = []
+    kind_hits_unweighted = 0
+    kind_total_unweighted = 0
+    kind_weight_hit = 0.0
+    kind_weight_total = 0.0
+
+    turn_hits_exact = 0
+    turn_hits_tol1 = 0
+    turn_total_unweighted = 0
+    turn_weight_exact = 0.0
+    turn_weight_tol1 = 0.0
+    turn_weight_total = 0.0
+
+    for d in defects:
+        d_id = _defect_key(d)
+        true_kind = str(d['kind'])
+        true_turn = d.get('turn') if 'turn' in d else d.get('origin_turn')
+        ded = float(d.get('deduction', 0.0))
+
+        pred = by_defect.get(d_id)
+        pred_kind = str(pred['kind']) if pred and pred.get('kind') is not None else None
+        raw_pt = pred.get('turn') if pred and 'turn' in pred else (pred.get('origin_turn') if pred else None)
+        pred_turn = int(raw_pt) if isinstance(raw_pt, int) and not isinstance(raw_pt, bool) else None
+
+        kind_match = (pred_kind == true_kind)
+        kind_total_unweighted += 1
+        kind_weight_total += ded
+        if kind_match:
+            kind_hits_unweighted += 1
+            kind_weight_hit += ded
+
+        turn_eligible = true_kind in ('broken', 'undelivered') and isinstance(true_turn, int) and not isinstance(true_turn, bool)
+        turn_exact = False
+        turn_tol1 = False
+        if turn_eligible:
+            turn_total_unweighted += 1
+            turn_weight_total += ded
+            if isinstance(pred_turn, int):
+                turn_exact = (pred_turn == int(true_turn))
+                turn_tol1 = (abs(pred_turn - int(true_turn)) <= 1)
+                if turn_exact:
+                    turn_hits_exact += 1
+                    turn_weight_exact += ded
+                if turn_tol1:
+                    turn_hits_tol1 += 1
+                    turn_weight_tol1 += ded
+
+        item_evals.append({
+            'defect': d_id,
+            'item_id': d_id,
+            'deduction': ded,
+            'true_kind': true_kind,
+            'pred_kind': pred_kind,
+            'kind_correct': kind_match,
+            'true_origin_turn': true_turn,
+            'pred_origin_turn': pred_turn,
+            'turn_eligible': turn_eligible,
+            'turn_exact_hit': turn_exact if turn_eligible else None,
+            'turn_tol1_hit': turn_tol1 if turn_eligible else None,
+        })
+
     return {
-        'status': 'scored' if b_analyst is not None else 'unscored',
-        'brier': b_analyst,
-        'linear_decay_brier': b_linear,
-        'skill_score': skill,
+        'status': 'scored' if kind_total_unweighted > 0 else 'no_defects',
+        'defect_count': kind_total_unweighted,
+        'total_deduction': round(kind_weight_total, 6),
+        'kind_hits': kind_hits_unweighted,
+        'kind_accuracy_unweighted': (kind_hits_unweighted / kind_total_unweighted) if kind_total_unweighted > 0 else None,
+        'kind_weight_hit': round(kind_weight_hit, 6),
+        'kind_accuracy_weighted': (kind_weight_hit / kind_weight_total) if kind_weight_total > 1e-12 else None,
+        'turn_eligible_count': turn_total_unweighted,
+        'turn_eligible_deduction': round(turn_weight_total, 6),
+        'turn_hits_exact': turn_hits_exact,
+        'turn_hits_tol1': turn_hits_tol1,
+        'turn_accuracy_exact': (turn_hits_exact / turn_total_unweighted) if turn_total_unweighted > 0 else None,
+        'turn_accuracy_tol1': (turn_hits_tol1 / turn_total_unweighted) if turn_total_unweighted > 0 else None,
+        'turn_weight_exact': round(turn_weight_exact, 6),
+        'turn_weight_tol1': round(turn_weight_tol1, 6),
+        'turn_accuracy_exact_weighted': (turn_weight_exact / turn_weight_total) if turn_weight_total > 1e-12 else None,
+        'turn_accuracy_tol1_weighted': (turn_weight_tol1 / turn_weight_total) if turn_weight_total > 1e-12 else None,
+        'items': item_evals,
     }
 
 
-def evaluate_hypotheses(
+def evaluate_mechanisms(
     hypotheses: Sequence[dict[str, Any]],
+    defects: Sequence[dict[str, Any]],
     parent_facts: list[dict[str, Any]],
-    curve_doc: dict[str, Any],
     branch_facts_by_trial: dict[str, list[dict[str, Any]]],
     outcomes: Sequence[dict[str, Any]],
     *,
     alpha: float = 0.05,
     min_per_group: int = 4,
+    min_intervention_effect: float = 0.15,
+    outcome: str = 'total',
 ) -> dict[str, Any]:
-    """Tests hypotheses `(j, P, e)` against Stage 2 branches at c_{j-1} (Section 4):
-    1. Consistency: P must hold on parent turn j, else `inconsistent`.
-    2. Grouping: partition Stage 2 valid branches at k = j - 1 by P on turn j; if either < 4, `untestable`.
-    3. Test: one-sided permutation / Fisher exact test + Holm adjustment across hypotheses of the same analyst.
-       If p_holm <= alpha and sign(Delta_P) matches sign(e), `confirmed`, else `not_confirmed`.
-    4. Report: frequency f_hat, effect Delta_P = mean(Y_P) - mean(Y_not_P), and
-       explained_share = (1 - f_hat) * |Delta_P| / d_j_hat.
-    """
-    v_hat = curve_doc.get('v_hat') or {}
-    turn_drops = curve_doc.get('turn_drops') or {}
-
-    results: list[dict[str, Any]] = []
-    testable_indices: list[int] = []
-    raw_pvals: list[float] = []
-
-    for idx, h in enumerate(hypotheses):
-        turn_j = int(h['turn'])
-        pred = validate_predicate(h['predicate'])
-        pred_effect = float(h.get('effect', -0.1))
-        rationale = str(h.get('rationale') or '')
-
-        # Step 1: Consistency on parent turn j
-        if not eval_predicate_on_turn(pred, parent_facts, turn_j):
-            results.append({
-                'turn': turn_j,
-                'predicate': pred,
-                'predicted_effect': pred_effect,
-                'rationale': rationale,
-                'status': 'inconsistent',
-                'n_p': 0,
-                'n_not_p': 0,
-                'frequency': None,
-                'effect': None,
-                'explained_share': None,
-                'p_value': None,
-                'p_value_holm': None,
-                'evidence_level': 'E0',
-            })
-            continue
-
-        # Step 2: Partition Stage 2 valid branches at c_{j-1} (k = j - 1)
-        k_prev = turn_j - 1
-        s2_rows = [
-            r for r in outcomes
-            if r.get('stage') == 's2' and int(r.get('k', -1)) == k_prev and r.get('valid') and r.get('y') is not None
-        ]
-        y_p: list[float] = []
-        y_not_p: list[float] = []
-        missing_facts = any(not branch_facts_by_trial.get(r['trial']) or not any(f.get('turn') == turn_j for f in branch_facts_by_trial[r['trial']]) for r in s2_rows)
-        for r in s2_rows:
-            b_facts = branch_facts_by_trial.get(r['trial'])
-            if not b_facts or not any(f.get('turn') == turn_j for f in b_facts):
-                continue
-            if eval_predicate_on_turn(pred, b_facts, turn_j):
-                y_p.append(float(r['y']))
-            else:
-                y_not_p.append(float(r['y']))
-
-        n_p = len(y_p)
-        n_not_p = len(y_not_p)
-        total_n = n_p + n_not_p
-        f_hat = (n_p / total_n) if total_n > 0 else None
-
-        if missing_facts or n_p < min_per_group or n_not_p < min_per_group:
-            results.append({
-                'turn': turn_j,
-                'predicate': pred,
-                'predicted_effect': pred_effect,
-                'rationale': rationale,
-                'status': 'untestable',
-                'n_p': n_p,
-                'n_not_p': n_not_p,
-                'frequency': f_hat,
-                'reason': 'missing_branch_facts' if missing_facts else 'insufficient_groups',
-                'effect': None,
-                'explained_share': None,
-                'p_value': None,
-                'p_value_holm': None,
-                'evidence_level': 'E0',
-            })
-            continue
-
-        # Step 3 & 4: Compute effect, explained share, and one-sided permutation/Fisher p-value
-        mean_p = sum(y_p) / n_p
-        mean_not_p = sum(y_not_p) / n_not_p
-        delta_p = mean_p - mean_not_p
-
-        d_j = turn_drops.get(str(turn_j))
-        if d_j is None:
-            v_prev = v_hat.get(str(k_prev))
-            v_curr = v_hat.get(str(turn_j))
-            if v_prev is not None and v_curr is not None:
-                d_j = float(v_prev) - float(v_curr)
-        explained = (
-            ((1.0 - float(f_hat)) * abs(delta_p) / float(d_j))
-            if f_hat is not None and d_j is not None and float(d_j) > 1e-9
-            else None
-        )
-
-        pval = permutation_one_sided(y_p, y_not_p, direction=-1.0 if pred_effect <= 0 else 1.0)
-        testable_indices.append(idx)
-        raw_pvals.append(pval)
-        results.append({
-            'turn': turn_j,
-            'predicate': pred,
-            'predicted_effect': pred_effect,
-            'rationale': rationale,
-            'status': 'pending',
-            'n_p': n_p,
-            'n_not_p': n_not_p,
-            'mean_p': mean_p,
-            'mean_not_p': mean_not_p,
-            'frequency': f_hat,
-            'effect': delta_p,
-            'explained_share': explained,
-            'p_value': pval,
-            'p_value_holm': None,
-            'evidence_level': 'E0',
-        })
-
-    adj_pvals = holm_adjust(raw_pvals)
-    for ti, adj_p in zip(testable_indices, adj_pvals):
-        row = results[ti]
-        row['p_value_holm'] = adj_p
-        direction_ok = (row['effect'] < 0.0) if row['predicted_effect'] <= 0.0 else (row['effect'] > 0.0)
-        if adj_p <= alpha and direction_ok:
-            row['status'] = 'confirmed'
-            row['evidence_level'] = 'E1+'
-        else:
-            row['status'] = 'not_confirmed'
-            row['evidence_level'] = 'E0'
-
-    n_proposed = len(results)
-    n_confirmed = sum(1 for r in results if r['status'] == 'confirmed')
-    confirmed_rate = (n_confirmed / n_proposed) if n_proposed > 0 else None
-
-    is_concentrated = curve_doc.get('verdict') in ('concentrated_turn', 'concentrated_interval')
-    covered = (
-        any(r['status'] == 'confirmed' and (r.get('explained_share') or 0.0) >= 0.5 for r in results)
-        if is_concentrated
-        else None
+    """Evaluates Call 2 mechanism hypotheses (both `partition` and `intervention`) and defect coverage (Section 6 & 7.3)."""
+    part_eval = evaluate_partition(
+        hypotheses,
+        parent_facts,
+        branch_facts_by_trial,
+        outcomes,
+        alpha=alpha,
+        min_per_group=min_per_group,
+        outcome=outcome,
+    )
+    intv_eval = evaluate_intervention(
+        hypotheses,
+        outcomes,
+        alpha=alpha,
+        min_effect=min_intervention_effect,
+        outcome=outcome,
     )
 
-    if covered is False and any(r['status'] == 'untestable' for r in results):
-        covered = None  # Unavailable evidence cannot establish lack of explanatory coverage.
+    all_hyps = [*part_eval['hypotheses'], *intv_eval['hypotheses']]
+    proposed_count = len(all_hyps)
+    confirmed_count = sum(1 for h in all_hyps if h['status'] == 'confirmed')
+    testable_count = sum(1 for h in all_hyps if h['status'] in ('confirmed', 'not_confirmed'))
+
+    defect_ids = {_defect_key(d) for d in defects if _defect_key(d)}
+    tested_defect_ids = {
+        _defect_key(h)
+        for h in all_hyps
+        if h.get('status') in ('confirmed', 'not_confirmed') and _defect_key(h) in defect_ids
+    }
+    if not tested_defect_ids and testable_count > 0 and defect_ids:
+        tested_defect_ids = set(defect_ids)
+
+    confirmed_defect_ids = {
+        _defect_key(h)
+        for h in all_hyps
+        if h.get('status') == 'confirmed' and _defect_key(h) in defect_ids
+    }
+    if not confirmed_defect_ids and confirmed_count > 0 and defect_ids:
+        confirmed_defect_ids = set(defect_ids)
+
+    defect_coverage = (
+        len(confirmed_defect_ids) / len(tested_defect_ids)
+        if tested_defect_ids else None
+    )
 
     return {
-        'proposed_count': n_proposed,
-        'confirmed_count': n_confirmed,
-        'confirmation_rate': confirmed_rate,
-        'explanation_covered': covered,
-        'hypotheses': results,
+        'status': 'scored' if outcomes else 'unverified',
+        'proposed_count': proposed_count,
+        'testable_count': testable_count,
+        'confirmed_count': confirmed_count,
+        'confirmation_rate': (confirmed_count / proposed_count) if proposed_count > 0 else None,
+        'testable_confirmation_rate': (confirmed_count / testable_count) if testable_count > 0 else None,
+        'tested_defects_count': len(tested_defect_ids),
+        'covered_defects_count': len(confirmed_defect_ids),
+        'defect_coverage': defect_coverage,
+        'partition': part_eval,
+        'intervention': intv_eval,
+        'hypotheses': all_hyps,
     }
 
 
 def score_episode(
     l2_dir: Path,
     *,
-    p0: float = 0.5,
     alpha: float = 0.05,
     cost_per_branch_usd: float = 0.01,
     llm_cost_per_call_usd: float = 0.002,
     active_analysts: Sequence[str] | None = None,
     expected_input_bindings: dict[str, dict[str, Any]] | None = None,
+    reuse_dirs: Sequence[Path] | None = None,
+    two_point_pairs: Sequence[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
-    """Computes `scores.json` for all analysts in `l2_dir`."""
+    """Computes `scores.json` and `verifications.json` for an L2 v0.4 episode directory."""
     l2_dir = Path(l2_dir)
     facts_path = l2_dir / 'facts.jsonl'
     parent_facts = read_jsonl(facts_path) if facts_path.is_file() else []
-    plan = read_json(l2_dir / 'plan.json')
-    num_turns = int(plan['turns'])
-    terminal_y = float(plan['terminal_outcome'])
+    defects_path = l2_dir / 'defects.json'
+    if not defects_path.is_file():
+        raise L2Error(f'Missing defects.json in {l2_dir}; run l2 diagnose first')
+    defects_doc = read_json(defects_path)
+    defects = defects_doc.get('defects') or []
+    episode_id = str(defects_doc['episode_id'])
+    family_id = str(defects_doc.get('family_id') or defects_doc.get('task_id') or 'unknown_family')
+    terminal_y = defects_doc.get('terminal_outcome') if 'terminal_outcome' in defects_doc else defects_doc.get('terminal_score_y')
+    delivery_gap = defects_doc.get('delivery_gap_g') if 'delivery_gap_g' in defects_doc else defects_doc.get('delivery_gap', 0.0)
 
     outcomes_path = l2_dir / 'outcomes.jsonl'
-    outcomes = [row for row in read_jsonl(outcomes_path) if row.get('selected', True)] if outcomes_path.is_file() else []
-    curve_path = l2_dir / 'curve.json'
-    curve_doc = read_json(curve_path) if curve_path.is_file() else {'verdict': None, 'v_hat': {}, 'turn_drops': {}}
+    if not outcomes_path.is_file() and reuse_dirs:
+        for r_dir in reuse_dirs:
+            cand_out = Path(r_dir) / 'outcomes.jsonl'
+            if cand_out.is_file():
+                outcomes_path = cand_out
+                break
+    outcomes = [r for r in read_jsonl(outcomes_path) if r.get('selected', True)] if outcomes_path.is_file() else []
+    branch_facts_by_trial = load_branch_facts(l2_dir, outcomes, reuse_dirs=reuse_dirs) if outcomes else {}
 
-    excluded = bool(curve_doc.get('excluded_high_invalid_rate') or curve_doc.get('excluded_incomplete_samples'))
-    if excluded:
-        outcomes = []  # Incomplete/excluded curves cannot produce scientific analyst scores.
-
-    # Load branch facts on demand for Stage 2 branches
-    branch_facts_by_trial: dict[str, list[dict[str, Any]]] = {}
-    branches_root = l2_dir / 'branches'
-    if branches_root.is_dir():
-        for r in outcomes:
-            if r.get('valid'):
-                t_name = r['trial']
-                b_dir = branches_root / t_name
-                if (b_dir / 'manifest.json').is_file():
-                    branch_facts_by_trial[t_name] = build_facts(L1Package(b_dir))
-
-    values_dir = l2_dir / 'values'
+    origins_dir = l2_dir / 'origins'
     hyps_dir = l2_dir / 'hypotheses'
     analyst_scores: dict[str, Any] = {}
-    input_hashes: dict[str, str] = {}
+    input_hashes: dict[str, str] = {'defects_sha256': sha_file(defects_path)}
     if facts_path.is_file():
         input_hashes['facts_sha256'] = sha_file(facts_path)
     if outcomes_path.is_file():
         input_hashes['outcomes_sha256'] = sha_file(outcomes_path)
-    if curve_path.is_file():
-        input_hashes['curve_sha256'] = sha_file(curve_path)
 
-    active = set(active_analysts or [])
+    active = set(active_analysts) if active_analysts is not None else None
     bindings = expected_input_bindings or {}
 
-    def validate_output(doc, kind):
+    def validate_output(doc: dict[str, Any], kind: str) -> None:
+        if not bindings:
+            return
         analyst = str(doc.get('analyst', ''))
         expected = bindings.get(kind, {}).get(analyst)
-        if not expected or doc.get('input_sha256') != expected or doc.get('episode_id') != plan['episode_id']:
+        if expected and (doc.get('input_sha256') != expected or doc.get('episode_id') != episode_id):
             raise L2Error(f'Stale or unbound {kind} output for {analyst}')
 
-    if values_dir.is_dir():
-        for vf in sorted(values_dir.glob('*.json')):
-            v_doc = read_json(vf)
-            a_name = str(v_doc['analyst'])
-            if a_name not in active:
+    if origins_dir.is_dir():
+        for of in sorted(origins_dir.glob('*.json')):
+            o_doc = read_json(of)
+            a_name = str(o_doc['analyst'])
+            if active is not None and a_name not in active:
                 continue
-            validate_output(v_doc, 'values')
-            if a_name in analyst_scores:
-                raise L2Error(f'Duplicate active analyst output for {a_name}')
-            input_hashes[f'values:{vf.name}'] = sha_file(vf)
-            v_score = score_values(v_doc.get('values', []), outcomes, num_turns, p0, terminal_y)
+            validate_output(o_doc, 'origins')
+            input_hashes[f'origins:{of.name}'] = sha_file(of)
+            o_score = score_origins(o_doc.get('origins') or [], defects)
 
-            hf = hyps_dir / vf.name
-            if hf.is_file() and a_name in bindings.get('hypotheses', {}):
+            hf = hyps_dir / of.name
+            h_list: list[dict[str, Any]] = []
+            calls_made = 1
+            if hf.is_file():
                 h_doc = read_json(hf)
-                if h_doc.get('analyst') != a_name:
-                    raise L2Error(f'Wrong analyst hypothesis output for {a_name}')
-                validate_output(h_doc, 'hypotheses')
-                input_hashes[f'hypotheses:{hf.name}'] = sha_file(hf)
-                h_list = h_doc.get('hypotheses') or []
-                calls_made = 2
-            else:
-                h_list = []
-                calls_made = 1
+                if h_doc.get('analyst') == a_name:
+                    validate_output(h_doc, 'hypotheses')
+                    input_hashes[f'hypotheses:{hf.name}'] = sha_file(hf)
+                    h_list = h_doc.get('hypotheses') or []
+                    calls_made = 2
 
-            h_eval = evaluate_hypotheses(
+            m_eval = evaluate_mechanisms(
                 h_list,
+                defects,
                 parent_facts,
-                curve_doc,
                 branch_facts_by_trial,
                 outcomes,
                 alpha=alpha,
             )
-            if excluded:
-                h_eval.update(status='unscored', explanation_covered=None)
-            if not (hf.is_file() and a_name in bindings.get('hypotheses', {})) and curve_doc.get('verdict') in ('concentrated_turn', 'concentrated_interval'):
-                h_eval.update(status='unscored', explanation_covered=None)
             is_llm = a_name.startswith('llm:')
             cost_usd = (calls_made * llm_cost_per_call_usd) if is_llm else 0.0
             equiv_branches = (cost_usd / cost_per_branch_usd) if cost_per_branch_usd > 0 else 0.0
 
             analyst_scores[a_name] = {
                 'analyst': a_name,
-                'analyst_group': v_doc.get('analyst_group'),
-                'value_prediction': v_score,
-                'hypothesis_testing': h_eval,
+                'analyst_group': o_doc.get('analyst_group'),
+                'origin_localization': o_score,
+                'mechanism_testing': m_eval,
                 'cost': {
                     'basis': 'configured_estimate',
                     'analyst_calls': calls_made if is_llm else 0,
+                    'continuation_branches': len(outcomes),
                     'cost_usd': round(cost_usd, 6),
                     'equivalent_continuations': round(equiv_branches, 4),
                 },
             }
 
-    for a_name in sorted(active - analyst_scores.keys()):
-        analyst_scores[a_name] = {'analyst': a_name,
-            'value_prediction': score_values([], outcomes, num_turns, p0, terminal_y),
-            'hypothesis_testing': {'status': 'unscored', 'proposed_count': 0, 'confirmed_count': 0,
-                'confirmation_rate': None, 'explanation_covered': None, 'hypotheses': []},
-            'cost': {'basis': 'configured_estimate', 'analyst_calls': 0, 'cost_usd': 0, 'equivalent_continuations': 0}}
+    two_point_results: list[dict[str, Any]] = []
+    if outcomes:
+        pairs = list(two_point_pairs or [])
+        if not pairs:
+            plain_ks = sorted({
+                int(r['k']) for r in outcomes
+                if (r.get('arm', 'plain') == 'plain' or r.get('stage') in ('s1', 's2')) and r.get('valid')
+            })
+            for idx in range(len(plain_ks) - 1):
+                if plain_ks[idx + 1] - plain_ks[idx] == 1:
+                    pairs.append((plain_ks[idx], plain_ks[idx + 1]))
+        for k1, k2 in pairs:
+            two_point_results.append(evaluate_two_point(outcomes, k1, k2, alpha=alpha))
 
-    # Also compute vocabulary predicate strata at localized turn for cross-trajectory MH pooling
-    vocab_strata: dict[str, dict[str, Any]] = {}
-    target_turn = curve_doc.get('turn') or curve_doc.get('candidate_turn')
-    if isinstance(target_turn, int) and target_turn >= 1:
-        k_prev = target_turn - 1
-        s2_rows = [
-            r for r in outcomes
-            if r.get('stage') == 's2' and int(r.get('k', -1)) == k_prev and r.get('valid') and r.get('y') is not None
-        ]
-        if any(not branch_facts_by_trial.get(r['trial']) or not any(f.get('turn') == target_turn for f in branch_facts_by_trial[r['trial']]) for r in s2_rows):
-            s2_rows = []  # Missing evidence cannot be assigned to the predicate-negative group.
-        for v_name, v_pred in RULE_VOCABULARY.items():
-            yp = [float(r['y']) for r in s2_rows if eval_predicate_on_turn(v_pred, branch_facts_by_trial.get(r['trial'], []), target_turn)]
-            ynp = [float(r['y']) for r in s2_rows if not eval_predicate_on_turn(v_pred, branch_facts_by_trial.get(r['trial'], []), target_turn)]
-            if yp and ynp:
-                vocab_strata[v_name] = {
-                    'turn': target_turn,
-                    'family_id': plan.get('family_id'),
-                    'y_p': yp,
-                    'y_not_p': ynp,
-                    'n_p': len(yp),
-                    'n_not_p': len(ynp),
-                    'mean_p': sum(yp) / len(yp),
-                    'mean_not_p': sum(ynp) / len(ynp),
-                }
+    if outcomes or two_point_results:
+        verifications_doc = with_header(
+            input_hashes,
+            {
+                'episode_id': episode_id,
+                'family_id': family_id,
+                'total_branches': len(outcomes),
+                'valid_branches': sum(1 for r in outcomes if r.get('valid')),
+                'reused_branches': sum(1 for r in outcomes if r.get('reused')),
+                'executed_branches': sum(1 for r in outcomes if not r.get('reused')),
+                'two_point_comparisons': two_point_results,
+                'analysts': {
+                    a_name: a_data['mechanism_testing']
+                    for a_name, a_data in analyst_scores.items()
+                },
+            },
+        )
+        write_json(l2_dir / 'verifications.json', verifications_doc)
 
     scores_doc = with_header(
         input_hashes,
         {
-            'episode_id': plan['episode_id'],
-            'family_id': plan.get('family_id', 'unknown_family'),
-            'p0': p0,
-            'verdict': curve_doc.get('verdict'),
-            'excluded_high_invalid_rate': bool(curve_doc.get('excluded_high_invalid_rate', False)),
-            'excluded_incomplete_samples': bool(curve_doc.get('excluded_incomplete_samples', False)),
+            'episode_id': episode_id,
+            'family_id': family_id,
+            'terminal_outcome': terminal_y,
+            'delivery_gap': delivery_gap,
+            'defect_count': len(defects),
+            'total_deduction': defects_doc.get('total_deduction', 0.0),
             'analysts': analyst_scores,
-            'vocabulary_strata': vocab_strata,
+            'two_point_comparisons': two_point_results,
         },
     )
     write_json(l2_dir / 'scores.json', scores_doc)
     return scores_doc
 
 
-def summarize_runs(l2_dirs: Sequence[Path], *, heldout_families: Sequence[str] | None = None) -> dict[str, Any]:
-    """Pools scores and vocabulary predicates across multiple L2 episode directories (`l2 summarize`)."""
-    episodes = []
-    excluded_episodes = []
+def summarize_runs(
+    l2_dirs: Sequence[Path],
+    *,
+    heldout_families: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Pools L2 v0.4 origin accuracy, turn accuracy, and mechanism confirmation across episodes (`l2 summarize`)."""
+    episodes: list[dict[str, Any]] = []
+    defects_docs: list[dict[str, Any]] = []
     input_hashes: dict[str, str] = {}
 
     for d in l2_dirs:
         p = Path(d)
+        if p.name == 'scores.json' and p.is_file():
+            p = p.parent
         sp = p / 'scores.json'
+        dp = p / 'defects.json'
         if not sp.is_file():
             continue
         input_hashes[str(p.name)] = sha_file(sp)
-        s_doc = read_json(sp)
-        if s_doc.get('excluded_high_invalid_rate') or s_doc.get('excluded_incomplete_samples'):
-            excluded_episodes.append(s_doc['episode_id'])
-            continue
-        episodes.append(s_doc)
+        episodes.append(read_json(sp))
+        if dp.is_file():
+            defects_docs.append(read_json(dp))
+
+    total_deduction = 0.0
+    total_delivery_gap = 0.0
+    deduction_by_kind = {'undelivered': 0.0, 'broken': 0.0, 'never': 0.0}
+    count_by_kind = {'undelivered': 0, 'broken': 0, 'never': 0}
+    window_same_target_turns = 0
+    window_total_turns = 0
+
+    for dd in defects_docs:
+        total_deduction += float(dd.get('total_deduction', 0.0))
+        g_val = dd.get('delivery_gap_g') if 'delivery_gap_g' in dd else dd.get('delivery_gap', 0.0)
+        total_delivery_gap += float(g_val or 0.0)
+        seen_windows: set[tuple[str, int, int]] = set()
+        for d in dd.get('defects') or []:
+            knd = str(d['kind'])
+            ded = float(d.get('deduction', 0.0))
+            deduction_by_kind[knd] = deduction_by_kind.get(knd, 0.0) + ded
+            count_by_kind[knd] = count_by_kind.get(knd, 0) + 1
+            ws = d.get('window') or d.get('uncorrected_window')
+            if ws and int(ws.get('window_turns', 0)) > 0:
+                wkey = (str(dd.get('episode_id')), int(ws['start_turn']), int(ws['end_turn']))
+                if wkey not in seen_windows:
+                    seen_windows.add(wkey)
+                    same_t = ws.get('inspect_preview_or_same_file_turns')
+                    if same_t is None:
+                        same_t = ws.get('same_target_turns', 0)
+                    window_same_target_turns += int(same_t)
+                    window_total_turns += int(ws.get('window_turns', 0))
 
     analyst_names = sorted({a for ep in episodes for a in (ep.get('analysts') or {}).keys()})
     by_analyst: dict[str, Any] = {}
@@ -426,108 +390,139 @@ def summarize_runs(l2_dirs: Sequence[Path], *, heldout_families: Sequence[str] |
                 cases.append({
                     'episode_id': ep['episode_id'],
                     'family_id': ep.get('family_id', ep['episode_id']),
-                    'verdict': ep.get('verdict'),
                     **a_entry,
                 })
 
-        def _skill_stat(subset: Sequence[dict[str, Any]]) -> float | None:
-            paired = [c for c in subset if c['value_prediction'].get('brier') is not None and c['value_prediction'].get('linear_decay_brier') is not None and c['value_prediction']['linear_decay_brier'] > 1e-12]
-            b_a = [c['value_prediction']['brier'] for c in paired]
-            b_l = [c['value_prediction']['linear_decay_brier'] for c in paired]
-            if not b_a or not b_l or sum(b_l) <= 1e-12:
-                return None
-            return 1.0 - (sum(b_a) / len(b_a)) / (sum(b_l) / len(b_l))
+        def _kind_unweighted(subset: Sequence[dict[str, Any]]) -> float | None:
+            hits = sum(c['origin_localization'].get('kind_hits', 0) for c in subset)
+            tot = sum(c['origin_localization'].get('defect_count', 0) for c in subset)
+            return (hits / tot) if tot > 0 else None
 
-        def _confirm_stat(subset: Sequence[dict[str, Any]]) -> float | None:
-            prop = sum(c['hypothesis_testing']['proposed_count'] for c in subset)
-            conf = sum(c['hypothesis_testing']['confirmed_count'] for c in subset)
+        def _kind_weighted(subset: Sequence[dict[str, Any]]) -> float | None:
+            w_hit = sum(float(c['origin_localization'].get('kind_weight_hit', 0.0)) for c in subset)
+            w_tot = sum(float(c['origin_localization'].get('total_deduction', 0.0)) for c in subset)
+            return (w_hit / w_tot) if w_tot > 1e-12 else None
+
+        def _turn_tol1(subset: Sequence[dict[str, Any]]) -> float | None:
+            hits = sum(c['origin_localization'].get('turn_hits_tol1', 0) for c in subset)
+            tot = sum(c['origin_localization'].get('turn_eligible_count', 0) for c in subset)
+            return (hits / tot) if tot > 0 else None
+
+        def _turn_exact(subset: Sequence[dict[str, Any]]) -> float | None:
+            hits = sum(c['origin_localization'].get('turn_hits_exact', 0) for c in subset)
+            tot = sum(c['origin_localization'].get('turn_eligible_count', 0) for c in subset)
+            return (hits / tot) if tot > 0 else None
+
+        def _turn_tol1_weighted(subset: Sequence[dict[str, Any]]) -> float | None:
+            w_hit = sum(float(c['origin_localization'].get('turn_weight_tol1', 0.0)) for c in subset)
+            w_tot = sum(float(c['origin_localization'].get('turn_eligible_deduction', 0.0)) for c in subset)
+            return (w_hit / w_tot) if w_tot > 1e-12 else None
+
+        def _confirm_rate(subset: Sequence[dict[str, Any]]) -> float | None:
+            prop = sum(c['mechanism_testing'].get('proposed_count', 0) for c in subset if c['mechanism_testing'].get('status') == 'scored')
+            conf = sum(c['mechanism_testing'].get('confirmed_count', 0) for c in subset if c['mechanism_testing'].get('status') == 'scored')
             return (conf / prop) if prop > 0 else None
 
-        def _coverage_stat(subset: Sequence[dict[str, Any]]) -> float | None:
-            conc = [
-                c['hypothesis_testing']['explanation_covered']
-                for c in subset
-                if c.get('verdict') in ('concentrated_turn', 'concentrated_interval')
-                and c['hypothesis_testing'].get('explanation_covered') is not None
-            ]
-            return (sum(1.0 for x in conc if x) / len(conc)) if conc else None
+        def _defect_cov(subset: Sequence[dict[str, Any]]) -> float | None:
+            tested = sum(c['mechanism_testing'].get('tested_defects_count', 0) for c in subset if c['mechanism_testing'].get('status') == 'scored')
+            cov = sum(c['mechanism_testing'].get('covered_defects_count', 0) for c in subset if c['mechanism_testing'].get('status') == 'scored')
+            return (cov / tested) if tested > 0 else None
 
-        skill_cases = [c for c in cases if c['value_prediction'].get('brier') is not None and c['value_prediction'].get('linear_decay_brier') is not None and c['value_prediction']['linear_decay_brier'] > 1e-12]
-        confirm_cases = [c for c in cases if c['hypothesis_testing'].get('proposed_count', 0) > 0]
-        coverage_cases = [c for c in cases if c['hypothesis_testing'].get('explanation_covered') is not None and c.get('verdict') in ('concentrated_turn', 'concentrated_interval')]
-        skill_ci = clustered_bootstrap(skill_cases, _skill_stat)
-        confirm_ci = clustered_bootstrap(confirm_cases, _confirm_stat)
-        coverage_ci = clustered_bootstrap(coverage_cases, _coverage_stat)
-        mean_equiv_cost = (
-            sum(c['cost']['equivalent_continuations'] for c in cases) / len(cases)
-            if cases else 0.0
-        )
+        defect_cases = [c for c in cases if c['origin_localization'].get('defect_count', 0) > 0]
+        turn_cases = [c for c in cases if c['origin_localization'].get('turn_eligible_count', 0) > 0]
+        mech_cases = [c for c in cases if c['mechanism_testing'].get('status') == 'scored' and c['mechanism_testing'].get('proposed_count', 0) > 0]
 
         by_analyst[a_name] = {
+            'analyst_group': cases[0].get('analyst_group') if cases else None,
             'episodes_seen': len(cases),
-            'episodes_scored': sum(c['value_prediction'].get('brier') is not None for c in cases),
-            'eligible_metric_cases': {'skill_score': len(skill_cases), 'confirmation_rate': len(confirm_cases),
-                                      'explanation_coverage': len(coverage_cases)},
-            'skill_score': skill_ci,
-            'confirmation_rate': confirm_ci,
-            'explanation_coverage': coverage_ci,
-            'mean_cost_equivalent_continuations': round(mean_equiv_cost, 4),
+            'episodes_with_defects': len(defect_cases),
+            'episodes_with_turn_eligible_defects': len(turn_cases),
+            'episodes_with_verified_mechanisms': len(mech_cases),
+            'kind_accuracy_unweighted': clustered_bootstrap(defect_cases, _kind_unweighted),
+            'kind_accuracy_weighted': clustered_bootstrap(defect_cases, _kind_weighted),
+            'turn_accuracy_tol1': clustered_bootstrap(turn_cases, _turn_tol1),
+            'turn_accuracy_exact': clustered_bootstrap(turn_cases, _turn_exact),
+            'turn_accuracy_tol1_weighted': clustered_bootstrap(turn_cases, _turn_tol1_weighted),
+            'mechanism_confirmation_rate': clustered_bootstrap(mech_cases, _confirm_rate),
+            'defect_coverage': clustered_bootstrap(mech_cases, _defect_cov),
+            'mean_analyst_calls': round(sum(c['cost']['analyst_calls'] for c in cases) / len(cases), 4) if cases else 0.0,
         }
 
-    # Pool vocabulary predicates across trajectories via Mantel-Haenszel
-    pooled_vocab: dict[str, Any] = {}
-    for v_name in RULE_VOCABULARY:
-        strata = [
-            ep['vocabulary_strata'][v_name]
-            for ep in episodes
-            if v_name in (ep.get('vocabulary_strata') or {})
-        ]
-        pooled_vocab[v_name] = mantel_haenszel_pool(strata)
+    group_to_analyst: dict[str, str] = {}
+    for a_name, info in by_analyst.items():
+        grp = info.get('analyst_group')
+        if grp:
+            group_to_analyst[str(grp)] = a_name
 
-    # C vs A requires paired improvements in BOTH metrics on declared heldout families.
-    recommended_mode = 'program_only'
-    comparisons = {}
-    heldout = set(heldout_families or [])
-    for llm_k in [k for k in by_analyst if k.startswith('llm:')]:
-        paired = []
-        for ep in episodes:
-            entries = ep.get('analysts') or {}
-            if ep.get('family_id') not in heldout or 'rules@1' not in entries or llm_k not in entries:
-                continue
-            rule, llm = entries['rules@1'], entries[llm_k]
-            if llm.get('analyst_group') != 'C':
-                continue
-            rv, lv = rule['value_prediction'], llm['value_prediction']
-            rc, lc = rule['hypothesis_testing'].get('explanation_covered'), llm['hypothesis_testing'].get('explanation_covered')
-            baseline = rv.get('linear_decay_brier')
-            if (rv.get('brier') is None or lv.get('brier') is None or baseline is None or baseline <= 1e-12
-                    or lv.get('linear_decay_brier') != baseline or rc is None or lc is None):
-                continue
-            paired.append({'family_id': ep['family_id'], 'rule_brier': rv['brier'], 'llm_brier': lv['brier'],
-                           'baseline': baseline, 'coverage_diff': float(lc) - float(rc)})
-        def skill_diff(rows):
-            return sum(r['rule_brier'] - r['llm_brier'] for r in rows) / sum(r['baseline'] for r in rows) if rows else None
-        def coverage_diff(rows):
-            return sum(r['coverage_diff'] for r in rows) / len(rows) if rows else None
-        skill = clustered_bootstrap(paired, skill_diff)
-        coverage = clustered_bootstrap(paired, coverage_diff)
-        verified = all(c['ci_95'][0] is not None and c['ci_95'][0] > 0 for c in (skill, coverage))
-        comparisons[llm_k] = {'status': 'verified' if verified else 'not_verified',
-                              'paired_episodes': len(paired), 'skill_difference': skill,
-                              'explanation_coverage_difference': coverage}
-        if verified:
-            recommended_mode = 'hybrid'
+    paired_comparisons: dict[str, Any] = {}
+    for g1, g2 in (('C', 'B'), ('C', 'A'), ('B', 'A')):
+        a1 = group_to_analyst.get(g1)
+        a2 = group_to_analyst.get(g2)
+        if not a1 or not a2:
+            continue
+        paired_eps = [
+            ep for ep in episodes
+            if a1 in (ep.get('analysts') or {}) and a2 in (ep.get('analysts') or {})
+            and int(ep.get('defect_count', 0)) > 0
+        ]
+
+        def _diff_kind_unweighted(rows: Sequence[dict[str, Any]], k1: str = a1, k2: str = a2) -> float | None:
+            tot = sum(r['analysts'][k1]['origin_localization'].get('defect_count', 0) for r in rows)
+            if tot == 0:
+                return None
+            h1 = sum(r['analysts'][k1]['origin_localization'].get('kind_hits', 0) for r in rows)
+            h2 = sum(r['analysts'][k2]['origin_localization'].get('kind_hits', 0) for r in rows)
+            return (h1 - h2) / tot
+
+        def _diff_kind_weighted(rows: Sequence[dict[str, Any]], k1: str = a1, k2: str = a2) -> float | None:
+            wtot = sum(float(r['analysts'][k1]['origin_localization'].get('total_deduction', 0.0)) for r in rows)
+            if wtot <= 1e-12:
+                return None
+            w1 = sum(float(r['analysts'][k1]['origin_localization'].get('kind_weight_hit', 0.0)) for r in rows)
+            w2 = sum(float(r['analysts'][k2]['origin_localization'].get('kind_weight_hit', 0.0)) for r in rows)
+            return (w1 - w2) / wtot
+
+        def _diff_turn_tol1(rows: Sequence[dict[str, Any]], k1: str = a1, k2: str = a2) -> float | None:
+            tot = sum(r['analysts'][k1]['origin_localization'].get('turn_eligible_count', 0) for r in rows)
+            if tot == 0:
+                return None
+            h1 = sum(r['analysts'][k1]['origin_localization'].get('turn_hits_tol1', 0) for r in rows)
+            h2 = sum(r['analysts'][k2]['origin_localization'].get('turn_hits_tol1', 0) for r in rows)
+            return (h1 - h2) / tot
+
+        paired_comparisons[f'{g1}_minus_{g2}'] = {
+            'analyst_1': a1,
+            'analyst_2': a2,
+            'paired_episodes': len(paired_eps),
+            'kind_accuracy_unweighted_diff': clustered_bootstrap(paired_eps, _diff_kind_unweighted),
+            'kind_accuracy_weighted_diff': clustered_bootstrap(paired_eps, _diff_kind_weighted),
+            'turn_accuracy_tol1_diff': clustered_bootstrap(paired_eps, _diff_turn_tol1),
+        }
 
     return with_header(
         input_hashes,
         {
             'included_episodes': [ep['episode_id'] for ep in episodes],
-            'excluded_high_invalid_rate_episodes': excluded_episodes,
+            'defect_census': {
+                'episodes_count': len(defects_docs),
+                'total_deduction': round(total_deduction, 6),
+                'total_delivery_gap': round(total_delivery_gap, 6),
+                'delivery_gap_share': round(total_delivery_gap / total_deduction, 6) if total_deduction > 1e-12 else 0.0,
+                'count_by_kind': count_by_kind,
+                'deduction_by_kind': {k: round(v, 6) for k, v in deduction_by_kind.items()},
+                'share_by_kind': {
+                    k: round(v / total_deduction, 6) if total_deduction > 1e-12 else 0.0
+                    for k, v in deduction_by_kind.items()
+                },
+                'uncorrected_window_same_target_turns': window_same_target_turns,
+                'uncorrected_window_total_turns': window_total_turns,
+                'uncorrected_window_same_target_ratio': (
+                    round(window_same_target_turns / window_total_turns, 6)
+                    if window_total_turns > 0 else None
+                ),
+            },
             'analysts': by_analyst,
-            'vocabulary_mantel_haenszel': pooled_vocab,
-            'recommended_default_mode': recommended_mode,
-            'hybrid_verification_status': 'verified' if recommended_mode == 'hybrid' else 'not_verified',
-            'heldout_families': sorted(heldout),
-            'paired_holdout_comparisons': comparisons,
+            'paired_comparisons': paired_comparisons,
+            'heldout_families': sorted(set(heldout_families or [])),
         },
     )

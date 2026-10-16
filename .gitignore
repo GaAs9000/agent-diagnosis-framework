@@ -48,6 +48,7 @@ L2_Behavioral Event Localization/L2_Sandbox/examples/analyst_loop_fixture/
 L2_Behavioral Event Localization/L2_Sandbox/examples/legacy_fixture/
 L2_Behavioral Event Localization/L2_Sandbox/examples/plans/
 L2_Behavioral Event Localization/L2_Sandbox/validation/
+L2_Behavioral Event Localization/L2_Sandbox/cache/
 
 # L3 local experiment plans, evidence and validation outputs
 L3_Agent Capability Boundary Discovery/L3_Sandbox/runs/

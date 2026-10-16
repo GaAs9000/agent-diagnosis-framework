@@ -70,7 +70,7 @@ def validate(config: dict) -> dict:
             raise ConfigurationError('agent.harness must be minimal or pi')
     if 'intervention' in config['agent'] and config['agent']['intervention'] is not None:
         iv = config['agent']['intervention']
-        if not isinstance(iv, dict) or not set(iv) <= {'at_request', 'message'}:
+        if not isinstance(iv, dict) or not set(iv) <= {'at_request', 'message', 'type'}:
             raise ConfigurationError('agent.intervention must be object with at_request and message')
         if type(iv.get('at_request')) is not int or iv['at_request'] < 1:
             raise ConfigurationError('agent.intervention.at_request must be positive integer')

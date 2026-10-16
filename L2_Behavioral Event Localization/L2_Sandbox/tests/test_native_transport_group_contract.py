@@ -1,4 +1,4 @@
-"""Real loopback HTTP and report-to-heldout grouping regression contracts."""
+"""Real loopback HTTP and report-to-summary grouping regression contracts (L2 v0.4)."""
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -10,14 +10,14 @@ from conftest import make_l1_episode
 from l2_sandbox import report
 from l2_sandbox.analysts.llm import _default_llm_transport
 from l2_sandbox.config import load, validate
-from l2_sandbox.io import L2Error, digest, read_json, write_json, write_jsonl
+from l2_sandbox.io import L2Error
 from l2_sandbox.score import summarize_runs
 
 
 @contextmanager
 def local_model():
     requests = []
-    response = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': '{"values": [0.5, 0.5]}'}]}, 'finishReason': 'STOP'}]}
+    response = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': '{"origins": []}'}]}, 'finishReason': 'STOP'}]}
     state = {'body': json.dumps(response).encode()}
 
     class Handler(BaseHTTPRequestHandler):
@@ -48,11 +48,9 @@ def local_model():
 def test_loaded_default_reaches_native_http_and_rejects_truncation():
     with local_model() as (cfg, requests, state):
         assert cfg['max_response_bytes'] == 16777216
-        assert _default_llm_transport(cfg, 'system', {'trajectory': []}) == {'values': [.5, .5]}
+        assert _default_llm_transport(cfg, 'system', {'trajectory': []}) == {'origins': []}
         assert len(requests) == 1
         assert requests[0]['systemInstruction']['parts'][0]['text'] == 'system'
-        # A valid JSON prefix plus whitespace would parse successfully if the
-        # transport silently accepted a bounded but truncated response.
         cap = len(state['body']) + 1
         state['body'] += b' ' * 20
         with pytest.raises(L2Error, match='exceeded model.max_response_bytes'):
@@ -71,142 +69,119 @@ def test_bad_response_limit_rejected_before_http(maximum):
         assert requests == []
 
 
-def controlled_curve(parent, output, plan, **kwargs):
-    """Offline branch evidence only; real report/scoring/summary paths remain active."""
-    rows = []
-    for i in range(8):
-        name = f'branch-{i}'
-        success = i >= 4
-        make_l1_episode(output/'branches'/name, num_turns=4, resume_from_k=1,
-                        parent_pkg=parent, turn_actions={2: 'readback' if success else 'normal'},
-                        terminal_case='scored', completion_rate=float(success), passed=success)
-        rows.append({'trial': name, 'stage': 's2', 'k': 1, 'valid': True, 'y': float(success)})
-    write_jsonl(output/'outcomes.jsonl', rows)
-    curve = {'verdict': 'concentrated_turn', 'turn': 2, 'v_hat': {'1': 1., '2': .5},
-             'turn_drops': {'2': .5}}
-    write_json(output/'curve.json', curve)
-    return curve
+def test_diagnose_groups_reach_real_scores_and_summary(tmp_path, monkeypatch):
+    def fake_grades(pkg, **kwargs):
+        return [
+            {
+                'kind': 'terminal_submission',
+                'episode_id': pkg.episode_id,
+                'task_id': pkg.family_id,
+                'k': pkg.turns,
+                'snapshot_id': f's{pkg.turns:06d}',
+                'candidate_status': 'submission',
+                'candidate': ['submission/out.docx'],
+                'in_submission': True,
+                'score': 0.0,
+                'dim1_pass': False,
+                'total_score': 0,
+                'max_score': 10.0,
+                'deductions': {'dim1_gate': 1.0},
+            },
+            *[
+                {
+                    'kind': 'checkpoint',
+                    'episode_id': pkg.episode_id,
+                    'task_id': pkg.family_id,
+                    'k': k,
+                    'checkpoint_id': f'cp{k:06d}',
+                    'snapshot_id': f's{k:06d}',
+                    'candidate_status': 'ok',
+                    'candidate': ['submission/out.docx'],
+                    'in_submission': True,
+                    'last_written_turn': 1,
+                    'score': 1.0 if k >= 2 else 0.0,
+                    'dim1_pass': k >= 2,
+                    'total_score': 10 if k >= 2 else 0,
+                    'max_score': 10.0,
+                    'deductions': {'dim1_gate': 0.0 if k >= 2 else 1.0},
+                }
+                for k in range(pkg.turns + 1)
+            ],
+        ]
 
-
-def test_report_groups_reach_real_scores_and_heldout_summary(tmp_path, monkeypatch):
-    monkeypatch.setattr(report, 'execute_curve', controlled_curve)
-    calls = []
+    monkeypatch.setattr(report, 'grade_episode_snapshots', fake_grades)
 
     def caller(system, payload):
-        calls.append(payload)
-        # The response claims C even for raw mode. Membership must follow the
-        # configured input mode rather than anything in the model output.
-        return {'values': [.5]*4, 'analyst_group': 'C', 'hypotheses': [{
-            'turn': 2, 'predicate': {'fact': 'tool_requested', 'where': {'arguments.command': 'echo turn 2'}},
-            'effect': -.5, 'rationale': 'Synthetic command partition'}]}
+        is_c = 'facts' in payload
+        return {
+            'origins': [{
+                'defect': 'dim1_gate',
+                'kind': 'undelivered' if is_c else 'never',
+                'turn': 2 if is_c else None,
+                'rationale': 'test origin',
+            }],
+            'hypotheses': [{
+                'defect': 'dim1_gate',
+                'turn': 2,
+                'predicate': {'fact': 'tool_requested', 'where': {'arguments.command': 'echo turn 2'}},
+                'effect': -0.5,
+                'rationale': 'Synthetic command partition',
+            }],
+        }
 
     outputs, families = [], []
     for i, task in enumerate(('officeval_003', 'officeval_033')):
-        parent = make_l1_episode(tmp_path/f'parent{i}', num_turns=4, task_id=task)
-        output = tmp_path/f'out{i}'
-        result = report.run_episode(parent, output_dir=output, analysts=('llm', 'llm_raw'),
-                                    p0=1., execute=True, llm_caller=caller)
-        groups = {a['analyst_group']: a for a in result['scores']['analysts'].values() if a['analyst'].startswith('llm:')}
+        parent = make_l1_episode(tmp_path / f'parent{i}', num_turns=4, task_id=task, turn_actions={1: 'modify_submission'})
+        output = tmp_path / f'out{i}'
+        result = report.diagnose_episode(
+            parent,
+            output_dir=output,
+            analysts=('llm', 'llm_raw'),
+            execute=True,
+            llm_caller=caller,
+        )
+        groups = {
+            a['analyst_group']: a
+            for a in result['scores']['analysts'].values()
+            if a['analyst'].startswith('llm:')
+        }
         assert set(groups) == {'B', 'C'}
-        assert groups['C']['hypothesis_testing']['explanation_covered'] is True
-        assert result['scores']['analysts']['rules@1']['hypothesis_testing']['explanation_covered'] is False
+        assert groups['C']['origin_localization']['kind_accuracy_unweighted'] == 1.0
+        assert groups['B']['origin_localization']['kind_accuracy_unweighted'] == 0.0
         outputs.append(output)
-        families.append(result['plan']['family_id'])
+        families.append(result['family_id'])
 
-    assert len(set(families)) == 2
     summary = summarize_runs(outputs, heldout_families=families)
-    assert summary['recommended_default_mode'] == 'hybrid'
-    comparisons = summary['paired_holdout_comparisons']
-    assert sorted(v['paired_episodes'] for v in comparisons.values()) == [0, 2]
-    original_calls = len(calls)
-    original_bindings = {}
-    for output in outputs:
-        for path in (output/'values').glob('llm*.json'):
-            doc = read_json(path)
-            original_bindings[path] = doc['input_sha256']
-            # Legacy C lacks metadata; spoofed raw cache claims C.
-            if doc['analyst_group'] == 'C':
-                doc.pop('analyst_group')
-            else:
-                doc['analyst_group'] = 'C'
-            write_json(path, doc)
-
-    def never(*args):
-        pytest.fail('trusted metadata migration must reuse cached calls')
-
-    for i, output in enumerate(outputs):
-        report.run_episode(tmp_path/f'parent{i}', output_dir=output, analysts=('llm', 'llm_raw'),
-                           p0=1., execute=True, cache_only=True, llm_caller=never)
-    assert len(calls) == original_calls
-    for path, inputs in original_bindings.items():
-        assert read_json(path)['input_sha256'] == inputs
-    summary = summarize_runs(outputs, heldout_families=families)
-    assert summary['recommended_default_mode'] == 'hybrid'
-    assert sorted(v['paired_episodes'] for v in summary['paired_holdout_comparisons'].values()) == [0, 2]
-
-
-def test_pre_response_limit_legacy_tag_and_group_migrate_without_recall(tmp_path, monkeypatch):
-    from test_v03_analyst_regressions import fake_curve
-    monkeypatch.setattr(report, 'execute_curve', fake_curve)
-    parent = make_l1_episode(tmp_path/'parent', num_turns=2)
-    output = tmp_path/'out'
-    report.run_episode(parent, output_dir=output, analysts=('llm',), p0=.5, execute=True,
-                       llm_caller=lambda *args: {'values': [.4, .3]})
-    current = next((output/'values').glob('llm*.json'))
-    original = read_json(current)
-    cfg = load()
-    cfg['model'].pop('max_response_bytes')
-    tag_hash = digest({'c1': report.CALL1_SYSTEM_PROMPT, 'c2': report.CALL2_SYSTEM_PROMPT,
-                       'mode': 'facts', 'model_config': cfg['model']})[:16]
-    old_id = f"llm:{cfg['model']['model']}@{tag_hash}"
-    spec = {'kind': 'llm', 'id': old_id, 'config': cfg, 'include_facts': True}
-    doc = {**original, 'analyst': old_id, 'input_sha256': {
-        **original['input_sha256'], 'analyst_config_sha256': digest(spec)}}
-    doc['input_sha256'].pop('model_sha256')
-    doc.pop('analyst_group')
-    write_json(output/'values'/report._safe_filename(old_id), doc)
-    current.unlink()
-
-    def never(*args):
-        pytest.fail('pre-default legacy metadata must not require a paid recall')
-
-    result = report.run_episode(parent, output_dir=output, analysts=('llm',), p0=.5,
-                                execute=True, cache_only=True, llm_caller=never)
-    migrated = read_json(current)
-    assert migrated['input_sha256'] == original['input_sha256']
-    assert migrated['analyst_group'] == 'C'
-    assert result['scores']['analysts'][migrated['analyst']]['analyst_group'] == 'C'
+    assert 'C_minus_B' in summary['paired_comparisons']
+    assert summary['paired_comparisons']['C_minus_B']['kind_accuracy_unweighted_diff']['estimate'] == 1.0
 
 
 def test_opencode_adapters_in_default_llm_transport():
     with local_model() as (cfg, requests, state):
-        # 1. opencode-chat
         state['body'] = json.dumps({
-            'choices': [{'message': {'role': 'assistant', 'content': '{"values": [0.2, 0.8]}'}, 'finish_reason': 'stop'}],
+            'choices': [{'message': {'role': 'assistant', 'content': '{"origins": []}'}, 'finish_reason': 'stop'}],
             'usage': {'prompt_tokens': 5, 'completion_tokens': 5},
         }).encode()
         chat_cfg = {**cfg, 'adapter': 'opencode-chat', 'model': 'kimi-k2.6', 'parameters': {'temperature': 0.0, 'max_tokens': 512}}
-        assert _default_llm_transport(chat_cfg, 'sys', {'trajectory': []}) == {'values': [0.2, 0.8]}
+        assert _default_llm_transport(chat_cfg, 'sys', {'trajectory': []}) == {'origins': []}
         assert 'tools' not in requests[-1]
 
-        # 2. openai-responses
         state['body'] = json.dumps({
             'status': 'completed',
-            'output': [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '{"values": [0.1, 0.9]}'}]}],
+            'output': [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '{"origins": []}'}]}],
             'usage': {'input_tokens': 4, 'output_tokens': 6},
         }).encode()
         resp_cfg = {**cfg, 'adapter': 'openai-responses', 'model': 'gpt-5.5', 'parameters': {'temperature': 0.0, 'max_output_tokens': 512}}
-        assert _default_llm_transport(resp_cfg, 'sys', {'trajectory': []}) == {'values': [0.1, 0.9]}
+        assert _default_llm_transport(resp_cfg, 'sys', {'trajectory': []}) == {'origins': []}
         assert requests[-1]['instructions'] == 'sys'
 
-        # 3. anthropic-messages
         state['body'] = json.dumps({
             'role': 'assistant',
             'stop_reason': 'end_turn',
-            'content': [{'type': 'text', 'text': '{"values": [0.3, 0.7]}'}],
+            'content': [{'type': 'text', 'text': '{"origins": []}'}],
             'usage': {'input_tokens': 8, 'output_tokens': 4},
         }).encode()
         anth_cfg = {**cfg, 'adapter': 'anthropic-messages', 'model': 'claude-sonnet-4-6', 'parameters': {'temperature': 0.0, 'max_tokens': 512}}
-        assert _default_llm_transport(anth_cfg, 'sys', {'trajectory': []}) == {'values': [0.3, 0.7]}
+        assert _default_llm_transport(anth_cfg, 'sys', {'trajectory': []}) == {'origins': []}
         assert requests[-1]['system'] == 'sys'
         assert requests[-1]['max_tokens'] == 512

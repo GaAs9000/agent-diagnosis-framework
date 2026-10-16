@@ -7,6 +7,12 @@ from .io import L2Error
 RULE_VOCABULARY: dict[str, dict[str, Any]] = {
     'tool_execution_anomaly': {'fact': 'tool_exit', 'where': {'ok': False}},
     'submission_modified': {'fact': 'file_transition', 'where': {'path': 'submission/*'}},
+    'workspace_file_written': {
+        'any': [
+            {'fact': 'file_transition', 'where': {'change': 'created'}},
+            {'fact': 'file_transition', 'where': {'change': 'modified'}},
+        ]
+    },
     'assistant_finished_turn': {'not': {'fact': 'tool_requested'}},
     'submission_readback': {
         'all': [
@@ -21,6 +27,7 @@ RULE_VOCABULARY: dict[str, dict[str, Any]] = {
         ]
     },
     'object_structure_changed': {'fact': 'object_structure_change'},
+    'preview_rendered': {'fact': 'preview_rendered'},
 }
 
 

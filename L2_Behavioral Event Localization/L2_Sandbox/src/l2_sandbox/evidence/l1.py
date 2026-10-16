@@ -178,7 +178,7 @@ class L1Package:
                     raise IntegrityError(f'Checkpoint {k} has no remaining {limit}')
         return cp
 
-    def validate_branch(self, parent: 'L1Package', k: int) -> None:
+    def validate_branch(self, parent: 'L1Package', k: int, *, intervention: dict[str, Any] | None = None) -> None:
         cp = parent.validate_resume_checkpoint(k)
         expected = {'parent_episode_id': parent.episode_id,
                     'parent_checkpoint_id': cp['checkpoint_id'],
@@ -187,7 +187,18 @@ class L1Package:
         lineage = self.manifest.get('lineage') or {}
         if any(lineage.get(key) != value for key, value in expected.items()):
             raise IntegrityError(f'Branch parent lineage mismatch: {self.root}')
-        if self.json('raw/resolved_config.json') != parent.json('raw/resolved_config.json'):
+        expected_cfg = copy.deepcopy(parent.json('raw/resolved_config.json'))
+        actual_cfg = copy.deepcopy(self.json('raw/resolved_config.json'))
+        if intervention is not None:
+            norm_iv = {'at_request': int(intervention['at_request']), 'message': str(intervention['message'])}
+            expected_cfg['agent'] = {**(expected_cfg.get('agent') or {}), 'intervention': norm_iv}
+            act_iv = (actual_cfg.get('agent') or {}).get('intervention')
+            if isinstance(act_iv, dict) and 'at_request' in act_iv and 'message' in act_iv:
+                actual_cfg['agent'] = {
+                    **(actual_cfg.get('agent') or {}),
+                    'intervention': {'at_request': int(act_iv['at_request']), 'message': str(act_iv['message'])},
+                }
+        if actual_cfg != expected_cfg:
             raise IntegrityError(f'Branch actor config mismatch: {self.root}')
         if self.start_turn != k or self.family_id != parent.family_id:
             raise IntegrityError(f'Branch checkpoint/task mismatch: {self.root}')

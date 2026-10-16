@@ -237,3 +237,79 @@ def test_intervention_cold_resume_byte_identical(tmp_path, config, components):
         child_dir / 'raw/model/r000001/request.json'
     ).read_bytes()
     assert b'[SYSTEM REMINDER]' in (child_dir / 'raw/model/r000001/request.json').read_bytes()
+
+
+def test_f22_treatment_arm_cold_resume_from_plain_parent_and_at_request_28(tmp_path, config, components):
+    from c3_sandbox.l1.core.contracts import ConfigurationError
+    from l2_sandbox.evidence.l1 import L1Package
+
+    # 1. Plain parent without intervention
+    plain_cfg = copy.deepcopy(config)
+    plain_cfg['agent'] = {'name': 'pi-coding-agent', 'version': '0.73.1', 'harness': 'pi'}
+    plain_cfg['budget'].update(max_model_requests=4, max_tool_calls=4)
+    parent_dir = tmp_path / 'plain_parent'
+    comp = {
+        **components,
+        'model': ScriptedGemini(
+            plain_cfg['model'],
+            [
+                gemini_call('write', {'path': 'a.txt', 'content': 'v1'}, native_id='c1'),
+                gemini_call('write', {'path': 'b.txt', 'content': 'v2'}, native_id='c2'),
+                gemini_done(),
+            ],
+        ),
+        'runtime': PiFixtureRuntime(),
+    }
+    assert run(plain_cfg, parent_dir, injected=comp)['verification']['verified']
+
+    # 2. Plain resume from cp000001 is byte-identical at r000001
+    plain_child = tmp_path / 'plain_child'
+    comp_plain = {
+        **components,
+        'model': ScriptedGemini(plain_cfg['model'], [gemini_done()]),
+        'runtime': PiFixtureRuntime(),
+    }
+    assert run(plain_cfg, plain_child, injected=comp_plain, parent=parent_dir, checkpoint_id='cp000001')['verification']['verified']
+    assert (parent_dir / 'raw/model/r000001/request.json').read_bytes() == (
+        plain_child / 'raw/model/r000001/request.json'
+    ).read_bytes()
+
+    # 3. Treatment resume from cp000001 (k=1) with at_request=2 injects message before request 2 (r000001)
+    iv = {'at_request': 2, 'message': '请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。'}
+    treat_cfg = copy.deepcopy(plain_cfg)
+    treat_cfg['agent']['intervention'] = iv
+    treat_child = tmp_path / 'treat_child'
+    comp_treat = {
+        **components,
+        'model': ScriptedGemini(treat_cfg['model'], [gemini_done()]),
+        'runtime': PiFixtureRuntime(),
+    }
+    assert run(treat_cfg, treat_child, injected=comp_treat, parent=parent_dir, checkpoint_id='cp000001')['verification']['verified']
+    req_treat = read_json(treat_child / 'raw/model/r000001/request.json')
+    assert iv['message'] in str(req_treat)
+
+    parent_pkg = L1Package(parent_dir)
+    L1Package(plain_child).validate_branch(parent_pkg, 1)
+    L1Package(treat_child).validate_branch(parent_pkg, 1, intervention=iv)
+
+    # Reject retroactive intervention at_request <= k
+    bad_cfg = copy.deepcopy(plain_cfg)
+    bad_cfg['agent']['intervention'] = {'at_request': 1, 'message': 'retroactive'}
+    with pytest.raises(ConfigurationError):
+        run(bad_cfg, tmp_path / 'bad_child', injected=comp_treat, parent=parent_dir, checkpoint_id='cp000001')
+
+    # 4. Fresh run with at_request=28 injects only right before request 28 (r000027)
+    fresh28_cfg = copy.deepcopy(plain_cfg)
+    fresh28_cfg['budget'].update(max_model_requests=30, max_tool_calls=30)
+    fresh28_cfg['agent']['intervention'] = {'at_request': 28, 'message': 'INTERVENTION_AT_28'}
+    scripted28 = [gemini_call('write', {'path': 'step.txt', 'content': str(i)}, native_id=f's{i}') for i in range(27)] + [gemini_done()]
+    fresh28_dir = tmp_path / 'fresh28'
+    comp28 = {
+        **components,
+        'model': ScriptedGemini(fresh28_cfg['model'], scripted28),
+        'runtime': PiFixtureRuntime(),
+    }
+    assert run(fresh28_cfg, fresh28_dir, injected=comp28)['verification']['verified']
+    assert b'INTERVENTION_AT_28' not in (fresh28_dir / 'raw/model/r000026/request.json').read_bytes()
+    assert b'INTERVENTION_AT_28' in (fresh28_dir / 'raw/model/r000027/request.json').read_bytes()
+

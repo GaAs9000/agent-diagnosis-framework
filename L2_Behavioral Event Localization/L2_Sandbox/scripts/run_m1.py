@@ -413,13 +413,12 @@ def summarize(directory, plan):
 
 
 def execute(directory, phase, selected=None):
+    plan = verify_plan(directory)  # All frozen inputs checked before credentials or any send.
     from c3_sandbox.l1.core.orchestrator import run
-    from l2_sandbox.curve import TokenBucketRateLimiter, build_curve_plan
+    from l2_sandbox.verify import TokenBucketRateLimiter
     from l2_sandbox.evidence.l1 import L1Package
     from l2_sandbox import report as report_module
     from l2_sandbox.facts.build import build_facts
-    from l2_sandbox.analysts.rules import predict_values_rules
-    plan = verify_plan(directory)  # All frozen inputs checked before credentials or any send.
     load_credentials()
     limiter = AuthGuardLimiter(TokenBucketRateLimiter(rpm=30, tpm=10_000_000),
         [directory, L1 / 'runs' / ('m1_' + plan['id'])],
