@@ -14,7 +14,13 @@ import time
 from pathlib import Path
 from ..core.contracts import CapabilityError, L1Error, Result
 from ..storage import utc_now, confined, regular_file
-from .tools import validate_call
+from .tools import (
+    execute_pi_edit,
+    execute_pi_read,
+    execute_pi_write,
+    format_pi_bash_observation,
+    validate_call,
+)
 
 
 def docker_json(*args):
@@ -163,8 +169,8 @@ class DockerRuntime:
         if not cleanup: raise L1Error(f'Container cleanup failed for {cid}; no quiescent state/checkpoint may be claimed')
         process['quiescent']=True
         return process
-    def execute(self,call,workspace,timeout):
-        validate_call(call)
+    def execute(self,call,workspace,timeout,*,supports_images:bool=True):
+        validate_call(call,images=supports_images)
         if call.name=='read_image':
             start=utc_now(); name=call.arguments['path']
             if name.startswith('/workspace/'): name=name[len('/workspace/'):]
@@ -176,9 +182,23 @@ class DockerRuntime:
             if not mime: raise L1Error('read_image supports PNG/JPEG/WebP only')
             return Result({'path':name,'mime_type':mime,'size_bytes':len(data),'exit_code':0},image=data,image_mime=mime,
                           provenance={'boundary':'trusted_workspace_image_reader','started_at':start,'finished_at':utc_now(),'quiescent':True})
+        if call.name=='read':
+            return execute_pi_read(call,workspace,self.config['max_image_bytes'],supports_images=supports_images)
+        if call.name=='write':
+            return execute_pi_write(call,workspace)
+        if call.name=='edit':
+            return execute_pi_edit(call,workspace)
+        if call.name=='bash':
+            req_timeout=call.arguments.get('timeout')
+            eff_timeout=min(timeout,max(0.001,float(req_timeout))) if isinstance(req_timeout,(int,float)) and req_timeout>0 else timeout
+            p=self.container([(workspace,'/workspace',False)],['/bin/bash','-lc',call.arguments['command']],eff_timeout)
+            obs=format_pi_bash_observation(p['stdout'],p['stderr'],p['container_exit_code'],p['stop_reason'],p['output_complete'],p['oom_killed'])
+            provenance={k:v for k,v in p.items() if k not in ('stdout','stderr')}
+            return Result(obs,p['stdout'],p['stderr'],provenance=provenance)
         p=self.container([(workspace,'/workspace',False)],['/bin/sh','-lc',call.arguments['command']],timeout)
         obs={'stdout':p['stdout'].decode('utf-8','replace'),'stderr':p['stderr'].decode('utf-8','replace'),
              'exit_code':p['container_exit_code'],'stop_reason':p['stop_reason'],'output_complete':p['output_complete'],
              'oom_killed':p['oom_killed']}
         provenance={k:v for k,v in p.items() if k not in ('stdout','stderr')}
         return Result(obs,p['stdout'],p['stderr'],provenance=provenance)
+

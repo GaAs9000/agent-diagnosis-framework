@@ -10,7 +10,13 @@ RULE_VOCABULARY: dict[str, dict[str, Any]] = {
     'assistant_finished_turn': {'not': {'fact': 'tool_requested'}},
     'submission_readback': {
         'all': [
-            {'fact': 'tool_requested', 'where': {'name': 'run', 'arguments.command': '*submission*'}},
+            {
+                'any': [
+                    {'fact': 'tool_requested', 'where': {'name': 'run', 'arguments.command': '*submission*'}},
+                    {'fact': 'tool_requested', 'where': {'name': 'bash', 'arguments.command': '*submission*'}},
+                    {'fact': 'tool_requested', 'where': {'name': 'read', 'arguments.path': '*submission*'}},
+                ]
+            },
             {'not': {'fact': 'file_transition', 'where': {'path': 'submission/*'}}},
         ]
     },

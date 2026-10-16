@@ -223,8 +223,8 @@ def verify(root:Path,expected_index_sha256=None):
                 following=[e for e in requests.values() if e['seq']>cp_events[0]['seq']]
                 if following:
                     nxt=min(following,key=lambda e:e['seq'])
-                    from ..runtime.tools import TOOLS
-                    tools=TOOLS if config['model']['supports_images'] else TOOLS[:1]
+                    from ..runtime.tools import tools_for_config
+                    tools=tools_for_config(config)
                     if backend.request(cp['conversation'],tools)!=read_json(root/nxt['data']['body']['path']):
                         error('checkpoint_conversation_mismatch',item['path'])
         grade=read_json(root/'official_grade.json')
@@ -259,7 +259,7 @@ def verify(root:Path,expected_index_sha256=None):
 
 def observation_in_request(body,obs,native_id,name):
     if 'contents' in body:
-        for content in body['contents'][-1:]:
+        for content in last_observation_turn(body):
             for part in content.get('parts',[]):
                 fc=part.get('functionResponse')
                 if fc and fc.get('name')==name and fc.get('id')==native_id and fc.get('response')==obs: return True
@@ -291,7 +291,11 @@ def validate_snapshot(root,snapshot):
 
 
 def last_observation_turn(body):
-    if 'contents' in body: return body['contents'][-1:]
+    if 'contents' in body:
+        contents=body.get('contents',[])
+        for i in range(len(contents)-1,-1,-1):
+            if contents[i].get('role')=='model': return contents[i+1:]
+        return contents[-1:]
     messages=body.get('messages',[])
     for i in range(len(messages)-1,-1,-1):
         if messages[i].get('role')=='assistant': return messages[i+1:]

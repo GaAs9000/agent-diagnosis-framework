@@ -1,0 +1,77 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "officeval-native",
+    "task_id": "officeval_003",
+    "source_dir": "../../third_party/OmegaUse-OfficeVal",
+    "data_dir": "../../benchmarks/officeval/data",
+    "assets_dir": "../../benchmarks/officeval/assets",
+    "data_lock": "../../benchmarks/officeval/data/data.lock.json",
+    "source_commit": "5f3da616ac6a0bc30ca35e9678f8f1eb255bd91a",
+    "dataset_revision": "cd6ba6d8fb83b3fb551e24eebc20e1fb0bd154a5"
+  },
+  "model": {
+    "adapter": "opencode-chat",
+    "kind": "api",
+    "provider": "opencode-go",
+    "model": "deepseek-v4.1-flash",
+    "api_key_env": "OPENCODE_API_KEY",
+    "base_url": "https://opencode.ai/inference/go/v1",
+    "options": {
+      "expected_reported_model": "deepseek-v4.1-flash"
+    },
+    "parameters": {
+      "temperature": 1,
+      "max_tokens": 8192,
+      "thinking": {
+        "type": "disabled"
+      }
+    },
+    "timeout_seconds": 300,
+    "retry": {
+      "max_attempts": 4,
+      "retry_on_status": [
+        429,
+        500,
+        502,
+        503,
+        504
+      ],
+      "retry_on_transport_error": true,
+      "backoff_seconds": [
+        2,
+        8,
+        30
+      ],
+      "honor_retry_after": true
+    },
+    "supports_images": true
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "l1-office:0.2.0"
+  },
+  "evaluation": {
+    "adapter": "docker-verifier",
+    "image": "l1-office:0.2.0",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 35,
+    "max_tool_calls": 140,
+    "wall_time_seconds": 10800,
+    "max_total_tokens": null
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "plugins": {
+    "load_installed": true
+  },
+  "agent": {
+    "name": "pi-coding-agent",
+    "version": "0.73.1",
+    "harness": "pi"
+  }
+}

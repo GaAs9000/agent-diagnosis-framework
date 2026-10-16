@@ -20,14 +20,48 @@ from .config import validate
 from ..storage import canonical, digest, file_digest, regular_file, read_json, write_json, write_bytes, confined, utc_now, copy_file
 from ..recording.state import StateStore, restore
 from ..evidence.live import Journal, seal, verify, validate_snapshot
-from ..runtime.tools import TOOLS, validate_call
+from ..runtime.tools import PI_TOOLS, TOOLS, active_harness, tools_for_config, validate_call
 
 SYSTEM = '''You are the tested agent in an execution-and-evidence sandbox. Complete the user's task using the supplied native tools. Original input files are in /workspace/input. Put ONLY final deliverables in /workspace/submission. Preserve required filenames unless the task says otherwise. Do not put reference inputs into submission unless requested. You may use /workspace for scripts and intermediate files. Shell calls run in fresh Linux containers without network. Only /workspace persists; working directory, environment variables, /tmp and background processes do not persist. Do not claim to have run a tool in text: use actual native tool calls. No scoring rubrics or grader are accessible to you.'''
+
+PI_SYSTEM = '''You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed
+- Use edit for precise changes (edits[].oldText must match exactly)
+- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
+- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
+- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.
+- Use write only for new files or complete rewrites
+- Be concise in your responses
+- Show file paths clearly when working with files'''
+
+
+def _inject_user_intervention(conversation: dict, message: str) -> dict:
+    new = copy.deepcopy(conversation)
+    if 'messages' in new and isinstance(new['messages'], list):
+        new['messages'].append({'role': 'user', 'content': message})
+    elif 'input' in new and isinstance(new['input'], list):
+        new['input'].append({'role': 'user', 'content': message})
+    elif 'contents' in new and isinstance(new['contents'], list):
+        new['contents'].append({'role': 'user', 'parts': [{'text': message}]})
+    return new
 
 
 def build_execution_contract_prompt(config: dict) -> str:
     agent_cfg = config.get('agent', {})
-    base = agent_cfg.get('system_prompt') or SYSTEM
+    is_pi = active_harness(config) == 'pi'
+    default_base = PI_SYSTEM if is_pi else SYSTEM
+    base = agent_cfg.get('system_prompt') or default_base
     budget = config.get('budget', {})
     reqs = budget.get('max_model_requests', 20)
     tools = budget.get('max_tool_calls', 40)
@@ -40,19 +74,33 @@ def build_execution_contract_prompt(config: dict) -> str:
     clean_base = re.sub(r'You operate under a strict (?:execution )?budget\b.*?\.(?:\s+|$)', '',
                         clean_base).rstrip()
     if not clean_base:
-        clean_base = SYSTEM.rstrip()
+        clean_base = default_base.rstrip()
 
-    contract_block = (
-        "[SANDBOX EXECUTION CONTRACT & RUNTIME CONSTRAINTS]\n"
-        f"- Model Request Budget: At most {reqs} model requests.\n"
-        f"- Tool Execution Budget: At most {tools} tool invocations.\n"
-        f"- Wall Clock Limit: {wall} seconds timeout.\n"
-        f"{token_str}"
-        "- Workspace Boundary: /workspace is persistent; create intermediate scripts and output files here.\n"
-        "- Final Submission: Place ONLY final deliverables in /workspace/submission with required filenames.\n"
-        "- Stateless Tools: Shell executions run in fresh, isolated Linux containers without network; env/tmp do not persist.\n"
-        "- Autonomous Verification: No grader or test rubric is accessible. Conclude promptly once deliverables are verified."
-    )
+    if is_pi:
+        contract_block = (
+            "[SANDBOX EXECUTION CONTRACT & RUNTIME CONSTRAINTS]\n"
+            f"- Model Request Budget: At most {reqs} model requests.\n"
+            f"- Tool Execution Budget: At most {tools} tool invocations.\n"
+            f"- Wall Clock Limit: {wall} seconds timeout.\n"
+            f"{token_str}"
+            "- Workspace Boundary: /workspace is persistent; create intermediate scripts and output files here. Original input files are in /workspace/input.\n"
+            "- Final Submission: Place ONLY final deliverables in /workspace/submission with required filenames. Do not copy reference inputs into submission unless requested.\n"
+            "- Stateless Tools: bash executions run in fresh, isolated Linux containers without network; env/tmp and background processes do not persist across calls.\n"
+            "- Autonomous Verification: No grader or test rubric is accessible. Conclude promptly once deliverables are verified.\n\n"
+            "Current working directory: /workspace"
+        )
+    else:
+        contract_block = (
+            "[SANDBOX EXECUTION CONTRACT & RUNTIME CONSTRAINTS]\n"
+            f"- Model Request Budget: At most {reqs} model requests.\n"
+            f"- Tool Execution Budget: At most {tools} tool invocations.\n"
+            f"- Wall Clock Limit: {wall} seconds timeout.\n"
+            f"{token_str}"
+            "- Workspace Boundary: /workspace is persistent; create intermediate scripts and output files here.\n"
+            "- Final Submission: Place ONLY final deliverables in /workspace/submission with required filenames.\n"
+            "- Stateless Tools: Shell executions run in fresh, isolated Linux containers without network; env/tmp do not persist.\n"
+            "- Autonomous Verification: No grader or test rubric is accessible. Conclude promptly once deliverables are verified."
+        )
     prompt = f"{clean_base}\n\n{contract_block}"
     if re.search(r'\{(max_model_requests|max_tool_calls|wall_time_seconds|max_total_tokens)\}', prompt):
         raise ConfigurationError('Unformatted budget placeholder left in system prompt')
@@ -277,6 +325,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             raise EvidenceError('Restored file/directory state differs from checkpoint')
         prepared=True
         status.update(protocol_validity='valid',execution_validity='valid',termination='running')
+        iv_cfg = config['agent'].get('intervention')
+        if iv_cfg and parent_cp is None and request_count == iv_cfg['at_request'] - 1:
+            conversation = _inject_user_intervention(conversation, iv_cfg['message'])
         checkpoint()
         while request_count<config['budget']['max_model_requests']:
             remaining=deadline-time.monotonic()
@@ -284,7 +335,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 status['termination']='wall_time_budget'; break
             rid=f'{eid}:r{request_count:06d}'
             request_count+=1
-            tools=TOOLS if config['model']['supports_images'] else TOOLS[:1]
+            tools=tools_for_config(config)
             body=model.request(conversation,tools)
             relative=f'raw/model/{rid.split(":")[-1]}/request.json'
             write_bytes(output,relative,canonical(body))
@@ -415,7 +466,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     for skipped in reply.calls[index:]:
                         journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':reason},links={'call':call_events[skipped.call_id]['event_id']})
                     status['termination']=reason; interrupted_batch=True; break
-                try: validate_call(call,config['model']['supports_images'])
+                try: validate_call(call,config['model']['supports_images'],harness=active_harness(config))
                 except ProtocolError:
                     for rejected in reply.calls[index:]:
                         journal.emit('tool.rejected',{'call_id':rejected.call_id,'reason':'protocol_error'},links={'call':call_events[rejected.call_id]['event_id']})
@@ -442,7 +493,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 snapshot('after_'+key,re['event_id'])
                 delivered=copy.deepcopy(actual.observation)
                 limit=config['recording']['observation_limit_chars']; cut=[]
-                for field in ('stdout','stderr'):
+                for field in ('stdout','stderr','output'):
                     if isinstance(delivered.get(field),str) and len(delivered[field])>limit:
                         delivered[field]=delivered[field][:limit]; cut.append(field)
                 if cut: delivered['observation_truncation']={'fields':cut,'limit_chars':limit,'raw_retained':True}
@@ -451,6 +502,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 results.append((call,Result(delivered,actual.stdout,actual.stderr,actual.image,actual.image_mime,actual.provenance)))
             if interrupted_batch: break
             conversation=model.accept(conversation,reply,results)
+            if iv_cfg and request_count == iv_cfg['at_request'] - 1:
+                conversation = _inject_user_intervention(conversation, iv_cfg['message'])
             checkpoint()
             token_limit=config['budget']['max_total_tokens']
             if token_limit is not None and (not usage_complete or token_count>=token_limit):

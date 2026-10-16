@@ -30,7 +30,7 @@ DEFAULTS = {
 ALLOWED = {k:set(v) if isinstance(v,dict) else None for k,v in DEFAULTS.items()}
 ALLOWED['benchmark'] |= {'source_dir','data_dir','assets_dir','bundle_dir','data_lock', 'allow_unlocked_data'}
 ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest','retry'}
-ALLOWED['agent'] |= {'system_prompt'}
+ALLOWED['agent'] |= {'system_prompt', 'harness', 'intervention'}
 for section in ('benchmark','model','runtime','evaluation'): ALLOWED[section].add('options')
 
 
@@ -65,6 +65,17 @@ def validate(config: dict) -> dict:
         if type(config[s][k]) is not bool: raise ConfigurationError(f'{s}.{k} must be boolean')
     if config['recording']['objects']: raise ConfigurationError('object-level recording is not implemented; use files or a state plugin')
     if not isinstance(config['model']['parameters'],dict): raise ConfigurationError('model.parameters must be an object')
+    if 'harness' in config['agent'] and config['agent']['harness'] is not None:
+        if config['agent']['harness'] not in ('minimal', 'pi'):
+            raise ConfigurationError('agent.harness must be minimal or pi')
+    if 'intervention' in config['agent'] and config['agent']['intervention'] is not None:
+        iv = config['agent']['intervention']
+        if not isinstance(iv, dict) or not set(iv) <= {'at_request', 'message'}:
+            raise ConfigurationError('agent.intervention must be object with at_request and message')
+        if type(iv.get('at_request')) is not int or iv['at_request'] < 1:
+            raise ConfigurationError('agent.intervention.at_request must be positive integer')
+        if not isinstance(iv.get('message'), str) or not iv['message'].strip():
+            raise ConfigurationError('agent.intervention.message must be nonempty string')
     if 'retry' in config['model'] and config['model']['retry'] is not None:
         import math
         retry=config['model']['retry']
