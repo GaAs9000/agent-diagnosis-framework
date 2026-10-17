@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
             sub.add_argument('--limit', type=int, default=20)
     live = commands.add_parser('run', help='Execute a native episode; Docker only, no host fallback')
     live.add_argument('--config', type=Path, required=True)
-    live.add_argument('--output', type=Path, required=True)
+    live.add_argument('--output', '--output-dir', dest='output', type=Path, required=True)
     resume = commands.add_parser('resume', help='Cold resume a qualified checkpoint into a NEW evidence package')
     resume.add_argument('--package', type=Path, required=True)
     resume.add_argument('--checkpoint', required=True)
@@ -152,3 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, RuntimeError, ImportError, __import__("subprocess").SubprocessError) as exc:
         emit({'completed':False,'error_type':type(exc).__name__,'error':str(exc)})
         return 2
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())

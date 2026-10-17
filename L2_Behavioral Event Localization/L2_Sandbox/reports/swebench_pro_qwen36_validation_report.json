@@ -1,0 +1,281 @@
+{
+  "meta": {
+    "report_title": "SWE-bench Pro V2 End-to-End One-Shot Validation Report (Qwen3.6-27B)",
+    "benchmark": "swebench_pro",
+    "adapter": "swebench_pro-native",
+    "verifier": "swebench_pro-verifier",
+    "model": "Qwen/Qwen3.6-27B",
+    "serving_endpoint": "http://127.0.0.1:8001/v1",
+    "server": "aml-b:8001 (GPU 4)",
+    "framework_version": {
+      "l1": "v0.2.1",
+      "l2": "v0.4.0 (l2-0.4.0)"
+    },
+    "timestamp": "2026-10-17T03:28:00Z",
+    "overall_verdict": "ACCEPTED / PASS"
+  },
+  "infrastructure_compliance": {
+    "server_hostname": "aml-b",
+    "server_ip": "144.214.210.39",
+    "gpu_device": "GPU 4 (NVIDIA RTX PRO 6000 Blackwell 96GB)",
+    "vllm_pid": 3943595,
+    "vllm_port": 8001,
+    "vllm_config": {
+      "model": "/home/jiashen/models/Qwen/Qwen3.6-27B",
+      "max_model_len": 49152,
+      "max_num_seqs": 64,
+      "gpu_memory_utilization": 0.92,
+      "enable_thinking": false
+    },
+    "aml_rules_compliance": {
+      "gpus_used": 1,
+      "gpu_limit": 2,
+      "cpu_threads": 48,
+      "thread_limit": 64,
+      "storage_root": "/home/jiasheren2",
+      "compliance_status": "COMPLIANT"
+    },
+    "tunnel_endpoint": "http://127.0.0.1:8001/v1",
+    "qualification_result": "PASS (4/4 qualification tests pass, latency: 47.3ms health, 2425.9ms tool call, 8165.8ms multi-turn, 5600.3ms stop)"
+  },
+  "l1_baseline_cohort": {
+    "runs": [
+      {
+        "run_id": "run_task1_s42",
+        "episode_id": "ep_6789f6fc5beb44c2a5b126f0cbaf07a0",
+        "task_id": "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+        "model_seed": 42,
+        "temperature": 0.7,
+        "wall_duration_seconds": 186.15,
+        "agent_phase_seconds": 176.95,
+        "total_tokens": 179681,
+        "prompt_tokens": 177726,
+        "completion_tokens": 1955,
+        "model_requests": 20,
+        "tool_invocations": 20,
+        "checkpoints_captured": 21,
+        "checkpoints_eligible": 20,
+        "termination_reason": "request_budget",
+        "task_outcome": "failure",
+        "passed_tests": 15,
+        "total_tests": 16,
+        "missing_tests": ["test/units/utils/test_vars.py::TestVariableUtils::test_combine_vars_replace"],
+        "official_terminal_score_y": 0.0,
+        "evaluation_validity": "valid",
+        "c3_l1_verify_status": "verified (0 errors)"
+      },
+      {
+        "run_id": "run_task1_s101",
+        "episode_id": "ep_ae49478c75be49c1a4e76e36d20b2f89",
+        "task_id": "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+        "model_seed": 101,
+        "temperature": 0.7,
+        "wall_duration_seconds": 153.35,
+        "agent_phase_seconds": 143.99,
+        "total_tokens": 196756,
+        "prompt_tokens": 194322,
+        "completion_tokens": 2434,
+        "model_requests": 20,
+        "tool_invocations": 20,
+        "checkpoints_captured": 21,
+        "checkpoints_eligible": 20,
+        "termination_reason": "request_budget",
+        "task_outcome": "failure",
+        "passed_tests": 15,
+        "total_tests": 16,
+        "missing_tests": ["test/units/utils/test_vars.py::TestVariableUtils::test_combine_vars_replace"],
+        "official_terminal_score_y": 0.0,
+        "evaluation_validity": "valid",
+        "c3_l1_verify_status": "verified (0 errors)"
+      },
+      {
+        "run_id": "run_task2_s42",
+        "episode_id": "ep_a982ca6a6d174d44b5265a59ee123a35",
+        "task_id": "instance_ansible__ansible-0fd88717c953b92ed8a50495d55e630eb5d59166-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
+        "model_seed": 42,
+        "temperature": 0.7,
+        "wall_duration_seconds": 178.59,
+        "agent_phase_seconds": 169.42,
+        "total_tokens": 272356,
+        "prompt_tokens": 268444,
+        "completion_tokens": 3912,
+        "model_requests": 20,
+        "tool_invocations": 20,
+        "checkpoints_captured": 21,
+        "checkpoints_eligible": 20,
+        "termination_reason": "request_budget",
+        "task_outcome": "failure",
+        "passed_tests": 26,
+        "total_tests": 30,
+        "missing_tests": [
+          "test/units/plugins/lookup/test_password.py::TestParseContent::test",
+          "test/units/plugins/lookup/test_password.py::TestParseContent::test_empty_password_file",
+          "test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt",
+          "test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt_and_ident"
+        ],
+        "official_terminal_score_y": 0.0,
+        "evaluation_validity": "valid",
+        "c3_l1_verify_status": "verified (0 errors)"
+      }
+    ]
+  },
+  "snapshot_scoring_and_y3_consistency": {
+    "total_snapshots_graded": 63,
+    "total_grade_rows": 66,
+    "actor_requests_consumed": 0,
+    "y3_terminal_consistency": {
+      "run_task1_s42": {
+        "official_y": 0.0,
+        "terminal_snapshot_s_T": 0.0,
+        "diff": 0.0,
+        "match": true
+      },
+      "run_task1_s101": {
+        "official_y": 0.0,
+        "terminal_snapshot_s_T": 0.0,
+        "diff": 0.0,
+        "match": true
+      },
+      "run_task2_s42": {
+        "official_y": 0.0,
+        "terminal_snapshot_s_T": 0.0,
+        "diff": 0.0,
+        "match": true
+      },
+      "consistency_rate": 1.0
+    },
+    "delivery_gap": {
+      "run_task1_s42": 0.0,
+      "run_task1_s101": 0.0,
+      "run_task2_s42": 0.0,
+      "cohort_total_delivery_gap": 0.0,
+      "delivery_gap_share": 0.0
+    },
+    "defect_provenance": {
+      "total_episodes": 3,
+      "total_defects": 3,
+      "total_deduction": 3.0,
+      "by_kind": {
+        "never": {
+          "count": 3,
+          "share": 1.0,
+          "deduction": 3.0
+        },
+        "undelivered": {
+          "count": 0,
+          "share": 0.0,
+          "deduction": 0.0
+        },
+        "broken": {
+          "count": 0,
+          "share": 0.0,
+          "deduction": 0.0
+        }
+      }
+    }
+  },
+  "analyst_diagnosis_comparison": {
+    "group_A_rules": {
+      "analyst_id": "rules@1",
+      "analyst_group": "A",
+      "architecture": "Deterministic Rule Heuristic",
+      "unweighted_kind_accuracy": 1.0,
+      "weighted_kind_accuracy": 1.0,
+      "cost_usd": 0.0,
+      "calls_per_episode": 0.0,
+      "equivalent_branches": 0.0
+    },
+    "group_B_llm_raw": {
+      "analyst_id": "llm:Qwen/Qwen3.6-27B@31275ca0ac06f6b7",
+      "analyst_group": "B",
+      "architecture": "Raw Trajectory Model (No Structured Facts)",
+      "unweighted_kind_accuracy": 0.6666666666666666,
+      "weighted_kind_accuracy": 0.6666666666666666,
+      "cost_usd": 0.004,
+      "calls_per_episode": 2.0,
+      "equivalent_branches": 0.4,
+      "error_analysis": "On Task 2 (run_task2_s42), misclassified Turn 14 exploratory command as undelivered artifact due to missing structured file transition facts."
+    },
+    "group_C_llm": {
+      "analyst_id": "llm:Qwen/Qwen3.6-27B@fcc90181269130dc",
+      "analyst_group": "C",
+      "architecture": "Structured Facts + Peer Cohort Contrast",
+      "unweighted_kind_accuracy": 1.0,
+      "weighted_kind_accuracy": 1.0,
+      "cost_usd": 0.004,
+      "calls_per_episode": 2.0,
+      "equivalent_branches": 0.4,
+      "performance_gain_over_B": "+33.33% kind accuracy (C - B = +0.3333)"
+    }
+  },
+  "counterfactual_continuation_verification": {
+    "target_episode": "ep_6789f6fc5beb44c2a5b126f0cbaf07a0",
+    "target_run": "run_task1_s42",
+    "checkpoint_k_star": 4,
+    "remaining_requests": 16,
+    "intervention_requirement": "Fix the Ansible issue by implementing __or__ and __ror__ in VarsWithSources and save the patch to /workspace/submission/patch.diff",
+    "arms": [
+      {
+        "arm": "plain",
+        "n": 4,
+        "branches": [
+          {"trial": "plain_k004_i00", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "plain_k004_i01", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "plain_k004_i02", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "plain_k004_i03", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true}
+        ],
+        "mean_y": 0.0
+      },
+      {
+        "arm": "rule",
+        "n": 4,
+        "branches": [
+          {"trial": "rule_68e1f25d_k004_i00", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "rule_68e1f25d_k004_i01", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "rule_68e1f25d_k004_i02", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true},
+          {"trial": "rule_68e1f25d_k004_i03", "score": 0.0, "passed_tests": 15, "termination": "request_budget", "valid": true}
+        ],
+        "mean_y": 0.0
+      }
+    ],
+    "causal_effect_delta": 0.0,
+    "permutation_p_value": 1.0,
+    "holm_adjusted_p_value": 1.0,
+    "evidence_level": "E0",
+    "status": "not_confirmed"
+  },
+  "cross_benchmark_synthesis": {
+    "comparison_table": [
+      {
+        "benchmark": "OfficeVal (Word/Excel/PowerPoint)",
+        "domain_type": "Multi-modal Office Document Engineering",
+        "dominant_defect": "undelivered (做得到但未提交)",
+        "delivery_gap_g": "> 0 (up to 1.0, mean g = 0.3365 on 070.r04)",
+        "intervention_type": "Delivery reminder at c29",
+        "effect_size_delta": "+0.3365",
+        "p_value": 0.0002,
+        "mechanism_interpretation": "Capability present in workspace; model is distracted by iterative preview rendering and fails to copy final artifact to /submission. Targeted reminder rescues performance."
+      },
+      {
+        "benchmark": "LHTB Sokoban",
+        "domain_type": "Long-Horizon Combinatorial Planning",
+        "dominant_defect": "never (根本做不到)",
+        "delivery_gap_g": "0.0 (100% never)",
+        "intervention_type": "Rule & objective reminder at c4",
+        "effect_size_delta": "0.0000",
+        "p_value": 1.0000,
+        "mechanism_interpretation": "Combinatorial search space explosion; BFS heuristic fails to scale. Model lacks planning horizon capacity to solve multi-box puzzle. Rule reminder cannot overcome intrinsic capacity boundary."
+      },
+      {
+        "benchmark": "SWE-bench Pro V2",
+        "domain_type": "Large-Scale Software Bug Fixing & Regression",
+        "dominant_defect": "never (能定位但预算耗尽未形成提交补丁)",
+        "delivery_gap_g": "0.0 (100% never)",
+        "intervention_type": "Targeted fix requirement reminder at c4",
+        "effect_size_delta": "0.0000",
+        "p_value": 1.0000,
+        "mechanism_interpretation": "High cognitive code navigation capability: model locates root cause file at Turn 4-10, verifies reproduction at Turn 11, and writes working prototype at Turn 18. However, 20-request budget is exhausted during file inspection/insertion before git diff / patch file creation. Rule prompt reiterates goal but cannot compress multi-step code editing into remaining budget."
+      }
+    ]
+  }
+}

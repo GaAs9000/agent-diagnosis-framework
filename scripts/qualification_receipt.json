@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-16T12:20:39Z",
+  "timestamp": "2026-10-17T03:48:35Z",
   "base_url": "http://127.0.0.1:8001/v1",
   "model_id": "Qwen/Qwen3.6-27B",
   "overall_qualification_passed": true,
@@ -7,7 +7,7 @@
     "test_1_models": {
       "passed": true,
       "status": 200,
-      "elapsed_ms": 41.76058399025351,
+      "elapsed_ms": 47.490332974120975,
       "models": [
         "Qwen/Qwen3.6-27B",
         "Qwen3.6-27B"
@@ -17,18 +17,18 @@
     "test_2_native_tool": {
       "passed": true,
       "status": 200,
-      "elapsed_ms": 2555.883791996166,
-      "call": "Call(call_id='qual_req_2:c0', name='run', arguments={'command': '/workspace/input/bin/sokoban status'}, native_id='chatcmpl-tool-b8aae63876291102')"
+      "elapsed_ms": 2439.9287500418723,
+      "call": "Call(call_id='qual_req_2:c0', name='run', arguments={'command': '/workspace/input/bin/sokoban status'}, native_id='chatcmpl-tool-b4a0b4877be43c30')"
     },
     "test_3_multiturn": {
       "passed": true,
       "status": 200,
-      "elapsed_ms": 8617.956041940488
+      "elapsed_ms": 8187.62645800598
     },
     "test_4_plain_text": {
       "passed": true,
       "status": 200,
-      "elapsed_ms": 5674.540083040483,
+      "elapsed_ms": 5626.473542070016,
       "content": "\n\n42"
     }
   }

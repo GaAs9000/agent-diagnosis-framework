@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 from .officeval import interpret
 from .lhtb import interpret_lhtb, _official_failure
+from .swebench_pro import interpret_swebench_pro
 
 ENDPOINT_VERSION = 'study-outcome-v1'
 
@@ -62,7 +63,16 @@ def study_outcome(package: Path, *, verify_evidence: bool = False,
                 or process.get('output_complete') is False or 'container_exit_code' not in process):
             return invalid('unhealthy_grader_process')
         task = manifest.get('task') or {}
-        task_id, benchmark = task.get('task_id'), task.get('benchmark')
+        task_id = task.get('task_id') or (manifest.get('benchmark') or {}).get('task_id')
+        benchmark = task.get('benchmark') or manifest.get('benchmark')
+        if isinstance(benchmark, dict):
+            benchmark = benchmark.get('benchmark') or benchmark.get('adapter')
+        if benchmark in ('swebench_pro-native', 'swebench_pro-verifier'):
+            benchmark = 'swebench_pro'
+        if not benchmark:
+            e_cfg = manifest.get('evaluation') or {}
+            if e_cfg.get('adapter') == 'swebench_pro-verifier' or e_cfg.get('kind') == 'swebench_pro-verifier':
+                benchmark = 'swebench_pro'
         if not isinstance(task_id, str):
             return invalid('missing_task_identity')
         policy = projection.get('outcome_policy', 'official_dimensions')
@@ -127,6 +137,20 @@ def study_outcome(package: Path, *, verify_evidence: bool = False,
             y = float(passed)
             if y == 0:
                 zero_reason = raw.get('scoring_case')
+        elif benchmark == 'swebench_pro':
+            native = interpret_swebench_pro(raw, task_id, policy)
+            if native != projection:
+                return invalid('raw_projection_mismatch')
+            code = raw.get('exit_code')
+            if (raw.get('task_id') != task_id or type(code) is not int or code not in (0, 1)
+                    or type(process.get('container_exit_code')) is not int
+                    or process['container_exit_code'] != code
+                    or native.get('evaluation_validity') != 'valid'):
+                return invalid('unhealthy_or_malformed_swebench_pro_grade')
+            passed = native['official_dimensions']['passed']
+            y = float(passed)
+            if y == 0:
+                zero_reason = 'official_zero'
         else:
             return invalid('unsupported_benchmark')
         out.update(study_valid=True, study_outcome_y=float(y), zero_reason=zero_reason,

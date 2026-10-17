@@ -165,7 +165,20 @@ def build_defect_table(
         or ev_info.get('kind') == 'lhtb-verifier'
         or pkg.family_id == 'sokoban'
     )
-    target_exts = {'.log'} if is_lhtb else set(OFFICE_EXTS)
+    is_swebench_pro = (
+        pkg.manifest.get('benchmark') == 'swebench_pro'
+        or desc.get('benchmark') == 'swebench_pro'
+        or ev_info.get('kind') == 'swebench_pro-verifier'
+        or pkg.benchmark == 'swebench_pro'
+        or 'swebench_pro' in str(pkg.family_id)
+        or 'instance_ansible' in str(pkg.task_id)
+    )
+    if is_lhtb:
+        target_exts = {'.log'}
+    elif is_swebench_pro:
+        target_exts = {'.diff', '.patch'}
+    else:
+        target_exts = set(OFFICE_EXTS)
     defects: list[dict[str, Any]] = []
 
     if Y < 1.0 - 1e-12:
@@ -355,6 +368,10 @@ def _summarize_run_for_contrast(pkg: L1Package, facts: list[dict[str, Any]]) -> 
             delta = float(it.get('delta', 0.0))
             if abs(max_d - delta) <= 1e-12:
                 passed_rules.add(str(it['rule']))
+    elif isinstance(raw.get('test_results'), dict) and isinstance(raw['test_results'].get('tests'), list):
+        for t in raw['test_results']['tests']:
+            if isinstance(t, dict) and t.get('name') and t.get('status') == 'PASSED':
+                passed_rules.add(t['name'])
 
     return {
         'episode_id': pkg.episode_id,

@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "swebench_pro-native",
+    "task_id": "instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+    "data_dir": "../../benchmarks/swebench_pro/data",
+    "data_lock": "../../benchmarks/swebench_pro/data/data.lock.json",
+    "source_commit": "scaleapi/SWE-bench_Pro-os:v2"
+  },
+  "model": {
+    "adapter": "openai-compatible",
+    "kind": "local",
+    "model": "Qwen/Qwen3.6-27B",
+    "api_key_env": null,
+    "base_url": "http://127.0.0.1:8001/v1",
+    "parameters": {
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "seed": 42,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    },
+    "timeout_seconds": 300,
+    "retry": {
+      "max_attempts": 3,
+      "retry_on_status": [429, 500, 502, 503, 504],
+      "retry_on_transport_error": true,
+      "backoff_seconds": [2, 5, 10],
+      "honor_retry_after": true
+    },
+    "supports_images": false
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "ghcr.io/scaleapi/swe-bench_pro-v2:instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2"
+  },
+  "evaluation": {
+    "adapter": "swebench_pro-verifier",
+    "image": "ghcr.io/scaleapi/swe-bench_pro-v2:instance_ansible__ansible-0ea40e09d1b35bcb69ff4d9cecf3d0defa4b36e8-v30a923fb5c164d6cd18280c02422f75e611e8fb2",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 20,
+    "max_tool_calls": 30,
+    "wall_time_seconds": 1800
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}

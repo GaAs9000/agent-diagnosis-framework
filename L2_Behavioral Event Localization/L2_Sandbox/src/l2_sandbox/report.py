@@ -506,8 +506,31 @@ def verify_episode(
     cache_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Runs targeted continuation verification (`l2 verify <l1_run>`, Section 6 & 9.1)."""
-    parent = L1Package(Path(l1_run_dir))
-    l2_dir = Path(output_dir) if output_dir is not None else (Path('l2') / parent.episode_id)
+    p_path = Path(l1_run_dir).resolve()
+    l2_dir = Path(output_dir).resolve() if output_dir is not None else None
+    if not (p_path / 'manifest.json').is_file() and (p_path / 'defects.json').is_file():
+        def_doc = read_json(p_path / 'defects.json')
+        ep_id = def_doc.get('episode_id')
+        if l2_dir is None:
+            l2_dir = p_path
+        search_roots = [
+            p_path.parents[3] / 'L1_sandbox' / 'C3_Experimental_Sandbox' / 'runs',
+            Path('/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs'),
+        ]
+        for s_root in search_roots:
+            if s_root.is_dir():
+                for mf in s_root.rglob('manifest.json'):
+                    try:
+                        if read_json(mf).get('episode_id') == ep_id:
+                            p_path = mf.parent
+                            break
+                    except Exception:
+                        pass
+                if (p_path / 'manifest.json').is_file():
+                    break
+    parent = L1Package(p_path)
+    if l2_dir is None:
+        l2_dir = Path('l2') / parent.episode_id
     validate_output_location(parent.root, l2_dir)
 
     if not (l2_dir / 'defects.json').is_file() or not (l2_dir / 'facts.jsonl').is_file():

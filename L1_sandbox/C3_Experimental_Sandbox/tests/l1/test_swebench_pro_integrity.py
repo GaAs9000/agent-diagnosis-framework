@@ -228,3 +228,67 @@ def test_worker_shell_syntax_and_tmpfs_log_redirection(evaluate):
     assert '> /tmp/stdout.log 2> /tmp/stderr.log' in command
     assert '> /logs/verifier/test_stdout.log' not in command
     assert 'cp /tmp/output.json' not in command
+
+
+def test_study_outcome_swebench_pro_passed(tmp_path):
+    from c3_sandbox.l1.evaluation.study import study_outcome
+    manifest = {
+        'recording_mode': 'live',
+        'task': {'benchmark': 'swebench_pro', 'task_id': 'task'},
+        'status': {'execution_validity': 'valid', 'evaluation_validity': 'valid', 'evidence_completeness': 'complete'}
+    }
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    raw = official(passed=True)
+    grade = {
+        'official_raw': raw,
+        'projection': swe.interpret_swebench_pro(raw, 'task'),
+        'process': {'container_exit_code': 0, 'stop_reason': None, 'output_complete': True}
+    }
+    (tmp_path / 'official_grade.json').write_text(json.dumps(grade))
+    res = study_outcome(tmp_path)
+    assert res['study_valid'] is True
+    assert res['study_outcome_y'] == 1.0
+    assert res['zero_reason'] is None
+    assert res['study_classification'] == 'valid_score'
+
+
+def test_study_outcome_swebench_pro_failed(tmp_path):
+    from c3_sandbox.l1.evaluation.study import study_outcome
+    manifest = {
+        'recording_mode': 'live',
+        'task': {'benchmark': 'swebench_pro', 'task_id': 'task'},
+        'status': {'execution_validity': 'valid', 'evaluation_validity': 'valid', 'evidence_completeness': 'complete'}
+    }
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    raw = official(passed=False)
+    grade = {
+        'official_raw': raw,
+        'projection': swe.interpret_swebench_pro(raw, 'task'),
+        'process': {'container_exit_code': 1, 'stop_reason': None, 'output_complete': True}
+    }
+    (tmp_path / 'official_grade.json').write_text(json.dumps(grade))
+    res = study_outcome(tmp_path)
+    assert res['study_valid'] is True
+    assert res['study_outcome_y'] == 0.0
+    assert res['zero_reason'] == 'official_zero'
+    assert res['study_classification'] == 'valid_zero'
+
+
+def test_study_outcome_swebench_pro_inconsistent(tmp_path):
+    from c3_sandbox.l1.evaluation.study import study_outcome
+    manifest = {
+        'recording_mode': 'live',
+        'task': {'benchmark': 'swebench_pro', 'task_id': 'task'},
+        'status': {'execution_validity': 'valid', 'evaluation_validity': 'valid', 'evidence_completeness': 'complete'}
+    }
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    raw = official(passed=False)
+    grade = {
+        'official_raw': raw,
+        'projection': swe.interpret_swebench_pro(raw, 'task'),
+        'process': {'container_exit_code': 0, 'stop_reason': None, 'output_complete': True}  # Mismatched exit code!
+    }
+    (tmp_path / 'official_grade.json').write_text(json.dumps(grade))
+    res = study_outcome(tmp_path)
+    assert res['study_valid'] is False
+

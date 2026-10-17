@@ -23,6 +23,7 @@ except ImportError:
 from c3_sandbox.l1.evidence.live import validate_snapshot
 from c3_sandbox.l1.evaluation.evaluator import DockerEvaluator
 from c3_sandbox.l1.evaluation.lhtb import LHTBEvaluator
+from c3_sandbox.l1.evaluation.swebench_pro import SWEBenchProEvaluator
 from c3_sandbox.l1.recording.state import restore
 from c3_sandbox.l1.storage import file_digest
 
@@ -77,6 +78,17 @@ def _office_targets(pkg: L1Package) -> tuple[list[str], set[str]]:
     )
     if is_lhtb:
         return ['moves.log'], {'.log'}
+
+    is_swebench = (
+        pkg.manifest.get('benchmark') == 'swebench_pro'
+        or desc.get('benchmark') == 'swebench_pro'
+        or ev_info.get('kind') == 'swebench_pro-verifier'
+        or pkg.benchmark == 'swebench_pro'
+        or 'swebench_pro' in str(pkg.family_id)
+        or 'instance_ansible' in str(pkg.task_id)
+    )
+    if is_swebench:
+        return ['patch.diff'], {'.diff', '.patch'}
 
     pub_path = pkg.root / 'benchmark/public_task.json'
     assets: list[str] = []
@@ -149,6 +161,51 @@ def compute_item_deductions(
             deductions[GATE_DEFECT_ID] = d_gate
         return deductions, max_score
 
+    # Benchmark-specific allocation for SWE-bench Pro:
+    if raw.get('test_config') and ('test_results' in raw or 'passed' in raw):
+        tc = raw.get('test_config') or {}
+        required = []
+        for key in ('fail_to_pass', 'pass_to_pass'):
+            val = tc.get(key)
+            if isinstance(val, str):
+                import ast
+                try:
+                    val = ast.literal_eval(val)
+                except Exception:
+                    val = []
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, str) and item and item not in required:
+                        required.append(item)
+        N = len(required)
+        if N == 0:
+            return {GATE_DEFECT_ID: 1.0 - score}, 1.0
+
+        passed_tests = set()
+        tr = raw.get('test_results')
+        if isinstance(tr, dict) and isinstance(tr.get('tests'), list):
+            for t in tr['tests']:
+                if isinstance(t, dict) and t.get('name') and t.get('status') == 'PASSED':
+                    passed_tests.add(t['name'])
+
+        if score >= 1.0 - 1e-12:
+            deductions = {t: 0.0 for t in required}
+            deductions[GATE_DEFECT_ID] = 0.0
+            return deductions, 1.0
+
+        deductions = {}
+        n_passed = 0
+        unit_deduction = 1.0 / N
+        for t in required:
+            if t in passed_tests:
+                deductions[t] = 0.0
+                n_passed += 1
+            else:
+                deductions[t] = unit_deduction
+        d_gate = n_passed / N
+        deductions[GATE_DEFECT_ID] = d_gate
+        return deductions, 1.0
+
     # Benchmark-specific allocation for Sokoban / LHTB:
     if raw.get('task_id') == 'sokoban':
         band = raw.get('band')
@@ -176,6 +233,24 @@ def extract_task_rubric(pkg: L1Package, extra_runs: list[L1Package] | None = Non
             raw = og.get('official_raw') if isinstance(og, dict) else None
             if isinstance(raw, dict) and isinstance(raw.get('dim2_items'), list) and raw['dim2_items']:
                 return [(str(it['rule']), float(it['max_delta'])) for it in raw['dim2_items']]
+            if isinstance(raw, dict) and raw.get('test_config'):
+                tc = raw['test_config']
+                rules = []
+                for key in ('fail_to_pass', 'pass_to_pass'):
+                    val = tc.get(key)
+                    if isinstance(val, str):
+                        import ast
+                        try:
+                            val = ast.literal_eval(val)
+                        except Exception:
+                            val = []
+                    if isinstance(val, list):
+                        for t in val:
+                            if isinstance(t, str) and t and t not in rules:
+                                rules.append(t)
+                if rules:
+                    unit = 1.0 / len(rules)
+                    return [(r, unit) for r in rules]
     return []
 
 
@@ -188,6 +263,7 @@ def select_snapshot_candidates(
     *,
     task_id: str = '',
     spec_kind: str = '',
+    restored_workspace: Path | None = None,
 ) -> list[dict[str, Any]]:
     """L2 v0.4 §4.2 step 2: Select candidate deliverable sets from a snapshot.
 
@@ -265,6 +341,123 @@ def select_snapshot_candidates(
                 'last_written_turn': lw,
                 'tier': tier,
             })
+        return candidates
+
+    is_swebench = (
+        task_id.startswith('instance_')
+        or spec_kind == 'swebench_pro-verifier'
+        or 'patch.diff' in office_targets
+        or target_exts == {'.diff', '.patch'}
+        or 'swebench_pro' in str(task_id).lower()
+    )
+    if is_swebench:
+        files = snapshot.get('files') or []
+        cand_files = []
+
+        def _swebench_tier(p: str) -> int | None:
+            norm_p = p.replace('\\', '/')
+            ext = Path(norm_p).suffix.lower()
+            if norm_p in ('submission/patch.diff', 'submission/model.patch', 'submission/gold_patch.diff'):
+                return 0
+            if norm_p.startswith('submission/') and ext in ('.diff', '.patch'):
+                return 0
+            if norm_p in ('patch.diff', 'model.patch'):
+                return 1
+            if ext in ('.diff', '.patch'):
+                return 2
+            return None
+
+        for f in files:
+            p = f['path']
+            if p.startswith('input/'):
+                continue
+            name = Path(p).name
+            if name.startswith('~$'):
+                continue
+            if f.get('size_bytes', 0) <= 0:
+                continue
+            t = _swebench_tier(p)
+            if t is not None:
+                cand_files.append(f)
+
+        def _swebench_sort_key(f: dict[str, Any]):
+            p = f['path']
+            tier = _swebench_tier(p)
+            sub_prio = 3
+            if p == 'submission/patch.diff':
+                sub_prio = 0
+            elif p == 'submission/model.patch':
+                sub_prio = 1
+            elif p == 'submission/gold_patch.diff':
+                sub_prio = 2
+            elif p == 'patch.diff':
+                sub_prio = 0
+            elif p == 'model.patch':
+                sub_prio = 1
+            return (
+                tier,
+                sub_prio,
+                -last_written_turn.get(p, 0),
+                p,
+            )
+
+        cand_files.sort(key=_swebench_sort_key)
+
+        candidates = []
+        seen_staged_hashes: set[str] = set()
+        for f in cand_files:
+            tier = _swebench_tier(f['path'])
+            in_sub = (tier == 0)
+            sha = f['sha256']
+            if sha in seen_staged_hashes:
+                continue
+            seen_staged_hashes.add(sha)
+            staged = [('patch.diff', f['path'], sha, f.get('blob', ''))]
+            lw = last_written_turn.get(f['path'], 0)
+            candidates.append({
+                'candidate_id': f['path'],
+                'paths': [f['path']],
+                'staged': staged,
+                'in_submission': in_sub,
+                'last_written_turn': lw,
+                'tier': tier,
+            })
+
+        # Tier 3: git diff against base commit in restored repository if no standalone diff file exists
+        if not candidates and restored_workspace is not None:
+            repo_dir = None
+            if (restored_workspace / '.git').is_dir() or (restored_workspace / '.git').is_file():
+                repo_dir = restored_workspace
+            else:
+                for sub in restored_workspace.iterdir():
+                    if sub.is_dir() and ((sub / '.git').is_dir() or (sub / '.git').is_file()):
+                        repo_dir = sub
+                        break
+            if repo_dir is not None:
+                import subprocess, hashlib
+                try:
+                    res = subprocess.run(['git', 'diff', 'HEAD'], cwd=repo_dir, capture_output=True)
+                    if res.returncode != 0:
+                        res = subprocess.run(['git', 'diff'], cwd=repo_dir, capture_output=True)
+                    diff_bytes = res.stdout
+                    if diff_bytes and len(diff_bytes.strip()) > 0:
+                        diff_sha = hashlib.sha256(diff_bytes).hexdigest()
+                        patch_rel_path = 'git_diff.patch'
+                        patch_file = restored_workspace / patch_rel_path
+                        if not patch_file.exists():
+                            patch_file.write_bytes(diff_bytes)
+                        staged = [('patch.diff', patch_rel_path, diff_sha, '')]
+                        candidates.append({
+                            'candidate_id': patch_rel_path,
+                            'paths': [patch_rel_path],
+                            'staged': staged,
+                            'in_submission': False,
+                            'last_written_turn': max(last_written_turn.values(), default=0),
+                            'tier': 3,
+                        })
+                except Exception:
+                    pass
+
         return candidates
 
     files = snapshot.get('files') or []
@@ -408,6 +601,8 @@ def _evaluate_staged_candidate(
     image_to_use = eval_cfg.get('image') or spec.metadata.get('image')
     if not image_to_use and spec.kind == 'lhtb-verifier':
         image_to_use = f'zli12321/lhtb-{spec.task_id}:20260615'
+    elif not image_to_use and spec.kind == 'swebench_pro-verifier':
+        image_to_use = f'ghcr.io/scaleapi/swe-bench_pro-v2:{spec.task_id}'
     eval_cfg_effective = dict(eval_cfg)
     if image_to_use:
         eval_cfg_effective.setdefault('image', image_to_use)
@@ -440,6 +635,14 @@ def _evaluate_staged_candidate(
         sub_dir.mkdir(parents=True, exist_ok=True)
         for staged_name, rel_path, expected_sha, _ in cand['staged']:
             src = ws_dir / rel_path
+            if not src.exists() and cand.get('tier') == 3 and rel_path == 'git_diff.patch':
+                import subprocess
+                repo_dir = ws_dir if (ws_dir / '.git').exists() else next((sub for sub in ws_dir.iterdir() if sub.is_dir() and (sub / '.git').exists()), None)
+                if repo_dir:
+                    res = subprocess.run(['git', 'diff', 'HEAD'], cwd=repo_dir, capture_output=True)
+                    if res.returncode != 0:
+                        res = subprocess.run(['git', 'diff'], cwd=repo_dir, capture_output=True)
+                    src.write_bytes(res.stdout)
             dst = sub_dir / staged_name
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
@@ -452,6 +655,8 @@ def _evaluate_staged_candidate(
 
         if spec.kind == 'lhtb-verifier':
             evaluator = LHTBEvaluator(eval_cfg_effective)
+        elif spec.kind == 'swebench_pro-verifier':
+            evaluator = SWEBenchProEvaluator(eval_cfg_effective)
         else:
             evaluator = DockerEvaluator(eval_cfg_effective)
         grade_out = tmp_root / 'grading'
@@ -488,6 +693,8 @@ def grade_episode_snapshots(
     image_to_use = eval_cfg.get('image') or (ev_info.get('metadata') or {}).get('image')
     if not image_to_use and ev_info.get('kind') == 'lhtb-verifier':
         image_to_use = f"zli12321/lhtb-{desc['task_id']}:20260615"
+    elif not image_to_use and ev_info.get('kind') == 'swebench_pro-verifier':
+        image_to_use = f"ghcr.io/scaleapi/swe-bench_pro-v2:{desc['task_id']}"
     if image_to_use:
         eval_cfg.setdefault('image', image_to_use)
 
@@ -604,6 +811,24 @@ def grade_episode_snapshots(
             task_id=spec.task_id,
             spec_kind=spec.kind,
         )
+        if not cands and spec.kind == 'swebench_pro-verifier':
+            has_git = any('.git' in f.get('path', '') for f in snap.get('files', []))
+            if has_git:
+                with tempfile.TemporaryDirectory(prefix='l2-t3-') as tmp_t3:
+                    ws_t3 = Path(tmp_t3) / 'ws'
+                    ws_t3.mkdir(mode=0o700)
+                    validate_snapshot(pkg.root, snap)
+                    restore(pkg.root, snap, ws_t3)
+                    cands = select_snapshot_candidates(
+                        snap,
+                        initial_input_hashes,
+                        office_targets,
+                        target_exts,
+                        last_written_by_k[k],
+                        task_id=spec.task_id,
+                        spec_kind=spec.kind,
+                        restored_workspace=ws_t3,
+                    )
         if not cands:
             rows.append({
                 'kind': 'checkpoint',

@@ -110,6 +110,17 @@ class L1Package:
             pub = self.json('benchmark/public_task.json')
             if pub.get('benchmark'):
                 return str(pub['benchmark']).lower()
+        bm = self.manifest.get('benchmark')
+        if isinstance(bm, str):
+            return bm.lower()
+        if isinstance(bm, dict):
+            if bm.get('adapter') == 'swebench_pro-native':
+                return 'swebench_pro'
+            if bm.get('benchmark'):
+                return str(bm['benchmark']).lower()
+        ev = self.manifest.get('evaluation')
+        if isinstance(ev, dict) and (ev.get('adapter') == 'swebench_pro-verifier' or ev.get('kind') == 'swebench_pro-verifier'):
+            return 'swebench_pro'
         return 'officeval'
 
     @property
@@ -121,6 +132,9 @@ class L1Package:
             pub = self.json('benchmark/public_task.json')
             if pub.get('task_id'):
                 return str(pub['task_id'])
+        bm = self.manifest.get('benchmark')
+        if isinstance(bm, dict) and bm.get('task_id'):
+            return str(bm['task_id'])
         return 'unknown_task'
 
     @property
@@ -129,7 +143,7 @@ class L1Package:
 
     @property
     def is_boolean_endpoint(self) -> bool:
-        return self.benchmark == 'lhtb'
+        return self.benchmark in ('lhtb', 'swebench_pro')
 
     def checkpoints(self) -> dict[int, dict]:
         if not (self.root / 'checkpoints/index.json').is_file():
@@ -260,10 +274,12 @@ class L1Package:
             proj = g.get('projection') if isinstance(g.get('projection'), dict) else {}
             dims = proj.get('official_dimensions') if isinstance(proj.get('official_dimensions'), dict) else {}
             raw = g.get('official_raw') if isinstance(g.get('official_raw'), dict) else {}
-            if self.benchmark == 'lhtb':
-                passed = dims.get('passed', proj.get('passed'))
+            if self.benchmark in ('lhtb', 'swebench_pro'):
+                passed = dims.get('passed', proj.get('passed', raw.get('passed')))
                 if isinstance(passed, bool):
                     return not passed
+                if proj.get('task_outcome') in ('success', 'failure'):
+                    return proj['task_outcome'] != 'success'
             else:
                 dim1 = dims.get('dim1_pass', proj.get('dim1_pass', raw.get('dim1_pass')))
                 if isinstance(dim1, bool):

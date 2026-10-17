@@ -1,0 +1,75 @@
+{
+  "outcomes_inspection": {
+    "total_rows": 8,
+    "n_plain": 4,
+    "n_rule": 4,
+    "all_k_4": true,
+    "all_y_0": true,
+    "all_termination_budget": true,
+    "all_reason_official_zero": true,
+    "per_branch_pass_count": 15,
+    "per_branch_total_tests": 16,
+    "consistently_failing_test": "test/units/utils/test_vars.py::TestVariableUtils::test_combine_vars_replace"
+  },
+  "branch_packages_inspection": {
+    "branch_count": 8,
+    "requests_per_branch": 16,
+    "parent_checkpoint": "cp000004",
+    "eval_validity": "valid",
+    "official_grade_passed": false
+  },
+  "statistical_inference": {
+    "mean_ctrl": 0.0,
+    "mean_treat": 0.0,
+    "delta_hat": 0.0,
+    "p_exact_permutation": 1.0,
+    "mc_permutations_B5000": {
+      "seed_42": 1.0,
+      "seed_101": 1.0,
+      "seed_2026": 1.0,
+      "seed_77777": 1.0,
+      "seed_999999": 1.0
+    },
+    "p_fisher": 1.0,
+    "p_holm": 1.0,
+    "alpha": 0.05,
+    "min_effect": 0.15,
+    "status": "not_confirmed",
+    "evidence_level": "E0",
+    "verifications_json_matched": true
+  },
+  "adversarial_stress_tests": {
+    "continuous_item_score_test": {
+      "mean_treat": 0.9375,
+      "mean_ctrl": 0.9375,
+      "delta": 0.0,
+      "p_val": 1.0,
+      "conclusion": "Continuous item score also yields Delta=0.0, p=1.0"
+    },
+    "power_analysis_n4_n4": {
+      "total_possible_tables": 25,
+      "rejecting_tables_count": 1,
+      "only_rejecting_configuration": "treat=4/4, ctrl=0/4",
+      "minimum_p_value": 0.014285714285714285,
+      "statistical_power_insight": "N=4 design has statistical power only for complete effect (100% cure rate vs 0% control)."
+    },
+    "branch_diversity": {
+      "distinct_token_counts": 6,
+      "token_range": [
+        170709,
+        183133
+      ],
+      "phase_seconds_range": [
+        115.07003191695549,
+        178.2089183339849
+      ],
+      "confirmed_independent_execution": true
+    },
+    "intervention_delivery_integrity": {
+      "plain_branches_had_zero_intervention": true,
+      "rule_branches_had_exact_rule_message": true,
+      "intervention_request_target": 5
+    }
+  },
+  "overall_verdict": "APPROVE"
+}

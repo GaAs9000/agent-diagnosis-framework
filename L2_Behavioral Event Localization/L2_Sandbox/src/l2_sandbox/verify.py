@@ -175,7 +175,30 @@ def _extract_item_scores(b_pkg: L1Package) -> dict[str, float]:
     try:
         og = b_pkg.json('official_grade.json')
         raw = og.get('official_raw') if isinstance(og, dict) else None
-        if not isinstance(raw, dict) or not raw.get('dim1_pass') or not isinstance(raw.get('dim2_items'), list):
+        if not isinstance(raw, dict):
+            return {}
+        # Support SWE-bench Pro evaluations:
+        if raw.get('test_config') and ('test_results' in raw or 'passed' in raw):
+            passed_tests = set()
+            tr = raw.get('test_results')
+            if isinstance(tr, dict) and isinstance(tr.get('tests'), list):
+                for t in tr['tests']:
+                    if isinstance(t, dict) and t.get('name') and t.get('status') == 'PASSED':
+                        passed_tests.add(t['name'])
+            out: dict[str, float] = {}
+            for key in ('fail_to_pass', 'pass_to_pass'):
+                val = raw['test_config'].get(key)
+                if isinstance(val, str):
+                    import ast
+                    try:
+                        val = ast.literal_eval(val)
+                    except Exception:
+                        val = []
+                if isinstance(val, list):
+                    for t_name in val:
+                        out[t_name] = 1.0 if t_name in passed_tests else 0.0
+            return out
+        if not raw.get('dim1_pass') or not isinstance(raw.get('dim2_items'), list):
             return {}
         out: dict[str, float] = {}
         for it in raw['dim2_items']:
