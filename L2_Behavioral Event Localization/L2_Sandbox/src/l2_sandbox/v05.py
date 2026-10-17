@@ -21,7 +21,7 @@ from .config import (
 from .io import L2Error, digest
 from .stats import holm_adjust, lower_drop, permutation_one_sided, wilson_bounds
 
-V05_SCHEMA_VERSION = "l2-0.5.2-v3-ladder"
+V05_SCHEMA_VERSION = "l2-0.5.3-d0-conditional-pool"
 
 V3_PROPOSITIONS = (
     "V3-P1",  # Level-1 generic intervention (D / S) recoverability share >= 20%
@@ -32,8 +32,9 @@ V3_PROPOSITIONS = (
 )
 
 DEFAULT_SELF_CHECK_DRAFT = (
-    "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，"
-    "确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。"
+    "在宣布结束前，请先重新通读原始任务指令，自行打开并检查 submission/ 下已生成的交付文件，"
+    "核对是否存在遗漏部分、空表/空页、公式或代码报错、以及未完成的步骤；"
+    "如有问题请先修正并重新保存后再结束。"
 )
 
 LADDER_ARM_LEVELS: dict[str, int] = {
@@ -103,6 +104,7 @@ class E2ResponseVector:
     anchor_type: str | None = None
     remaining_budget_at_anchor: int | None = None
     arm_outcomes: dict[str, list[float]] = field(default_factory=dict)
+    branch_identities: dict[str, list[str]] = field(default_factory=dict)
     arm_means: dict[str, float] = field(default_factory=dict)
     arm_lb95_abs: dict[str, float] = field(default_factory=dict)
     arm_ub95_abs: dict[str, float] = field(default_factory=dict)
@@ -886,6 +888,7 @@ def adjudicate_e2_outcomes(
     ineligible_arms: Sequence[str] = (),
     primary_family_size: int | None = None,
     comparison_ids: Sequence[str] | None = None,
+    branch_identities: dict[str, Sequence[str]] | None = None,
 ) -> tuple[E2ResponseVector, str | None, str]:
     """Adjudicate using simultaneous conservative bounds and Holm delta-null tests.
 
@@ -988,6 +991,7 @@ def adjudicate_e2_outcomes(
         anchor_type=anchor_type,
         remaining_budget_at_anchor=remaining_budget,
         arm_outcomes=clean_outcomes,
+        branch_identities={arm: list(ids) for arm, ids in (branch_identities or {}).items()},
         arm_means=arm_means,
         arm_lb95_abs=arm_lb95_abs,
         arm_ub95_abs=arm_ub95_abs,
@@ -1254,6 +1258,7 @@ def compute_cross_fitted_diagnostic_value_ceiling(
     fixed_arm_pool: Sequence[str] = ("P", "D", "S", "R_explicit"),
     ceiling_threshold: float = 0.05, alpha: float = 0.05,
     min_replicates_per_arm: int = 2, seed: str = "v3-d2-crossfit-ceiling",
+    estimand: str = "family_population",
 ) -> dict[str, Any]:
     """Select both policies on one branch half, evaluate the other, then swap.
 
@@ -1262,6 +1267,19 @@ def compute_cross_fitted_diagnostic_value_ceiling(
     percentile intervals are descriptive; sparse/constant clusters receive bounded
     Hoeffding intervals instead of spuriously degenerate bootstrap intervals.
     """
+    if estimand not in {"family_population", "conditional_frozen_dev_pool"}:
+        raise L2Error("Unknown diagnostic ceiling estimand")
+    if estimand == "conditional_frozen_dev_pool":
+        auxiliary = compute_cross_fitted_diagnostic_value_ceiling(
+            units, candidate_arms=candidate_arms, fixed_arm_pool=fixed_arm_pool,
+            ceiling_threshold=ceiling_threshold, alpha=alpha,
+            min_replicates_per_arm=min_replicates_per_arm, seed=seed,
+        )
+        return _conditional_frozen_pool_ceiling(
+            units, auxiliary, candidate_arms=candidate_arms,
+            fixed_arm_pool=fixed_arm_pool, alpha=alpha,
+            ceiling_threshold=ceiling_threshold,
+        )
     if len({u.unit_id for u in units}) != len(units):
         raise L2Error("Duplicate diagnostic unit identities")
     if any(not 0 < u.inclusion_prob <= 1 or u.deduction_weight < 0 for u in units):
@@ -1378,6 +1396,151 @@ def compute_cross_fitted_diagnostic_value_ceiling(
             "family_ids_complete": all(u.family_id for u in eligible),
             "passes_v3_p3_gate": fixed_policy_pool_complete and len(families) >= 2 and all(u.family_id for u in eligible) and ci_w[0] > ceiling_threshold,
             "folds": folds, "unit_evaluations": rows}
+
+
+def _conditional_frozen_pool_ceiling(
+    units: Sequence[DiagnosticUnitV05], auxiliary: dict[str, Any], *,
+    candidate_arms: Sequence[str], fixed_arm_pool: Sequence[str],
+    alpha: float, ceiling_threshold: float,
+) -> dict[str, Any]:
+    """Condition on frozen parents and selection outcomes; group physical draws.
+
+    A package may score multiple rubric endpoints with arbitrary dependence. Only
+    separate physical packages are independent conditional on fixed parents and
+    the given direction's own selection-half outcomes. The endpoint coefficients combine
+    before computing each package's worst-case range. Each direction is bounded
+    separately; averaging simultaneous bounds needs no independence of folds.
+    Reference: https://www.cs.mcgill.ca/~colt2009/papers/012.pdf, Theorem 11.
+    """
+    if not 0 < alpha < 1:
+        raise L2Error("alpha must lie strictly between zero and one")
+    requested = list(dict.fromkeys(("P", *candidate_arms, *fixed_arm_pool)))
+    complete = bool(units) and not auxiliary["ineligible_unit_ids"]
+    halves: dict[str, int] = {}
+    identity_context: dict[str, tuple[str, str, str]] = {}
+    endpoint_values: dict[tuple[str, tuple[str, str, str]], float] = {}
+    for unit in units:
+        vec = unit.e2_response_vector
+        if (not unit.episode_id or not unit.task_id or not unit.family_id
+                or not math.isfinite(unit.deduction_weight)
+                or not math.isfinite(unit.inclusion_prob)):
+            raise L2Error("Conditional pool requires complete finite parent metadata")
+        applicable = [a for a in requested if a not in vec.ineligible_arms
+                      and (a != "R_single" or unit.rule_source == "explicit")]
+        if any(a not in applicable for a in fixed_arm_pool):
+            complete = False
+        for arm in applicable:
+            values = vec.arm_outcomes.get(arm, [])
+            if len(values) < auxiliary["min_replicates_per_arm_required"]:
+                complete = False
+            ids = vec.branch_identities.get(arm)
+            if ids is None or len(ids) != len(values):
+                raise L2Error("Conditional inference requires aligned verified physical branch identities")
+            if len(set(ids)) != len(ids):
+                raise L2Error("Duplicate physical branch within an arm")
+            for index, (identity, value) in enumerate(zip(ids, values)):
+                if not isinstance(identity, str) or re.fullmatch(r"[0-9a-f]{64}", identity) is None:
+                    raise L2Error("Physical branch identity must be a package-index SHA256 digest")
+                if not math.isfinite(value) or not 0 <= value <= 1:
+                    raise L2Error("Conditional outcomes must be finite and bounded in [0, 1]")
+                half = int(index >= len(values) // 2)
+                if identity in halves and halves[identity] != half:
+                    raise L2Error("Physical branch shared across selection and evaluation halves")
+                halves[identity] = half
+                context = (unit.episode_id, unit.task_id, arm)
+                if identity in identity_context and identity_context[identity] != context:
+                    raise L2Error("Inconsistent parent or arm for physical branch identity")
+                identity_context[identity] = context
+                endpoint = (identity, (unit.task_id, unit.unit_level, unit.defect_name))
+                if endpoint in endpoint_values and endpoint_values[endpoint] != value:
+                    raise L2Error("Inconsistent outcome for shared physical branch endpoint")
+                endpoint_values[endpoint] = value
+    if sum(u.deduction_weight / u.inclusion_prob for u in units) <= 0:
+        complete = False
+    eta = alpha / 8  # 2 directions x 2 tails x 2 concentration methods, per target.
+    directions = []
+    for fold in (1, 2):
+        rows = [row for row in auxiliary["unit_evaluations"] if row["fold"] == fold]
+        record: dict[str, Any] = {"fold": fold, "selection_half": fold - 1,
+                                  "evaluation_half": 2 - fold}
+        by_id = {unit.unit_id: unit for unit in units}
+        for name, weighted in (("unweighted", False), ("weighted", True)):
+            denominator = sum(row["deduction_weight"] if weighted else 1.0 for row in rows)
+            coefficients: dict[tuple[str, tuple[str, str, str]], float] = {}
+            for row in rows:
+                unit = by_id[row["unit_id"]]
+                weight = (row["deduction_weight"] if weighted else 1.0) / denominator if denominator else 0.0
+                fixed_arm = row[f"train_best_fixed_arm_{name}"]
+                if row["selected_unit_arm"] == fixed_arm:
+                    continue
+                for arm, sign in ((row["selected_unit_arm"], 1), (fixed_arm, -1)):
+                    indices = row["branch_split_indices"][arm]["evaluation"]
+                    for index in indices:
+                        endpoint = (unit.e2_response_vector.branch_identities[arm][index],
+                                    (unit.task_id, unit.unit_level, unit.defect_name))
+                        coefficients[endpoint] = coefficients.get(endpoint, 0.0) + sign * weight / len(indices)
+            # Exact cancellation follows from the selected policies, independent of Y.
+            coefficients = {key: value for key, value in coefficients.items() if value != 0.0}
+            groups: dict[str, dict[str, float]] = {}
+            for endpoint, coefficient in coefficients.items():
+                group = groups.setdefault(endpoint[0], {"lower": 0.0, "upper": 0.0, "contribution": 0.0})
+                group["lower"] += min(0.0, coefficient)
+                group["upper"] += max(0.0, coefficient)
+                group["contribution"] += coefficient * endpoint_values[endpoint]
+            estimate = sum(group["contribution"] for group in groups.values())
+            ranges = [group["upper"] - group["lower"] for group in groups.values()]
+            m = len(groups)
+            hoeffding = math.sqrt(0.5 * math.log(1 / eta) * sum(r * r for r in ranges))
+            eb = None
+            if m >= 2:
+                c = max(ranges)
+                normalized = [(g["contribution"] - g["lower"]) / c for g in groups.values()]
+                mean = sum(normalized) / m
+                variance = sum((x - mean) ** 2 for x in normalized) / (m - 1)
+                # Maurer & Pontil (2009), Theorem 11, applied to independent,
+                # non-identically distributed [0,1] variables; additive term is
+                # essential even when the observed variance is zero.
+                log_term = math.log(2 / eta)
+                eb = m * c * (math.sqrt(2 * variance * log_term / m)
+                              + 7 * log_term / (3 * (m - 1)))
+            radius = min(hoeffding, eb) if eb is not None else hoeffding
+            record[name] = {
+                "estimate": estimate, "lb95": max(-1.0, estimate - radius),
+                "ub95": min(1.0, estimate + radius),
+                "physical_group_count": m, "endpoint_coefficient_count": len(coefficients),
+                "physical_range_sum_squares": sum(r * r for r in ranges),
+                "hoeffding_radius": hoeffding, "empirical_bernstein_radius": eb,
+                "interval_method": "exact_policy_identity" if not groups else "physical_group_hoeffding_or_maurer_pontil_2009_thm11",
+            }
+        directions.append(record)
+    result = dict(auxiliary)
+    result["family_population_auxiliary"] = auxiliary
+    result["estimand"] = "conditional_frozen_dev_pool"
+    result["conditional_pool_complete"] = complete
+    result["conditional_ci_coverage"] = 1 - alpha
+    result["conditional_ci_coverage_scope"] = "per_target_two_sided_across_both_directions"
+    result["interval_method"] = "conditional_physical_group_concentration"
+    result["direction_intervals"] = directions
+    result["error_allocation"] = {
+        "alpha_per_target": alpha, "eta_per_direction_tail_method": eta,
+        "directions": 2, "tails": 2, "methods": 2,
+        "targets_have_separate_coverage": True, "joint_weighted_unweighted_coverage_claimed": False,
+    }
+    for name, prefix in (("weighted", "deduction_weighted"), ("unweighted", "unweighted")):
+        for endpoint in ("lb95", "ub95"):
+            bound = sum(d[name][endpoint] for d in directions) / 2
+            result[f"conditional_{prefix}_{endpoint}"] = bound if complete else (-1.0 if endpoint == "lb95" else 1.0)
+            result[f"{prefix}_{endpoint}"] = result[f"conditional_{prefix}_{endpoint}"]
+    result["evidence_status"] = "evaluated" if complete else "inconclusive"
+    result["passes_v3_p3_gate"] = complete and result["conditional_deduction_weighted_lb95"] > ceiling_threshold
+    result["physical_branch_count"] = len(halves)
+    result["physical_branch_count_by_half"] = {str(half): sum(h == half for h in halves.values()) for half in (0, 1)}
+    result["conditional_unweighted_ceiling"] = result["unweighted_ceiling"]
+    result["conditional_deduction_weighted_ceiling"] = result["deduction_weighted_ceiling"]
+    result["conditioning"] = "each_direction_conditions_on_frozen_parents_and_its_own_selection_half"
+    result["conditional_target"] = "average_of_two_directional_conditional_policy_values"
+    result["independence_unit"] = "physical_continuation_package"
+    return result
 
 
 def predict_majority_baseline_m(

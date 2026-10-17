@@ -18,6 +18,7 @@ Contract (Notion V3 §3.4, §8.2, R7–R12, R15, R18):
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -50,6 +51,7 @@ from l2_sandbox.v05 import (  # noqa: E402
 )
 
 from l2_sandbox.v3_execution import (Admission, approve, digest, exclusive, file_digest, identity, native_branch, read_json, seal, verify_branch, verify_seal, write_json)
+from l2_sandbox.measurement_gates import measurement_gate_binding, verify_measurement_gate_binding
 
 DEFAULT_DEV45_RUNS_DIR = L1_ROOT / "runs" / "v3_qwen36_pi_dev45_20261017" / "episodes"
 DEFAULT_DEV45_DIAG_DIR = L2_ROOT / "diagnoses" / "v3_qwen36_pi_dev45_20261017"
@@ -130,13 +132,24 @@ def build_d1_units_and_plan(
     runs_dir: Path,
     diag_dir: Path,
     p0a_catalog_path: Path,
-    n_per_arm: int = 24,
+    n_per_arm: int = 14,
     r_b: int = 6,
     max_requests: int = 35,
     target_per_stratum: int = 3,
-    passing_harm_sample_size: int = 4,
+    passing_harm_sample_size: int = 6,
     self_check_text: str = DEFAULT_SELF_CHECK_DRAFT,
+    target_failure_units: int = 24,
+    estimand: str = "conditional_frozen_dev_pool",
+    delta: float = 0.10,
+    tau: float = 0.20,
+    alpha: float = 0.05,
+    ceiling_threshold: float = 0.05,
+    gate_audit_path: Path | None = None,
 ) -> dict[str, Any]:
+    if not 0 < passing_harm_sample_size <= 6:
+        raise ValueError("passing harm sample must be positive and capped at six")
+    if target_failure_units <= 0 or n_per_arm <= 0:
+        raise ValueError("positive failure-unit target and replication count required")
     p0a = _load_json(p0a_catalog_path) if p0a_catalog_path.exists() else {}
     family_path = L1_ROOT / "benchmarks/officeval/family_split.json"
     family_doc = read_json(family_path)
@@ -151,6 +164,7 @@ def build_d1_units_and_plan(
     scanned_episodes: list[str] = []
     readiness_errors: list[str] = []
     parent_bindings: dict[str, dict] = {}
+    actor_identities = []
 
     if runs_dir.exists():
         for ep_dir in sorted(runs_dir.iterdir()):
@@ -169,6 +183,7 @@ def build_d1_units_and_plan(
             task_id = str((manifest.get("task") or {}).get("task_id") or ep_id.split(".")[0])
             short_task = task_id.split(":")[-1]
             native_config = read_json(ep_dir / "raw/resolved_config.json")
+            actor_identities.append(dict(model=native_config["model"].get("model"), harness=native_config["agent"].get("harness"), endpoint=native_config["model"].get("base_url"), provider="local"))
             if native_config["model"].get("model") != "Qwen/Qwen3.6-27B" or native_config["agent"].get("harness") != "pi":
                 readiness_errors.append(f"{ep_id}:actor_or_harness_identity_mismatch")
             if int(native_config["budget"]["max_model_requests"]) != max_requests:
@@ -352,12 +367,25 @@ def build_d1_units_and_plan(
                         )
                     )
 
-    frame = build_v3_stratified_sampling_frame(
-        units,
-        dataset_id="v3_qwen36_pi_dev45_20261017",
-        actor_model="Qwen/Qwen3.6-27B",
-        target_sample_per_stratum=target_per_stratum,
-    )
+    # Allocate the approved total across observed strata before drawing any units.
+    census = build_v3_stratified_sampling_frame(units, dataset_id="v3_qwen36_pi_dev45_20261017", target_sample_per_stratum=len(units))
+    allocation = {sid: 0 for sid in census["strata"]}
+    for _ in range(min(target_failure_units, census["total_eligible_never_units"])):
+        available = [sid for sid, row in census["strata"].items() if allocation[sid] < row["population_count"]]
+        sid = min(available, key=lambda sid: (allocation[sid], sid))
+        allocation[sid] += 1
+    frame = build_v3_stratified_sampling_frame(units, dataset_id="v3_qwen36_pi_dev45_20261017", target_sample_per_stratum=allocation)
+    for sampled in frame["sampled_units"]:
+        sampled["inclusion_prob"] = sampled["stratum_sample_size"] / sampled["stratum_population_size"]
+    for sid, row in frame["strata"].items():
+        row["inclusion_prob"] = row["sampled_count"] / row["population_count"]
+    frame["seed"] = "v3-d1-stratified-frame"
+    frame["target_total"] = target_failure_units
+    frame["allocation_policy"] = "balanced_observed_strata_without_replacement"
+    if frame["total_sampled_units"] != target_failure_units:
+        readiness_errors.append("insufficient_failure_units_for_frozen_target")
+    if len(scanned_episodes) != 45:
+        readiness_errors.append("development_cohort_not_complete_45")
 
     chosen_passing = passing_candidates[:passing_harm_sample_size]
     if len(chosen_passing) < passing_harm_sample_size:
@@ -438,6 +466,10 @@ def build_d1_units_and_plan(
     plan_payload = {
         "schema_version": V05_SCHEMA_VERSION,
         "stage": "D1",
+        "execution_concurrency": 3,
+        "execution_order": "round_robin_units_preserving_branch_order",
+        "pricing_mode": "local_no_provider_charge",
+        "actor_identity": actor_identities[0] if actor_identities and all(x == actor_identities[0] for x in actor_identities) else None,
         "mode": "plan_only",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "note": (
@@ -454,13 +486,18 @@ def build_d1_units_and_plan(
         "d0_candidate_parameters": {
             "n_per_arm": n_per_arm,
             "r_b": r_b,
-            "delta": 0.10,
-            "tau": 0.20,
-            "alpha": 0.05,
-            "ceiling_threshold": 0.05,
+            "delta": delta,
+            "tau": tau,
+            "alpha": alpha,
+            "ceiling_threshold": ceiling_threshold,
+            "v3_p1_threshold": 0.20,
+            "estimand": estimand,
+            "target_failure_units": target_failure_units,
+            "passing_harm_sample_size": passing_harm_sample_size,
             "min_replicates_per_arm": 2,
+            "e2_power_warning": "n=14 is user approved; multiplicity-adjusted individual E2 comparisons may have zero power at current thresholds; adequacy is not established",
             "self_check_S_draft": self_check_text,
-            "self_check_S_status": "D0_CANDIDATE_PENDING_USER_CONFIRMATION",
+            "self_check_S_status": "USER_CONFIRMED_20261018" if self_check_text == DEFAULT_SELF_CHECK_DRAFT else "PENDING_USER_CONFIRMATION",
         },
         "stratified_sampling_frame": frame,
         "r12_passing_harm_check_plan": {
@@ -475,12 +512,24 @@ def build_d1_units_and_plan(
         "budget_and_stop_conditions": {
             "total_planned_branches": total_planned_branches,
             "max_actor_requests_cap": total_max_requests,
+            "full_schedule_model_request_bound": total_max_requests,
+            "legacy_max_actor_requests_cap_is_schedule_bound": True,
             "analyst_requests": 0,
             "measured_throughput_req_per_hour_3_concurrency": measured_req_per_hour,
-            "estimated_wall_clock_hours_upper_bound": round(total_max_requests / measured_req_per_hour, 2),
+            "throughput_assumption_execution_concurrency": 3,
+            "reference_hours_full_schedule": round(total_max_requests / measured_req_per_hour, 2),
+            "reference_hours_expected_12000": round(12000 / measured_req_per_hour, 2),
+            "reference_hours_hard_15000": round(15000 / measured_req_per_hour, 2),
+            "reference_throughput_is_not_a_runtime_guarantee": True,
             "estimated_api_cost_usd": 0.0,
+            "cost_scope": "Actor API charges only; local GPU and infrastructure costs excluded",
+            "expected_actor_http_attempts": 12000,
+            "hard_actor_http_attempts": 15000,
+            "max_wall_seconds": 86400,
+            "exhaustion_policy": "hard_stop_incomplete",
+            "http_attempts_include_retries": True,
             "stop_conditions": [
-                "Abort immediately if invalid_attempt_rate (transport/protocol error) exceeds 15% over any 20 consecutive branches.",
+                "Stop new admissions when the frozen max_invalid_attempts limit is reached; retain all admitted attempt receipts.",
                 "Abort immediately if any continuation branch violates same-checkpoint or same-remaining-budget invariant.",
                 "Abort if V3-G2 or V3-G3 gate fails or if user revokes execution authorization.",
             ],
@@ -507,9 +556,16 @@ def build_d1_units_and_plan(
         comparisons.extend(f"{unit['unit_id']}::{c}" for c in unit["comparison_ids"])
     plan_payload["primary_test_family"] = {"comparison_ids": comparisons, "size": len(comparisons)}
     plan_payload["requirements_catalog_sha256"] = digest(p0a)
+    gate_binding, gate_errors = measurement_gate_binding(
+        gate_audit_path or L2_ROOT / "reports/v3_gates_g2_g3_g4_audit_20261017.json"
+    )
+    plan_payload["measurement_gate_binding"] = gate_binding
+    readiness_errors.extend(gate_errors)
     for unit in [*unit_schedules, *chosen_passing]:
         if not unit.get("family_id"):
             readiness_errors.append(f"{unit['task_id']}:missing_semantic_family")
+    if not plan_payload["actor_identity"] or not plan_payload["actor_identity"].get("endpoint"):
+        readiness_errors.append("missing_or_inconsistent_frozen_local_actor_identity")
     plan_payload["readiness_errors"] = sorted(set(readiness_errors))
     plan_payload["execution_ready"] = bool(unit_schedules and not readiness_errors)
     return seal(plan_payload, "plan_sha256")
@@ -519,25 +575,31 @@ def _execute_d1_locked(plan, *, runs_dir, receipts_dir, outcomes_out, freeze, br
     if simulate_offline and branch_runner is None:
         raise ValueError('offline simulation requires an explicit injected adapter; native execution is forbidden')
     caps = approve(plan, freeze)
-    if caps['max_requests'] < plan['budget_and_stop_conditions']['max_actor_requests_cap']:
-        raise ValueError('approved request cap does not cover the frozen branch schedule')
+    if not simulate_offline:
+        verify_measurement_gate_binding(plan)
     ledger = Admission(receipts_dir / 'admission.json', plan['plan_sha256'], caps)
     params = plan['d0_candidate_parameters']
-    runner = branch_runner or (lambda u, b, m: native_branch(u, b, m, runs_dir=runs_dir, output=receipts_dir / 'branches' / digest([u['unit_id'], b])[:24], limiter=ledger))
-    executed, cached = 0, 0
-    failures = []
-    all_rows, passing_rows = [], []
+    concurrency = plan.get('execution_concurrency', 1)
+    runner = branch_runner or (lambda u, b, m: native_branch(dict(u, actor_identity=plan.get('actor_identity')), b, m, runs_dir=runs_dir, output=receipts_dir / 'branches' / digest([u['unit_id'], b])[:24], limiter=ledger))
     schedules = [(u, False) for u in plan['unit_schedules']]
     for passing in plan['r12_passing_harm_check_plan']['sampled_passing_units']:
         u = dict(passing, eligible_arms=passing['arms'], arm_messages=plan['task_ladder_message_specs'][passing['task_id']]['ladder_messages'])
         u['schedule'] = build_interleaved_arm_schedule(u['arms'], params['n_per_arm'], anchor_k=u['anchor_k'], remaining_budget=u['remaining_budget'])
         schedules.append((u, True))
+    if len({u['unit_id'] for u, _ in schedules}) != len(schedules):
+        raise ValueError('duplicate scheduled unit identity')
+
+    # Each unit keeps its frozen interleaved branch order. Round-robin admission
+    # allows a bounded executor to work across units without changing any draws.
+    jobs_by_unit = {}
+    receipts_by_id = {}
+    cached = 0
+    seen_branches = set()
     for unit, is_passing in schedules:
-        arm_outcomes = {a: [] for a in unit['eligible_arms']}
-        receipts = {a: [] for a in unit['eligible_arms']}
         nest = verify_nested_ladder_messages(unit['arm_messages'])
         if not nest['valid']:
             raise ValueError(f'invalid frozen ladder: {nest}')
+        jobs_by_unit[unit['unit_id']] = []
         for branch in unit['schedule']:
             arm = branch['arm']
             if branch['checkpoint_k'] != unit['anchor_k'] or branch['remaining_budget'] != unit['remaining_budget']:
@@ -546,51 +608,144 @@ def _execute_d1_locked(plan, *, runs_dir, receipts_dir, outcomes_out, freeze, br
             if not msg['eligible']:
                 raise ValueError('ineligible arm in schedule')
             binding = dict(plan_sha256=plan['plan_sha256'], unit_id=unit['unit_id'], arm=arm, replicate=branch['replicate'], anchor_k=unit['anchor_k'], remaining_budget=unit['remaining_budget'], message_sha256=msg['message_sha256'], parent_identity=unit['parent_identity'], endpoint=dict(unit_level=unit.get('unit_level','rubric_item'), defect_name=unit.get('defect_name', unit.get('rule',''))))
-            branch_id = digest(binding)
-            binding['branch_id'] = branch_id
-            path = receipts_dir / (branch_id + '.json')
+            binding['branch_id'] = digest(binding)
+            if binding['branch_id'] in seen_branches:
+                raise ValueError('duplicate frozen branch identity')
+            seen_branches.add(binding['branch_id'])
+            path = receipts_dir / (binding['branch_id'] + '.json')
+            job = dict(unit=unit, branch=branch, message=msg, binding=binding, path=path, is_passing=is_passing)
+            jobs_by_unit[unit['unit_id']].append(job)
+            # Verify all existing evidence before admitting any new actor work.
             if path.exists():
                 receipt = read_json(path)
-                verify_branch(receipt, expected=binding)
+                if receipt.get('status') == 'failed' and receipt.get('cap_exceeded'):
+                    verify_seal(receipt)
+                    if any(receipt.get(k) != v for k, v in binding.items()):
+                        raise ValueError('retained budget-stop receipt binding mismatch')
+                else:
+                    verify_branch(receipt, expected=binding)
                 if bool(receipt.get('simulated_offline')) != simulate_offline:
                     raise ValueError('simulation/production receipt mismatch')
-                cached += 1
-            else:
-                ledger.check()
-                # Persist before the actor. A crash leaves an inflight receipt that cannot retry.
-                write_json(path, seal(dict(binding, status='inflight', valid_attempt=False)))
-                try:
-                    result = runner(unit, branch, msg)
-                    if result.get('valid_attempt') is not True or result.get('status') != 'completed':
-                        raise ValueError('adapter did not return completed valid evidence')
-                    if bool(result.get('simulated_offline')) != simulate_offline:
-                        raise ValueError('adapter execution mode mismatch')
-                    receipt = seal(dict(result, **binding))
-                    write_json(path, receipt)
-                    verify_branch(receipt, expected=binding)
-                    executed += 1
-                except Exception as exc:
-                    ledger.invalid()
-                    receipt = seal(dict(binding, status='failed', valid_attempt=False, error_type=type(exc).__name__, error=str(exc), simulated_offline=simulate_offline))
-                    write_json(path, receipt)
-                    failures.append(receipt)
-                    write_json(outcomes_out, seal(dict(stage='D1', status='failed', plan_sha256=plan['plan_sha256'], simulated_offline=simulate_offline, failed_attempts=failures, evaluated_units=all_rows, passing_units=passing_rows)))
-                    raise
-            score = float(receipt['outcome_score'])
+                receipts_by_id[binding['branch_id']] = receipt
+                cached += int(receipt['status'] == 'completed')
+    ordered = [jobs[i] for i in range(max((len(j) for j in jobs_by_unit.values()), default=0)) for jobs in jobs_by_unit.values() if i < len(jobs)]
+    new_jobs = [j for j in ordered if j['binding']['branch_id'] not in receipts_by_id]
+    executed = 0
+    failures = [r for r in receipts_by_id.values() if r['status'] != 'completed']
+    errors = []
+
+    def run_branch(job):
+        binding, path = job['binding'], job['path']
+        try:
+            ledger.check_new_request()
+        except RuntimeError as exc:
+            ledger.close(str(exc))
+            return None, None, True
+        write_json(path, seal(dict(binding, status='inflight', valid_attempt=False, simulated_offline=simulate_offline)))
+        result = {}
+        try:
+            result = runner(job['unit'], job['branch'], job['message'])
+            if result.get('valid_attempt') is not True or result.get('status') != 'completed':
+                raise ValueError('adapter did not return completed valid evidence')
+            if bool(result.get('simulated_offline')) != simulate_offline:
+                raise ValueError('adapter execution mode mismatch')
+            score = float(result['outcome_score'])
             if not 0 <= score <= 1:
                 raise ValueError('invalid endpoint score')
-            receipts[arm].append(receipt)
-            arm_outcomes[arm].append(score)
+            receipt = seal(dict(result, **binding))
+            write_json(path, receipt)
+            verify_branch(receipt, expected=binding)
+            if receipt.get('cap_exceeded'):
+                ledger.close(receipt['cap_exceeded'])
+            return receipt, None, bool(receipt.get('cap_exceeded'))
+        except Exception as exc:
+            reason = ledger.exhaustion_reason()
+            budget_stop = bool(reason)
+            if not budget_stop:
+                ledger.invalid()
+                reason = str(exc)
+            ledger.close(reason)
+            failed = dict(result)
+            package_path = receipts_dir / 'branches' / digest([job['unit']['unit_id'], job['branch']])[:24]
+            if not simulate_offline and package_path.exists():
+                failed['attempt_package_path'] = str(package_path.resolve())
+            failed.update(binding)
+            failed.update(status='failed', valid_attempt=False, error_type=type(exc).__name__, error=str(exc), simulated_offline=simulate_offline)
+            if budget_stop:
+                failed['cap_exceeded'] = reason
+            receipt = seal(failed)
+            write_json(path, receipt)
+            return receipt, exc, budget_stop
+
+    # At most `concurrency` jobs exist in the executor. On any stop, drain those
+    # jobs before sealing, so their completed evidence cannot be lost or omitted.
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        inflight = {}
+        next_job = 0
+        stopped = False
+        while inflight or (next_job < len(new_jobs) and not stopped):
+            while not stopped and len(inflight) < concurrency and next_job < len(new_jobs):
+                reason = ledger.exhaustion_reason()
+                if reason:
+                    ledger.close(reason)
+                    stopped = True
+                    break
+                job = new_jobs[next_job]
+                next_job += 1
+                inflight[pool.submit(run_branch, job)] = job
+            if not inflight:
+                break
+            done, _ = wait(inflight, return_when=FIRST_COMPLETED)
+            for future in done:
+                job = inflight.pop(future)
+                receipt, error, budget_stop = future.result()
+                if receipt:
+                    receipts_by_id[job['binding']['branch_id']] = receipt
+                    if receipt['status'] == 'completed':
+                        executed += 1
+                    else:
+                        failures.append(receipt)
+                if error and not budget_stop:
+                    errors.append(error)
+                stopped = stopped or budget_stop or error is not None
+            if ledger.exhaustion_reason() and next_job < len(new_jobs):
+                stopped = True
+
+    all_rows, passing_rows, partial_units = [], [], []
+    pending = []
+    for unit, is_passing in schedules:
+        receipts = {a: [] for a in unit['eligible_arms']}
+        arm_outcomes = {a: [] for a in unit['eligible_arms']}
+        attempts = []
+        for job in jobs_by_unit[unit['unit_id']]:
+            receipt = receipts_by_id.get(job['binding']['branch_id'])
+            if receipt:
+                attempts.append(receipt)
+            if receipt and receipt['status'] == 'completed':
+                receipts[job['branch']['arm']].append(receipt)
+                arm_outcomes[job['branch']['arm']].append(float(receipt['outcome_score']))
+            else:
+                pending.append(dict(unit_id=unit['unit_id'], is_passing=is_passing, **job['branch']))
         row = {k: v for k, v in unit.items() if k not in ('schedule', 'arm_messages')}
         row.update(arm_outcomes=arm_outcomes, branch_receipts=receipts, terminal_y=1.0 if is_passing else unit.get('terminal_y', 0.0))
-        if is_passing:
+        if len(attempts) != len(unit['schedule']) or any(r['status'] != 'completed' or r.get('cap_exceeded') for r in attempts):
+            row.update(is_passing=is_passing, attempt_receipts=attempts)
+            partial_units.append(row)
+        elif is_passing:
             passing_rows.append(row)
         else:
-            vec, label, status = adjudicate_e2_outcomes(unit.get('terminal_y', 0.0), arm_outcomes, anchor_k=unit['anchor_k'], anchor_type=unit['anchor_type'], remaining_budget=unit['remaining_budget'], delta=params['delta'], tau=params['tau'], alpha=params['alpha'], ineligible_arms=unit.get('ineligible_arms', ()), primary_family_size=plan['primary_test_family']['size'], comparison_ids=unit['comparison_ids'])
+            vec, label, status = adjudicate_e2_outcomes(unit.get('terminal_y', 0.0), arm_outcomes, anchor_k=unit['anchor_k'], anchor_type=unit['anchor_type'], remaining_budget=unit['remaining_budget'], delta=params['delta'], tau=params['tau'], alpha=params['alpha'], ineligible_arms=unit.get('ineligible_arms', ()), primary_family_size=plan['primary_test_family']['size'], comparison_ids=unit['comparison_ids'], branch_identities={a: [r.get('package_index_sha256', r['branch_id']) for r in rs] for a, rs in receipts.items()})
             row.update(e2_response_vector=vec.__dict__, operational_label=label, evidence_status=status)
             all_rows.append(row)
+    summary = dict(evaluated_unit_count=len(all_rows), total_branches_executed=executed, reused_cached_branches=cached, execution_concurrency=concurrency, admission=ledger.snapshot())
+    if partial_units or errors:
+        payload = seal(dict(stage='D1', status='failed' if errors else 'incomplete', stop_reason=ledger.exhaustion_reason() or 'frozen schedule incomplete', d1_plan_sha256=plan['plan_sha256'], plan_sha256=plan['plan_sha256'], simulated_offline=simulate_offline, d0_parameters=params, evaluated_units=all_rows, passing_units=passing_rows, partial_units=partial_units, partial_current_unit=partial_units[0] if partial_units else None, pending_branches=pending, failed_attempts=failures, budget_state=ledger.snapshot(), d2_gate_open=False, execution_summary=summary))
+        write_json(outcomes_out, payload)
+        if errors:
+            raise errors[0]
+        return payload
     ipw_rows = [dict(unit_id=r['unit_id'], family_id=r['family_id'], task_id=r['task_id'], stratum_id=r['stratum_id'], deduction=r['deduction_weight'], inclusion_prob=r['inclusion_prob'], recovered_by_P=r['evidence_status']=='plain_recoverable', recovered_by_D=r['operational_label']=='delivery_responsive', recovered_by_S=r['operational_label']=='self_check_responsive', recovered_by_R_explicit=r['operational_label']=='explicit_rule_responsive', recovered_by_R_implicit=r['operational_label']=='implicit_rule_responsive', inconclusive=r['evidence_status']=='inconclusive') for r in all_rows]
-    payload = seal(dict(stage='D1', status='completed', mode='simulation' if simulate_offline else 'executed', simulated_offline=simulate_offline, plan_sha256=plan['plan_sha256'], d1_plan_sha256=plan['plan_sha256'], d0_parameters=params, primary_test_family=plan['primary_test_family'], execution_summary=dict(evaluated_unit_count=len(all_rows), total_branches_executed=executed, reused_cached_branches=cached, admission=ledger.state), evaluated_units=all_rows, passing_units=passing_rows, ipw_recoverability_summary=compute_ipw_recoverability_ratio(ipw_rows), r12_passing_harm_evaluation=evaluate_harm_on_passing_units(passing_rows, delta=params['delta'], alpha=params['alpha'])))
+    payload = seal(dict(stage='D1', status='completed', mode='simulation' if simulate_offline else 'executed', simulated_offline=simulate_offline, plan_sha256=plan['plan_sha256'], d1_plan_sha256=plan['plan_sha256'], d0_parameters=params, primary_test_family=plan['primary_test_family'], execution_summary=summary, evaluated_units=all_rows, passing_units=passing_rows, ipw_recoverability_summary=compute_ipw_recoverability_ratio(ipw_rows), r12_passing_harm_evaluation=evaluate_harm_on_passing_units(passing_rows, delta=params['delta'], alpha=params['alpha'])))
     write_json(outcomes_out, payload)
     return payload
 
@@ -610,9 +765,17 @@ def main() -> int:
     parser.add_argument("--receipts-dir", type=Path, default=DEFAULT_RECEIPTS_DIR)
     parser.add_argument("--approved-plan", type=Path, help="Execute this existing immutable plan; never rebuild on execute")
     parser.add_argument("--d0-freeze-file", type=Path, default=DEFAULT_D0_FREEZE_FILE)
-    parser.add_argument("--n-per-arm", type=int, default=24)
+    parser.add_argument("--n-per-arm", type=int, default=14)
     parser.add_argument("--r-b", type=int, default=6)
     parser.add_argument("--target-per-stratum", type=int, default=3)
+    parser.add_argument("--target-failure-units", type=int, default=24)
+    parser.add_argument("--passing-harm-sample-size", type=int, default=6)
+    parser.add_argument("--estimand", choices=("conditional_frozen_dev_pool", "family_population"), default="conditional_frozen_dev_pool")
+    parser.add_argument("--delta", type=float, default=.10)
+    parser.add_argument("--tau", type=float, default=.20)
+    parser.add_argument("--alpha", type=float, default=.05)
+    parser.add_argument("--ceiling-threshold", type=float, default=.05)
+    parser.add_argument("--gate-audit", type=Path, default=L2_ROOT / "reports/v3_gates_g2_g3_g4_audit_20261017.json")
     parser.add_argument("--plan-only", action="store_true", help="Generate plan JSON without running requests (default)")
     parser.add_argument("--execute", action="store_true", help="Execute planned branches (requires --d0-confirmed)")
     parser.add_argument("--d0-confirmed", action="store_true", help="Explicit flag confirming user has frozen D0")
@@ -631,6 +794,10 @@ def main() -> int:
         n_per_arm=args.n_per_arm,
         r_b=args.r_b,
         target_per_stratum=args.target_per_stratum,
+        target_failure_units=args.target_failure_units,
+        passing_harm_sample_size=args.passing_harm_sample_size,
+        estimand=args.estimand, delta=args.delta, tau=args.tau, alpha=args.alpha,
+        ceiling_threshold=args.ceiling_threshold, gate_audit_path=args.gate_audit,
     )
     if not args.execute:
         write_json(args.out, plan)
@@ -642,8 +809,10 @@ def main() -> int:
         f"  sampled_ladder_units   = {plan['stratified_sampling_frame']['total_sampled_units']}\n"
         f"  sampled_passing_harm   = {plan['r12_passing_harm_check_plan']['sampled_passing_unit_count']}\n"
         f"  total_planned_branches = {plan['budget_and_stop_conditions']['total_planned_branches']}\n"
-        f"  max_actor_requests_cap = {plan['budget_and_stop_conditions']['max_actor_requests_cap']}\n"
-        f"  est_wall_clock_hours   = {plan['budget_and_stop_conditions']['estimated_wall_clock_hours_upper_bound']} h"
+        f"  schedule_request_bound = {plan['budget_and_stop_conditions']['max_actor_requests_cap']}\n"
+        f"  hard_HTTP_attempt_cap  = {plan['budget_and_stop_conditions'].get('hard_actor_http_attempts', 'not specified')}\n"
+        f"  hard_wall_clock_hours  = {plan['budget_and_stop_conditions'].get('max_wall_seconds', 0) / 3600:g}\n"
+        f"  reference_schedule_hours = {plan['budget_and_stop_conditions'].get('reference_hours_full_schedule', plan['budget_and_stop_conditions'].get('estimated_wall_clock_hours_upper_bound', 0))} h"
     )
 
     if args.execute:
@@ -682,7 +851,7 @@ def main() -> int:
             f"  evaluated_unit_count     = {outcomes['execution_summary']['evaluated_unit_count']}\n"
             f"  total_branches_executed  = {outcomes['execution_summary']['total_branches_executed']}\n"
             f"  reused_cached_branches   = {outcomes['execution_summary']['reused_cached_branches']}\n"
-            f"  level1_generic_share_lb  = {outcomes['ipw_recoverability_summary'].get('level1_generic_share_lower_bound')}"
+            f"  status                  = {outcomes['status']}"
         )
     return 0
 

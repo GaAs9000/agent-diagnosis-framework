@@ -11,6 +11,9 @@ import fcntl
 import hashlib
 import json
 import math
+import os
+import threading
+from functools import wraps
 from pathlib import Path
 import time
 from typing import Any
@@ -38,7 +41,10 @@ def verify_seal(value: dict, field: str = 'artifact_sha256') -> None:
 def write_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + '.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    with temp.open('w') as handle:
+        handle.write(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        handle.flush()
+        os.fsync(handle.fileno())
     temp.replace(path)
 
 
@@ -55,11 +61,32 @@ def approve(plan: dict, freeze: dict | None) -> dict:
     caps = freeze.get('limits') or {}
     for key in ('max_requests', 'max_tokens', 'max_cost_usd', 'max_wall_seconds', 'max_invalid_attempts', 'max_tokens_per_request', 'usd_per_token_upper_bound'):
         val = caps.get(key)
-        if type(val) not in (int, float) or not math.isfinite(val) or val <= 0:
-            raise ValueError(f'positive finite frozen limit required: {key}')
+        if type(val) not in (int, float) or not math.isfinite(val) or val < 0 or (val == 0 and key not in ('max_cost_usd', 'usd_per_token_upper_bound')):
+            raise ValueError(f'finite frozen limit required (positive except API cost/price): {key}')
+    concurrency = plan.get('execution_concurrency', 1)
+    if type(concurrency) is not int or not 1 <= concurrency <= 3:
+        raise ValueError('frozen execution_concurrency must be an integer from 1 to 3')
+    if freeze.get('execution_concurrency', concurrency) != concurrency:
+        raise ValueError('execution concurrency differs from frozen plan')
+    budget = plan.get('budget_and_stop_conditions') or {}
+    for limit, planned in (('max_requests', 'hard_actor_http_attempts'), ('max_wall_seconds', 'max_wall_seconds')):
+        if planned in budget and caps[limit] > budget[planned]:
+            raise ValueError(f'frozen {limit} exceeds approved plan hard cap')
+    if caps['max_cost_usd'] == 0 or caps['usd_per_token_upper_bound'] == 0:
+        actor = plan.get('actor_identity') or {}
+        if plan.get('pricing_mode') != 'local_no_provider_charge' or actor.get('provider') != 'local' or not all(actor.get(k) for k in ('model', 'harness', 'endpoint')):
+            raise ValueError('zero API cost/price requires frozen local provider identity and pricing_mode')
     if caps['max_tokens_per_request'] > caps['max_tokens']:
         raise ValueError('per-request token reservation exceeds total token cap')
     return caps
+
+
+def _serialized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return call
 
 
 class Admission:
@@ -69,6 +96,8 @@ class Admission:
     charged and are never automatically retried by receipt consumers.
     """
     def __init__(self, path: Path, plan_hash: str, caps: dict):
+        self._lock = threading.RLock()
+        self._thread = threading.local()
         self.path, self.caps = path, caps
         self.state = read_json(path) if path.exists() else dict(plan_sha256=plan_hash, started_at=time.time(), requests=0, tokens=0, cost_usd=0.0, invalid_attempts=0, sends=[])
         if path.exists():
@@ -76,22 +105,70 @@ class Admission:
         self.state.pop('artifact_sha256', None)
         if self.state['plan_sha256'] != plan_hash:
             raise ValueError('ledger belongs to another plan')
+        if self.state.get('limits', caps) != caps:
+            raise ValueError('frozen limits differ from persisted admission ledger')
+        self.state['limits'] = dict(caps)
         self.current = None
         self.save()
 
+    @property
+    def current(self):
+        return getattr(self._thread, 'current', None)
+
+    @current.setter
+    def current(self, value):
+        self._thread.current = value
+
+    @_serialized
+    def snapshot(self):
+        return copy.deepcopy(self.state)
+
+    @_serialized
+    def close(self, reason):
+        self.state.setdefault('stop_reason', reason)
+        self.save()
+
+    @_serialized
+    def exhaustion_reason(self):
+        if self.state.get('stop_reason'):
+            return self.state['stop_reason']
+        try:
+            self.check_new_request()
+        except RuntimeError as exc:
+            return str(exc)
+        return None
+
+    @_serialized
     def save(self):
         write_json(self.path, seal(self.state))
 
+    @_serialized
     def remaining_seconds(self):
         return max(0.0, self.caps["max_wall_seconds"] - (time.time() - self.state["started_at"]))
 
+    @_serialized
     def check(self):
         if time.time() - self.state['started_at'] >= self.caps['max_wall_seconds']:
             raise RuntimeError('frozen wall-clock cap reached')
         if self.state['invalid_attempts'] >= self.caps['max_invalid_attempts']:
             raise RuntimeError('frozen invalid-attempt cap reached')
 
+    @_serialized
+    def check_new_request(self):
+        if self.state.get('stop_reason'):
+            raise RuntimeError(self.state['stop_reason'])
+        self.check()
+        if self.state['requests'] >= self.caps['max_requests']:
+            raise RuntimeError('frozen HTTP-attempt cap reached')
+        if self.state['tokens'] + self.caps['max_tokens_per_request'] > self.caps['max_tokens']:
+            raise RuntimeError('frozen token cap reached')
+        if self.state['cost_usd'] + self.caps['max_tokens_per_request'] * self.caps['usd_per_token_upper_bound'] > self.caps['max_cost_usd']:
+            raise RuntimeError('frozen API-cost cap reached')
+
+    @_serialized
     def acquire(self, estimate, timeout=None):
+        if self.state.get('stop_reason'):
+            return False
         self.check()
         tokens = max(int(math.ceil(estimate or 0)), int(self.caps['max_tokens_per_request']))
         cost = tokens * self.caps['usd_per_token_upper_bound']
@@ -107,6 +184,7 @@ class Admission:
         self.save()
         return True
 
+    @_serialized
     def reconcile(self, estimate, actual):
         if self.current is None:
             raise RuntimeError('reconcile without admission')
@@ -122,6 +200,7 @@ class Admission:
             raise RuntimeError('transport exceeded frozen token reservation')
         self.check()
 
+    @_serialized
     def invalid(self):
         self.state['invalid_attempts'] += 1
         self.save()
@@ -174,6 +253,11 @@ def native_branch(unit: dict, branch: dict, message: dict, *, runs_dir: Path, ou
         raise ValueError('frozen parent/checkpoint/config identity changed')
     cp = read_json(parent / 'checkpoints' / f'cp{k:06d}.json')
     config = copy.deepcopy(read_json(parent / 'raw/resolved_config.json'))
+    frozen_actor = unit.get('actor_identity')
+    if frozen_actor:
+        actual_actor = dict(model=config['model'].get('model'), harness=config['agent'].get('harness'), endpoint=config['model'].get('base_url'), provider='local')
+        if actual_actor != frozen_actor:
+            raise ValueError('native actor/endpoint differs from frozen pricing identity')
     used = int(cp['budget_used']['model_requests'])
     if config['budget']['max_model_requests'] - used != int(branch['remaining_budget']):
         raise ValueError('remaining budget differs from native inherited budget')
@@ -191,8 +275,17 @@ def native_branch(unit: dict, branch: dict, message: dict, *, runs_dir: Path, ou
         raise ValueError('branch evidence does not verify')
     if identity(parent, k) != before:
         raise ValueError('parent evidence changed during branch')
-    score = item_score(output, unit)
+    try:
+        score = item_score(output, unit)
+    except ValueError as exc:
+        reason = limiter.exhaustion_reason() if hasattr(limiter, 'exhaustion_reason') else None
+        if not reason:
+            raise
+        return dict(valid_attempt=False, status='incomplete', cap_exceeded=reason, error=str(exc), package_path=str(output.resolve()), package_index_sha256=verified['index_sha256'], simulated_offline=False)
+
     manifest = read_json(output / 'manifest.json')
+    if (manifest.get('status') or {}).get('termination') == 'wall_time_budget':
+        cap_exceeded = cap_exceeded or 'frozen transport admission or wall-clock cap reached'
     return dict(valid_attempt=True, status='completed', outcome_score=score, branch_episode_id=manifest['episode_id'], package_path=str(output.resolve()), package_index_sha256=verified['index_sha256'], requests_used=int(manifest['counts']['model_requests']), cap_exceeded=cap_exceeded, official_grade_sha256=file_digest(output / 'official_grade.json'), parent_identity=before, simulated_offline=False)
 
 

@@ -1,0 +1,48 @@
+{
+  "recorded_at_utc": "2026-10-17T17:16:49.146123+00:00",
+  "status": "parameters_approved_measurement_inputs_incomplete",
+  "d0_frozen": false,
+  "scientific_efficacy": "not_tested",
+  "integration_tests": {
+    "passed": 346,
+    "elapsed_seconds": 45.12,
+    "log": "validation/d0_20261018/final_tests.log"
+  },
+  "wheel": {
+    "wheel": "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/wheel/l2_evidence_analyst-0.3.0-py3-none-any.whl",
+    "sha256": "f0d0edf2f65b9e91d7aa610fcb5ca4939736f34549e4eb306615db90ae7135b2",
+    "python_source_files_byte_equal": 24
+  },
+  "actor_or_analyst_requests_in_preparation": 0,
+  "official_scorer_invocations_in_preparation": 107,
+  "human_rule_sample": {
+    "approved": 10,
+    "pending": 53,
+    "scope": "classification and visible/hidden split proposals only"
+  },
+  "g3_human_conclusions_completed": 0,
+  "dev45_before_prerequisite_resume": {
+    "sealed": 45,
+    "study_valid": 41,
+    "invalid": 4,
+    "g2_completed": 0
+  },
+  "artifacts": {
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/final_tests.log": "c7cb840f8f879d7e52f998a97e3e6f68e9342d0321cfff96a4370592ea0a959c",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/wheel_verification.json": "344a37fc9cc183b8152265a22f43aef18621b63411b64b648bb0f72b1de394d6",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/human_review/approved_batch01.json": "b8a8702eb2ffc071871855c87dfccc2c914df28663525f4aa5ea382216e62f80",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/g3_review/verification.json": "8309ba6207feda7fa8eaef37895604b85a99be0b0d70227a04b72606a38bf266",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/g3_review/g3_20_actual_review.json": "a7fc51ee644480c565ed6e549a0b400b03b9900682db4f09a443de958b045193",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/g3_review/source_preflight_patch_validation.json": "d0f2354fc182c686da5e0ea783995f0fda443b87abbfbe139980032fdccf73be",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/census/manifest.json": "b9f2de885e095f2e4b7f791f7c5ed3b34f7f717c7853859de1c12bbe05da72a1",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/census/verification.json": "23d8c6978022003cd0ae6d4333899ec9045110d51a39269bbeac7e8d5d3baaa0",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/power/calibration.json": "572abf03239eb03f0418f2bdac6b61bf5d8cf208dca8f4572213ba3f3e205c60",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/server_cleanup/cleanup_final_receipt.json": "a1ef850774e76696b0239dd75ddc5effe1d3e438f7733f3997ff544b159371be"
+  },
+  "limitations": [
+    "n14 does not establish individual E2 power after the frozen multiplicity correction",
+    "synthetic power simulation is not benchmark efficacy",
+    "20 G2 engineering pilot pairs cannot certify a +/-0.05 family Hoeffding interval at K9",
+    "full D0 remains unfrozen; D1/D3/H not launched by preparation"
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "status": "user_confirmed",
+  "approval_scope": "Only listed classification and visible/hidden split proposals; not the whole task catalog or G3",
+  "source_question_call_id": "call_be8335bee6464e5fbe9bc61ef80783b5",
+  "user_answer": "批准这10条的分类与拆分口径",
+  "recorded_at_utc": "2026-10-17T16:40:57.737143+00:00",
+  "material_before_sha256": "cad44bfd4b8d3ec4a39ab48248887f7e72efb6d415b971eeb0e1e553278236d5",
+  "reviewer": "用户（本对话确认）",
+  "rows": [
+    {
+      "sample_id": 1,
+      "task_id": "officeval_003",
+      "rule_as_sampled": "文档表格中没有空白行",
+      "human_label": "explicit",
+      "public_visible_text_exact_quote": "再把没有字的空行删掉",
+      "precise_hidden_or_unverified_segment": ""
+    },
+    {
+      "sample_id": 2,
+      "task_id": "officeval_003",
+      "rule_as_sampled": "文档表格中所有文本：下方都出现横线；横线长度与表格上边框长度一致；颜色为黑色，类型为细实线",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "每一行文字都放到表里面并加上横线，横线样式和图片中的一样",
+      "precise_hidden_or_unverified_segment": "横线长度与表格上边框长度一致；颜色为黑色，类型为细实线（是否可由原图支持待人工看图）"
+    },
+    {
+      "sample_id": 3,
+      "task_id": "officeval_003",
+      "rule_as_sampled": "文中没有出现\"侯景澜：上月两项重点现场事项整改推进如下：\"文本内容",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "其他格式保持不变",
+      "precise_hidden_or_unverified_segment": "target_text = \"侯景澜：上月两项重点现场事项整改推进如下：\"；缺失扣1分"
+    },
+    {
+      "sample_id": 10,
+      "task_id": "officeval_033",
+      "rule_as_sampled": "+5：产品页组合规格零售价表",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "所有零售价的数值替换为乘以1.1之后的数值，其他格式不变",
+      "precise_hidden_or_unverified_segment": "+5：产品页组合规格零售价表；固定整数目标、抽查页面/列及舍入约定仅见 rubric/verifier"
+    },
+    {
+      "sample_id": 11,
+      "task_id": "officeval_033",
+      "rule_as_sampled": "+1：订购与交付说明页价格换算提醒表",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "所有零售价的数值替换为乘以1.1之后的数值，其他格式不变",
+      "precise_hidden_or_unverified_segment": "+1：订购与交付说明页价格换算提醒表；固定整数目标、抽查页面/列及舍入约定仅见 rubric/verifier"
+    },
+    {
+      "sample_id": 12,
+      "task_id": "officeval_033",
+      "rule_as_sampled": "-1：任意价格单元格出现超过页面50%的空白、乱码、非数字文本或错误符号",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "所有零售价的数值替换为乘以1.1之后的数值，其他格式不变",
+      "precise_hidden_or_unverified_segment": "超过页面50%的空白、乱码、非数字文本或错误符号；具体检测阈值仅见 verifier"
+    },
+    {
+      "sample_id": 16,
+      "task_id": "officeval_090",
+      "rule_as_sampled": "“汇总”!H3:H62用公式=IFERROR(G/F,\"\")或等效并下拉填充至H62、格式0.00，结果与G列除以F列一致",
+      "human_label": "implicit",
+      "public_visible_text_exact_quote": "将所有子表中的总重量合计数据以及砼体积数据提取到汇总表",
+      "precise_hidden_or_unverified_segment": "H3:H62必须为=IFERROR(G3/F3,\"\")或等效公式，向下填充、数值格式0.00；新增含量计算不是公开提取任务文字"
+    },
+    {
+      "sample_id": 17,
+      "task_id": "officeval_090",
+      "rule_as_sampled": "Sheet3及同结构子表：砼体积取各子表D20填入汇总F列、总重量合计取各子表I10填入汇总G列",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "将所有子表中的总重量合计数据以及砼体积数据提取到汇总表",
+      "precise_hidden_or_unverified_segment": "F列必须通过formula_reference解析为(sheet,\"D20\")且G列为(sheet,\"I10\")；正确静态数值不能满足此项"
+    },
+    {
+      "sample_id": 18,
+      "task_id": "officeval_090",
+      "rule_as_sampled": "Sheet5及同结构子表：砼体积取各子表E21填入汇总F列、总重量合计取各子表I11填入汇总G列",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "将所有子表中的总重量合计数据以及砼体积数据提取到汇总表",
+      "precise_hidden_or_unverified_segment": "F列必须通过formula_reference解析为(sheet,\"E21\")且G列为(sheet,\"I11\")；正确静态数值不能满足此项"
+    },
+    {
+      "sample_id": 19,
+      "task_id": "officeval_003",
+      "rule_as_sampled": "文档表格中所有横线：相邻两条横线之间的距离几乎相等，只允许有0.15cm的误差",
+      "human_label": "ambiguous",
+      "public_visible_text_exact_quote": "横线样式和图片中的一样",
+      "precise_hidden_or_unverified_segment": "最大值 - 最小值 ≤ 0.15cm；tolerance = 0.15"
+    }
+  ]
+}

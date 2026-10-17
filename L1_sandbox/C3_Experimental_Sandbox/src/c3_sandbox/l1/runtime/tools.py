@@ -368,7 +368,10 @@ def _resolve_workspace_target(workspace: Path, raw_path: str) -> tuple[Path, str
         rel = clean[len('/workspace/'):]
     else:
         rel = clean
-    p = confined(workspace, rel)
+    try:
+        p = confined(workspace, rel)
+    except ValueError as exc:
+        raise L1Error(str(exc)) from exc
     rel_posix = p.relative_to(workspace.resolve()).as_posix()
     return p, rel_posix
 

@@ -1,0 +1,206 @@
+{
+  "schema_version": "l2-0.5.3-d0-conditional-pool",
+  "status": "parameters_approved_inputs_pending",
+  "d0_frozen": false,
+  "user_authorization": {
+    "received_date": "2026-10-18",
+    "source": "direct user go-ahead in this chat; scope includes approved bounded execution once measurement prerequisites clear",
+    "request_authorization_reconfirmation_required": false,
+    "S_clarification_call_id": "call_621f863f27154364af4656cccf66490a",
+    "S_decision": "preserve_existing_D_and_append_approved_self_check"
+  },
+  "parameters": {
+    "estimand": "conditional_frozen_dev_pool",
+    "n_per_arm": 14,
+    "delta": 0.1,
+    "tau": 0.2,
+    "alpha": 0.05,
+    "ceiling_threshold": 0.05,
+    "v3_p1_threshold": 0.2,
+    "target_failure_units": 24,
+    "passing_harm_sample_size": 6,
+    "execution_concurrency": 3
+  },
+  "budget": {
+    "expected_actor_http_attempts": 12000,
+    "hard_actor_http_attempts": 15000,
+    "max_wall_seconds": 86400,
+    "include_retries": true,
+    "exhaustion_policy": "incomplete_no_pool_redefinition",
+    "observed_single_gpu_3_concurrent_requests_per_hour": 352.3,
+    "unverified_two_gpu_650_per_hour_used_for_planning": false,
+    "expected_12000_at_observed_rate_hours": 34.06187908032926,
+    "hard_15000_at_observed_rate_hours": 42.57734885041158,
+    "observed_rate_times_24h_requests": 8455.2
+  },
+  "messages": {
+    "P": {
+      "arm": "P",
+      "level": 0,
+      "eligible": true,
+      "evidence_status": "eligible",
+      "message": null,
+      "message_sha256": null,
+      "prefix_arm": null
+    },
+    "D": {
+      "arm": "D",
+      "level": 1,
+      "eligible": true,
+      "evidence_status": "eligible",
+      "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+      "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+      "prefix_arm": "P"
+    },
+    "S": {
+      "arm": "S",
+      "level": 1,
+      "eligible": true,
+      "evidence_status": "eligible",
+      "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。\n\n在宣布结束前，请先重新通读原始任务指令，自行打开并检查 submission/ 下已生成的交付文件，核对是否存在遗漏部分、空表/空页、公式或代码报错、以及未完成的步骤；如有问题请先修正并重新保存后再结束。",
+      "message_sha256": "f9ed18d13fa928ddf68a393967636bad224f97553c336e4a0f21339b93e0e83a",
+      "prefix_arm": "D"
+    }
+  },
+  "actor": {
+    "model": "Qwen/Qwen3.6-27B",
+    "harness": "pi",
+    "source_config_path": "L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.qwen36.pi.t1.json",
+    "source_config_sha256": "daf71f6ee910fedfe65a59aca24db037cc4e5131ba4e76354ae7d69a9b6267c1"
+  },
+  "heldout_metadata": {
+    "family_mapping_sha256": "d4c801c8f588cce867ba926b67d741eea8679b4a044dafd4c3bd3a1a32c3548d",
+    "old_exposed_task_ids": [
+      "officeval_006",
+      "officeval_015",
+      "officeval_035",
+      "officeval_036",
+      "officeval_041",
+      "officeval_058",
+      "officeval_066",
+      "officeval_082",
+      "officeval_093"
+    ],
+    "excluded_exposed_family_ids": [
+      "excel-editable-shapes",
+      "excel-interactive-form-macro",
+      "financial-extraction-to-word",
+      "pdf-exam-to-word",
+      "pdf-translation-to-word",
+      "ppt-composite-edits",
+      "ppt-data-chart",
+      "ppt-label-annotation",
+      "word-answer-card"
+    ],
+    "frozen_clean_families": [
+      {
+        "family_id": "bilingual-contract-layout",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_034"
+        ]
+      },
+      {
+        "family_id": "image-to-word-table",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_029"
+        ]
+      },
+      {
+        "family_id": "office-embedded-links",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_059",
+          "officeval_078"
+        ]
+      },
+      {
+        "family_id": "pdf-contents-page",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_017"
+        ]
+      },
+      {
+        "family_id": "pdf-exam-layout",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_027"
+        ]
+      },
+      {
+        "family_id": "pdf-resume-edit",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_032"
+        ]
+      },
+      {
+        "family_id": "ppt-merge-restructure",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_068"
+        ]
+      },
+      {
+        "family_id": "ppt-multimedia-animation",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_042",
+          "officeval_044",
+          "officeval_045",
+          "officeval_048",
+          "officeval_061",
+          "officeval_062",
+          "officeval_065",
+          "officeval_067",
+          "officeval_076",
+          "officeval_077"
+        ]
+      },
+      {
+        "family_id": "ppt-template-restyle",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_075"
+        ]
+      },
+      {
+        "family_id": "ppt-translation",
+        "split": "heldout",
+        "task_ids": [
+          "officeval_079"
+        ]
+      }
+    ],
+    "content_read": false,
+    "execution_authorized_before_D1_D3_complete": false
+  },
+  "review": {
+    "approved_sample_ids": [
+      1,
+      2,
+      3,
+      10,
+      11,
+      12,
+      16,
+      17,
+      18,
+      19
+    ],
+    "scope": "classification and visible/hidden split proposals only",
+    "pending_sample_count": 53,
+    "full_task_catalog_approved": false,
+    "g3_human_approved_count": 0
+  },
+  "dataset_snapshot": {
+    "progress_updated_at": "2026-10-17T16:12:31.435172Z",
+    "study_valid_parents": 41,
+    "g2_pairs": 0
+  },
+  "power_warning": "n=14 does not resolve individual full-ladder E2 claims under current multiplicity bounds; conditional D2 simulation is not benchmark efficacy",
+  "recorded_at_utc": "2026-10-17T16:49:49.534826+00:00",
+  "artifact_sha256": "a20dc83a7219c3be5d0b39a586e9af83d2ebaf0b7ea61656b3f860ed3a23d552"
+}

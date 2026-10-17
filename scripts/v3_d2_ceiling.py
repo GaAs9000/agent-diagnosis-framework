@@ -9,10 +9,11 @@ Contract (Notion V3 §3.7, §5.2 `V3-P3`, §8.2, R13, R16, R18):
   * Verifies per-arm `branch_receipts` with distinct `branch_id`s, `status == "completed"`, matching
     `anchor_k` / `remaining_budget`, and `>= min_replicates_per_arm` (at least 2) independent replicates
     so selection (`[:mid]`) and evaluation (`[mid:]`) never share a continuation branch.
-- Splits evaluated units into two strictly disjoint halves `I_1` and `I_2` (`I_1 ∩ I_2 = ∅`), enforces
-  distinct fixed-strategy (`P, D, S, R_explicit`) vs diagnostic (`P, D, S, R_explicit, R_single, R`) arm pools,
+- Splits continuation branches within each frozen unit into disjoint selection/evaluation halves,
+  with physical execution identities checked globally. Both policies select on the same half.
+  Distinct fixed-strategy (`P, D, S, R_explicit`) vs diagnostic (`P, D, S, R_explicit`, explicit `R_single`) arm pools
   preserves signed evaluation gains (never clamping negative gains to 0), and gates Stage D3 on the
-  one-sided deduction-weighted 95% lower confidence bound (`deduction_weighted_lb95 > ceiling_threshold`).
+  approved conditional DEV-pool deduction-weighted 95% lower bound. The family result remains auxiliary.
 - Supports both `--plan-only` and `--execute` CLI flags (`R18`), issuing 0 model requests in all modes.
 """
 from __future__ import annotations
@@ -40,6 +41,7 @@ from l2_sandbox.v05 import (  # noqa: E402
 )
 
 from l2_sandbox.v3_execution import digest, seal, verify_seal, verify_branch, write_json
+from l2_sandbox.measurement_gates import verify_measurement_gate_binding
 
 DEFAULT_D1_PLAN = L2_ROOT / "reports" / "v3_d1_ladder_plan_20261017.json"
 DEFAULT_D1_OUTCOMES = L2_ROOT / "reports" / "v3_d1_ladder_outcomes_20261017.json"
@@ -117,7 +119,10 @@ def evaluate_d2_from_d1_payload(
     min_replicates_per_arm: int = 2,
     require_branch_receipts: bool = True,
     mode: str = "execute",
+    estimand: str | None = None,
 ) -> dict[str, Any]:
+    if estimand is None:
+        estimand = ((d1_plan_payload or {}).get("d0_candidate_parameters") or {}).get("estimand", "family_population")
     raw_units = d1_payload.get("evaluated_units") or []
     req_reps = max(2, int(min_replicates_per_arm))
 
@@ -131,6 +136,8 @@ def evaluate_d2_from_d1_payload(
             raise ValueError('sealed D1 plan required')
         verify_seal(d1_plan_payload, 'plan_sha256')
         verify_seal(d1_payload)
+        if estimand == 'conditional_frozen_dev_pool' and not d1_payload.get('simulated_offline'):
+            verify_measurement_gate_binding(d1_plan_payload)
         if d1_payload.get('status') != 'completed':
             raise ValueError('D1 execution not completed')
         plan_sha_expected = d1_plan_payload['plan_sha256']
@@ -140,6 +147,8 @@ def evaluate_d2_from_d1_payload(
             raise ValueError('D2 threshold or minimum replication differs from frozen D0')
         if (delta, tau, alpha) != tuple(d1_plan_payload['d0_candidate_parameters'][k] for k in ('delta','tau','alpha')):
             raise ValueError('D2 method parameters differ from frozen D1')
+        if estimand != d1_plan_payload['d0_candidate_parameters'].get('estimand', 'family_population'):
+            raise ValueError('D2 estimand differs from frozen D1')
         planned_schedule_by_uid = {r['unit_id']: r for r in d1_plan_payload['unit_schedules']}
         if set(r['unit_id'] for r in raw_units) != set(planned_schedule_by_uid):
             raise ValueError('D1 outcome coverage differs from planned units')
@@ -149,7 +158,7 @@ def evaluate_d2_from_d1_payload(
         seen_packages = set()
         for row in raw_units:
             planned = planned_schedule_by_uid[row['unit_id']]
-            for key in ('episode_id','task_id','family_id','unit_level','defect_name','rule_source','deduction_weight','stratum_id','inclusion_prob','anchor_k','anchor_type','remaining_budget','comparison_ids','parent_identity','e1_observation','deployable_arms'):
+            for key in ('episode_id','task_id','family_id','unit_level','defect_name','rule_source','deduction_weight','stratum_id','inclusion_prob','anchor_k','anchor_type','remaining_budget','comparison_ids','parent_identity','e1_observation','deployable_arms','ineligible_arms'):
                 if row.get(key) != planned.get(key):
                     raise ValueError(f'unit metadata differs from frozen plan: {key}')
             if row.get('terminal_y') != planned.get('terminal_y', 0.0):
@@ -208,8 +217,10 @@ def evaluate_d2_from_d1_payload(
                 delta=delta,
                 tau=tau,
                 alpha=alpha,
+                ineligible_arms=row.get("ineligible_arms", ()),
                 primary_family_size=d1_plan_payload["primary_test_family"]["size"],
                 comparison_ids=planned_schedule_by_uid[row["unit_id"]]["comparison_ids"],
+                branch_identities={a: [r.get("package_index_sha256", r["branch_id"]) for r in rs] for a, rs in row["branch_receipts"].items()},
             )
             units.append(
                 DiagnosticUnitV05(
@@ -219,8 +230,10 @@ def evaluate_d2_from_d1_payload(
                     benchmark=str(row.get("benchmark") or "officeval"),
                     unit_level=str(row.get("unit_level") or "rubric_item"),
                     family_id=row.get("family_id"),
+                    inclusion_prob=row["inclusion_prob"],
+                    stratum_id=row["stratum_id"],
                     defect_name=str(row.get("defect_name") or "defect"),
-                    deduction_weight=float(row.get("deduction_weight") or 1.0),
+                    deduction_weight=float(row.get("deduction_weight", 1.0)),
                     rule_source=str(row.get("rule_source") or "ambiguous"),
                     e1_observation=E1Observation(
                         e1_class="never_succeeded_on_disk",
@@ -228,7 +241,7 @@ def evaluate_d2_from_d1_payload(
                         k_star=int(row.get("anchor_k") or 0),
                         max_item_score=0.0,
                         terminal_item_score=float(row.get("terminal_y") or 0.0),
-                        deduction=float(row.get("deduction_weight") or 1.0),
+                        deduction=float(row.get("deduction_weight", 1.0)),
                     ),
                     e2_response_vector=vec,
                     operational_label=op_lbl,
@@ -240,12 +253,20 @@ def evaluate_d2_from_d1_payload(
             uid = str(row.get("unit_id") or "<unknown>") if isinstance(row, dict) else "<non_dict>"
             rejected_units.append({"unit_id": uid, "reasons": list(plan_binding_errors)})
 
-    crossfit = compute_cross_fitted_diagnostic_value_ceiling(
-        units,
-        ceiling_threshold=ceiling_threshold,
-        alpha=alpha,
-        min_replicates_per_arm=req_reps,
-    )
+    try:
+        crossfit = compute_cross_fitted_diagnostic_value_ceiling(
+            units,
+            ceiling_threshold=ceiling_threshold,
+            alpha=alpha,
+            min_replicates_per_arm=req_reps,
+            estimand=estimand,
+        )
+    except (ValueError, RuntimeError, KeyError, TypeError) as exc:
+        plan_binding_verified = False
+        plan_binding_errors.append(str(exc))
+        rejected_units.extend({"unit_id": u.unit_id, "reasons": [str(exc)]} for u in units)
+        units = []
+        crossfit = compute_cross_fitted_diagnostic_value_ceiling([], ceiling_threshold=ceiling_threshold, alpha=alpha, min_replicates_per_arm=req_reps, estimand=estimand)
 
     if mode == "plan_only" and not raw_units:
         status = "plan_only_pending_d1_execution"
@@ -271,6 +292,7 @@ def evaluate_d2_from_d1_payload(
         "analyst_requests_issued": 0,
         "status": status,
         "d0_parameters": {
+            "estimand": estimand,
             "ceiling_threshold": ceiling_threshold,
             "delta": delta,
             "tau": tau,
@@ -299,6 +321,7 @@ def main() -> int:
     parser.add_argument("--d1-plan", type=Path, default=None)
     parser.add_argument("--d1-outcomes", type=Path, default=DEFAULT_D1_OUTCOMES)
     parser.add_argument("--out", type=Path, default=DEFAULT_D2_OUT)
+    parser.add_argument("--estimand", choices=("family_population", "conditional_frozen_dev_pool"), default="conditional_frozen_dev_pool")
     parser.add_argument("--ceiling-threshold", type=float, default=0.05)
     parser.add_argument("--delta", type=float, default=0.10)
     parser.add_argument("--tau", type=float, default=0.20)
@@ -334,6 +357,7 @@ def main() -> int:
         min_replicates_per_arm=args.min_replicates_per_arm,
         require_branch_receipts=not args.allow_unreceipted,
         mode=mode,
+        estimand=args.estimand,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
