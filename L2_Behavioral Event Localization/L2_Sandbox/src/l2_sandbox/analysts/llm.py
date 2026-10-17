@@ -245,6 +245,8 @@ def _default_llm_transport(
         try:
             resp = backend.send(req_bytes, timeout=float(model_cfg.get('timeout_seconds', 120)))
             elapsed_s = round(time.time() - t0, 4)
+            if resp.metadata.get('transport_error'):
+                raise L2Error(f"LLM Analyst transport error: {resp.metadata['transport_error']}")
             if resp.metadata.get('body_truncated'):
                 raise L2Error('LLM Analyst response exceeded model.max_response_bytes')
             parsed = backend.parse(resp.body, 'l2-analyst')

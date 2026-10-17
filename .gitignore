@@ -43,12 +43,14 @@ L1_sandbox/C3_Experimental_Sandbox/docs/l1_v2/validation/
 
 # L2 local runs, example evidence bundles & validation outputs (data excluded, framework only)
 L2_Behavioral Event Localization/L2_Sandbox/runs/
+L2_Behavioral Event Localization/L2_Sandbox/diagnoses/
 L2_Behavioral Event Localization/L2_Sandbox/examples/officeval003/
 L2_Behavioral Event Localization/L2_Sandbox/examples/analyst_loop_fixture/
 L2_Behavioral Event Localization/L2_Sandbox/examples/legacy_fixture/
 L2_Behavioral Event Localization/L2_Sandbox/examples/plans/
 L2_Behavioral Event Localization/L2_Sandbox/validation/
 L2_Behavioral Event Localization/L2_Sandbox/cache/
+ORIGINAL_REQUEST.md
 
 # L3 local experiment plans, evidence and validation outputs
 L3_Agent Capability Boundary Discovery/L3_Sandbox/runs/

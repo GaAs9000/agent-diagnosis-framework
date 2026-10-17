@@ -8,8 +8,8 @@ from typing import Any
 
 from .config import CODE_VERSION
 from .evidence.l1 import L1Package
-from .grades import GATE_DEFECT_ID, NO_ARTIFACT_DEFECT_ID, OFFICE_EXTS, extract_task_rubric
-from .io import L2Error, sha_file, write_json
+from .grades import GATE_DEFECT_ID, NO_ARTIFACT_DEFECT_ID, OFFICE_EXTS, _extract_dim1_pass, extract_task_rubric
+from .io import L2Error, read_json, sha_file, write_json
 from .predicates import RULE_VOCABULARY, eval_predicate_on_turn
 
 
@@ -36,7 +36,7 @@ def _is_same_target_activity(turn_facts: list[dict[str, Any]], target_paths: lis
             combined = f'{cmd} {path_arg}'
             if any(tn and tn in combined for tn in target_names | target_stems):
                 return True
-            if any(ext in combined.lower() for ext in (*target_exts, '.png', '.pdf', 'slide', 'document.xml', 'submission')):
+            if any(ext in combined.lower() for ext in (*target_exts, '.png', '.pdf', 'slide', 'document.xml', 'submission', 'sokoban')):
                 return True
             if name in ('read', 'edit', 'write', 'write_file', 'run', 'bash') and combined.strip():
                 # Inspecting or scripting on the task's single office workflow
@@ -99,7 +99,7 @@ def summarize_uncorrected_window(
             inspect_preview_or_same_turns += 1
 
     n_win = len(window_turns)
-    kind_cn = '没交付' if kind == 'undelivered' else '改坏'
+    kind_cn = '没交付' if kind == 'undelivered' else ('从没做对' if kind == 'never' else '改坏')
     term_cn = '请求耗尽' if termination == 'request_budget' else ('主动结束' if termination == 'assistant_finished' else termination)
     summary_text = (
         f'{kind_cn}：窗口 {n_win} 回合（c{origin_turn}..c{T}），'
@@ -155,7 +155,17 @@ def build_defect_table(
     undelivered_gap = max(0.0, s_T - Y)
     peak_to_terminal_loss = max(0.0, max_s - s_T)
 
-    target_exts = set(OFFICE_EXTS)
+    desc_path = pkg.root / 'benchmark/description.json'
+    desc = read_json(desc_path) if desc_path.is_file() else {}
+    ev_info = desc.get('evaluation') or {}
+    is_lhtb = (
+        pkg.manifest.get('benchmark') == 'lhtb'
+        or desc.get('benchmark') == 'lhtb'
+        or desc.get('task_id') == 'sokoban'
+        or ev_info.get('kind') == 'lhtb-verifier'
+        or pkg.family_id == 'sokoban'
+    )
+    target_exts = {'.log'} if is_lhtb else set(OFFICE_EXTS)
     defects: list[dict[str, Any]] = []
 
     if Y < 1.0 - 1e-12:
@@ -321,7 +331,7 @@ def _summarize_run_for_contrast(pkg: L1Package, facts: list[dict[str, Any]]) -> 
     proj = og.get('projection') or {}
     raw = og.get('official_raw') if isinstance(og.get('official_raw'), dict) else {}
     y = float(proj['completion_rate']) if isinstance(proj.get('completion_rate'), (int, float)) else 0.0
-    dim1_pass = bool(raw.get('dim1_pass')) and raw.get('status') == 'ok'
+    dim1_pass = _extract_dim1_pass(raw, proj) and raw.get('status') == 'ok'
 
     sub_turns = [
         t for t in range(1, T + 1)

@@ -1,0 +1,23 @@
+{
+  "mode": "analyst",
+  "model": {
+    "adapter": "openai-compatible",
+    "kind": "local",
+    "model": "Qwen/Qwen3.6-27B",
+    "api_key_env": null,
+    "base_url": "http://127.0.0.1:8001/v1",
+    "parameters": {
+      "temperature": 0.0,
+      "max_tokens": 1024,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    },
+    "timeout_seconds": 300,
+    "max_response_bytes": 16777216
+  },
+  "budget": {
+    "max_analyst_requests": 2,
+    "wall_time_seconds": 600
+  }
+}

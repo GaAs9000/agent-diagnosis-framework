@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-10-16T12:31:58Z",
+  "verdict": "APPROVE",
+  "total_duration_s": 9.7,
+  "aml_b_gpu_audit": {
+    "gpu4_memory_used_mib": 83371,
+    "gpu4_memory_total_mib": 97887,
+    "gpu4_utilization_pct": 0,
+    "user_gpu_processes": [
+      {
+        "pid": 3638043,
+        "bus_id": "00000001:01:00.0",
+        "process": "VLLM::EngineCore"
+      }
+    ],
+    "slurm_jobs_count": 0
+  },
+  "aml_a_isolation_audit": {
+    "aml_a_slurm_jobs_count": 0,
+    "aml_a_gpu_pids_count": 0
+  },
+  "system_load_audit": {
+    "vllm_pid": 3636787,
+    "env_threads": {
+      "OMP_NUM_THREADS": 16,
+      "MKL_NUM_THREADS": 16,
+      "OPENBLAS_NUM_THREADS": 16
+    },
+    "cuda_visible_devices": "4"
+  },
+  "tunnel_socket_audit": {
+    "socket_path": "/Users/jiashen/.ssh/sockets/aml-b-8001.sock",
+    "socket_check": "Master running (pid=40369)",
+    "status": "HEALTHY"
+  },
+  "stress_test_audit": {
+    "concurrent_get_count": 10,
+    "concurrent_get_latencies_ms": [
+      224.00808334350586,
+      222.92089462280273,
+      15.952110290527344,
+      18.79715919494629,
+      241.89519882202148,
+      242.38300323486328,
+      248.25692176818848,
+      12.645959854125977,
+      18.542051315307617,
+      18.990039825439453
+    ],
+    "concurrent_chat_count": 3,
+    "concurrent_chat_latencies_ms": [
+      5134.359836578369,
+      5173.494100570679,
+      5174.01385307312
+    ],
+    "post_stress_socket_status": "Master running (pid=40369)"
+  }
+}

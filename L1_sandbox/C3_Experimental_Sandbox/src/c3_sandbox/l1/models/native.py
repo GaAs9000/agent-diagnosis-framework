@@ -103,9 +103,12 @@ class OpenAICompatibleBackend:
     def initial(self,system,prompt):
         return {'messages':[{'role':'system','content':system},{'role':'user','content':prompt}]}
     def request(self,conversation,tools):
-        return {'model':self.config['model'],'messages':copy.deepcopy(conversation['messages']),
-                'tools':[{'type':'function','function':copy.deepcopy(t)} for t in tools],
-                'tool_choice':'auto','stream':False,'n':1,**copy.deepcopy(self.config['parameters'])}
+        req={'model':self.config['model'],'messages':copy.deepcopy(conversation['messages']),
+             'stream':False,'n':1,**copy.deepcopy(self.config['parameters'])}
+        if tools:
+            req['tools']=[{'type':'function','function':copy.deepcopy(t)} for t in tools]
+            req['tool_choice']='auto'
+        return req
     def send(self,body,timeout):
         return self.http.post(self.http.base+'/chat/completions',body,timeout)
     def parse(self,body,request_id):

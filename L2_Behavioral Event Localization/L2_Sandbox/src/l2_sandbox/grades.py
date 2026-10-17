@@ -22,6 +22,7 @@ except ImportError:
     from c3_sandbox.l1.core.contracts import EvaluationSpec
 from c3_sandbox.l1.evidence.live import validate_snapshot
 from c3_sandbox.l1.evaluation.evaluator import DockerEvaluator
+from c3_sandbox.l1.evaluation.lhtb import LHTBEvaluator
 from c3_sandbox.l1.recording.state import restore
 from c3_sandbox.l1.storage import file_digest
 
@@ -34,7 +35,49 @@ GATE_DEFECT_ID = 'dim1_gate'
 NO_ARTIFACT_DEFECT_ID = 'no_artifact'
 
 
+def _extract_dim1_pass(raw: dict[str, Any] | None, proj: dict[str, Any] | None = None) -> bool:
+    """Extract whether the gate requirement was satisfied across benchmarks."""
+    if not isinstance(raw, dict):
+        return False
+    if 'dim1_pass' in raw and raw['dim1_pass'] is not None:
+        return bool(raw['dim1_pass'])
+    if proj and isinstance(proj.get('official_dimensions'), dict):
+        dims = proj['official_dimensions']
+        if 'passed' in dims and dims['passed'] is not None:
+            return bool(dims['passed'])
+    band = raw.get('band')
+    if band is None and isinstance(raw.get('raw_reward'), (int, float)):
+        band = int(raw.get('raw_reward'))
+    return bool(band is not None and band >= 1)
+
+
+def _extract_total_score(raw: dict[str, Any] | None) -> Any:
+    """Extract total score / raw reward across benchmarks."""
+    if not isinstance(raw, dict):
+        return 0
+    if 'total_score' in raw and raw['total_score'] is not None:
+        return raw['total_score']
+    if 'raw_reward' in raw and raw['raw_reward'] is not None:
+        return raw['raw_reward']
+    if 'reward' in raw and raw['reward'] is not None:
+        return raw['reward']
+    return 0
+
+
 def _office_targets(pkg: L1Package) -> tuple[list[str], set[str]]:
+    desc_path = pkg.root / 'benchmark/description.json'
+    desc = read_json(desc_path) if desc_path.is_file() else {}
+    ev_info = desc.get('evaluation') or {}
+    is_lhtb = (
+        pkg.manifest.get('benchmark') == 'lhtb'
+        or desc.get('benchmark') == 'lhtb'
+        or desc.get('task_id') == 'sokoban'
+        or ev_info.get('kind') == 'lhtb-verifier'
+        or pkg.family_id == 'sokoban'
+    )
+    if is_lhtb:
+        return ['moves.log'], {'.log'}
+
     pub_path = pkg.root / 'benchmark/public_task.json'
     assets: list[str] = []
     if pub_path.is_file():
@@ -106,6 +149,15 @@ def compute_item_deductions(
             deductions[GATE_DEFECT_ID] = d_gate
         return deductions, max_score
 
+    # Benchmark-specific allocation for Sokoban / LHTB:
+    if raw.get('task_id') == 'sokoban':
+        band = raw.get('band')
+        if band is None and isinstance(raw.get('raw_reward'), (int, float)):
+            band = int(raw.get('raw_reward'))
+        if status_ok and band is not None and band >= 1:
+            return {'sokoban_progress': 1.0 - score, GATE_DEFECT_ID: 0.0}, 1.0
+        return {GATE_DEFECT_ID: 1.0 - score}, 1.0
+
     # No dim2 breakdown (either status != 'ok' or verifier returned empty dim2_items):
     # §4.1: "评分没有 dim2 明细时，全部扣分记在门槛项。"
     max_score = float(raw.get('max_score') or 0.0)
@@ -133,6 +185,9 @@ def select_snapshot_candidates(
     office_targets: list[str],
     target_exts: set[str],
     last_written_turn: dict[str, int],
+    *,
+    task_id: str = '',
+    spec_kind: str = '',
 ) -> list[dict[str, Any]]:
     """L2 v0.4 §4.2 step 2: Select candidate deliverable sets from a snapshot.
 
@@ -146,6 +201,72 @@ def select_snapshot_candidates(
         "tier": int,   # 0: submission/, 1: same filename as target, 2: same extension
       }
     """
+    is_sokoban = (
+        task_id == 'sokoban'
+        or spec_kind == 'lhtb-verifier'
+        or 'moves.log' in office_targets
+        or target_exts == {'.log'}
+    )
+    if is_sokoban:
+        files = snapshot.get('files') or []
+        cand_files: list[dict[str, Any]] = []
+        for f in files:
+            p = f['path']
+            if p.startswith('input/'):
+                continue
+            name = Path(p).name
+            if name.startswith('~$'):
+                continue
+            if f.get('size_bytes', 0) <= 0:
+                continue
+            if (
+                p == 'submission/moves.log'
+                or p.startswith('submission/')
+                or p in ('runs/moves.log', 'moves.log')
+                or name == 'moves.log'
+                or Path(p).suffix.lower() == '.log'
+            ):
+                cand_files.append(f)
+
+        if not cand_files:
+            return []
+
+        def _sokoban_tier(p: str) -> int:
+            if p == 'submission/moves.log' or p.startswith('submission/'):
+                return 0
+            if p in ('runs/moves.log', 'moves.log'):
+                return 1
+            return 2
+
+        cand_files.sort(
+            key=lambda f: (
+                _sokoban_tier(f['path']),
+                -last_written_turn.get(f['path'], 0),
+                f['path'],
+            )
+        )
+
+        candidates: list[dict[str, Any]] = []
+        seen_staged_keys: set[tuple[tuple[str, str], ...]] = set()
+        for f in cand_files:
+            tier = _sokoban_tier(f['path'])
+            in_sub = (tier == 0)
+            staged = [('moves.log', f['path'], f['sha256'], f['blob'])]
+            key = tuple((s[0], s[2]) for s in staged)
+            if key in seen_staged_keys:
+                continue
+            seen_staged_keys.add(key)
+            lw = last_written_turn.get(f['path'], 0)
+            candidates.append({
+                'candidate_id': f['path'],
+                'paths': [f['path']],
+                'staged': staged,
+                'in_submission': in_sub,
+                'last_written_turn': lw,
+                'tier': tier,
+            })
+        return candidates
+
     files = snapshot.get('files') or []
     by_path = {f['path']: f for f in files}
 
@@ -284,12 +405,19 @@ def _evaluate_staged_candidate(
 
     Returns (grade_dict, cache_hit).
     """
+    image_to_use = eval_cfg.get('image') or spec.metadata.get('image')
+    if not image_to_use and spec.kind == 'lhtb-verifier':
+        image_to_use = f'zli12321/lhtb-{spec.task_id}:20260615'
+    eval_cfg_effective = dict(eval_cfg)
+    if image_to_use:
+        eval_cfg_effective.setdefault('image', image_to_use)
+
     cache_payload = {
         'schema': 'l2_grade_cache_v0.4',
         'task_id': spec.task_id,
         'entrypoint': spec.entrypoint,
-        'outcome_policy': eval_cfg.get('outcome_policy', 'official_dimensions'),
-        'image': eval_cfg.get('image'),
+        'outcome_policy': eval_cfg_effective.get('outcome_policy', 'official_dimensions'),
+        'image': eval_cfg_effective.get('image'),
         'files': [{'name': name, 'sha256': sha} for name, _, sha, _ in cand['staged']],
     }
     key = digest(cache_payload)
@@ -322,7 +450,10 @@ def _evaluate_staged_candidate(
             if p.is_dir():
                 p.chmod(0o755)
 
-        evaluator = DockerEvaluator(eval_cfg)
+        if spec.kind == 'lhtb-verifier':
+            evaluator = LHTBEvaluator(eval_cfg_effective)
+        else:
+            evaluator = DockerEvaluator(eval_cfg_effective)
         grade_out = tmp_root / 'grading'
         grade = evaluator.evaluate(spec, sub_dir, grade_out)
 
@@ -351,9 +482,15 @@ def grade_episode_snapshots(
     """
     t0 = time.monotonic()
     resolved_cfg = pkg.json('raw/resolved_config.json')
-    eval_cfg = resolved_cfg.get('evaluation') or {}
+    eval_cfg = dict(resolved_cfg.get('evaluation') or {})
     desc = pkg.json('benchmark/description.json')
     ev_info = desc['evaluation']
+    image_to_use = eval_cfg.get('image') or (ev_info.get('metadata') or {}).get('image')
+    if not image_to_use and ev_info.get('kind') == 'lhtb-verifier':
+        image_to_use = f"zli12321/lhtb-{desc['task_id']}:20260615"
+    if image_to_use:
+        eval_cfg.setdefault('image', image_to_use)
+
     spec = EvaluationSpec(
         ev_info['kind'],
         pkg.root / 'benchmark/source',
@@ -430,31 +567,42 @@ def grade_episode_snapshots(
             )
 
     y_deductions, max_score_M = compute_item_deductions(official_raw, y_val, fallback_rubric)
-    rows: list[dict[str, Any]] = [
-        {
-            'kind': 'terminal_submission',
-            'episode_id': pkg.episode_id,
-            'task_id': pkg.family_id,
-            'k': T,
-            'snapshot_id': final_snap_id,
-            'candidate_status': 'submission' if sub_files_at_T else 'no_candidate',
-            'candidate': [f['path'] for f in sub_files_at_T],
-            'in_submission': bool(sub_files_at_T),
-            'score': y_val,
-            'dim1_pass': bool((official_raw or {}).get('dim1_pass')) if isinstance(official_raw, dict) else False,
-            'total_score': (official_raw or {}).get('total_score') if isinstance(official_raw, dict) else 0,
-            'max_score': max_score_M,
-            'deductions': y_deductions,
-            'episode_index_sha256': pkg.index_sha256,
-            'code_version': CODE_VERSION,
-        }
-    ]
+    dim1_pass_term = _extract_dim1_pass(official_raw, official_proj)
+    total_score_term = _extract_total_score(official_raw)
+    term_row_dict: dict[str, Any] = {
+        'kind': 'terminal_submission',
+        'episode_id': pkg.episode_id,
+        'task_id': pkg.family_id,
+        'k': T,
+        'snapshot_id': final_snap_id,
+        'candidate_status': 'submission' if sub_files_at_T else 'no_candidate',
+        'candidate': [f['path'] for f in sub_files_at_T],
+        'in_submission': bool(sub_files_at_T),
+        'score': y_val,
+        'dim1_pass': dim1_pass_term,
+        'total_score': total_score_term,
+        'max_score': max_score_M,
+        'deductions': y_deductions,
+        'episode_index_sha256': pkg.index_sha256,
+        'code_version': CODE_VERSION,
+    }
+    if official_raw and 'raw_reward' in official_raw:
+        term_row_dict['raw_reward'] = official_raw['raw_reward']
+    if official_raw and 'band' in official_raw:
+        term_row_dict['band'] = official_raw['band']
+    rows: list[dict[str, Any]] = [term_row_dict]
 
     # Rows for k = 0 .. T
     for k, cp_id, snap_id in checkpoint_steps:
         snap = snapshots_by_k[k]
         cands = select_snapshot_candidates(
-            snap, initial_input_hashes, office_targets, target_exts, last_written_by_k[k]
+            snap,
+            initial_input_hashes,
+            office_targets,
+            target_exts,
+            last_written_by_k[k],
+            task_id=spec.task_id,
+            spec_kind=spec.kind,
         )
         if not cands:
             rows.append({
@@ -519,6 +667,8 @@ def grade_episode_snapshots(
                 )
                 if best_tuple is None or rank_key > best_tuple:
                     best_tuple = rank_key
+                    dim1_pass_val = _extract_dim1_pass(raw, proj)
+                    total_score_val = _extract_total_score(raw)
                     best_record = {
                         'kind': 'checkpoint',
                         'episode_id': pkg.episode_id,
@@ -531,14 +681,18 @@ def grade_episode_snapshots(
                         'in_submission': bool(cand['in_submission']),
                         'last_written_turn': int(cand['last_written_turn']),
                         'score': s_val,
-                        'dim1_pass': bool((raw or {}).get('dim1_pass')) if isinstance(raw, dict) else False,
-                        'total_score': (raw or {}).get('total_score') if isinstance(raw, dict) else 0,
+                        'dim1_pass': dim1_pass_val,
+                        'total_score': total_score_val,
                         'max_score': m_val,
                         'deductions': deductions,
                         'candidates_evaluated': len(cands),
                         'episode_index_sha256': pkg.index_sha256,
                         'code_version': CODE_VERSION,
                     }
+                    if raw and 'raw_reward' in raw:
+                        best_record['raw_reward'] = raw['raw_reward']
+                    if raw and 'band' in raw:
+                        best_record['band'] = raw['band']
         assert best_record is not None
         rows.append(best_record)
 

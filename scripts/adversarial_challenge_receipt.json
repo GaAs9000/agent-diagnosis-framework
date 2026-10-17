@@ -1,0 +1,131 @@
+{
+  "timestamp": "2026-10-16T12:25:55Z",
+  "target_endpoint": "http://127.0.0.1:8001/v1",
+  "model_id": "Qwen/Qwen3.6-27B",
+  "verdict": "APPROVE",
+  "suites": {
+    "suite_1_complex_instructions": {
+      "passed": true,
+      "tests": {
+        "1.1_complex_bash": {
+          "passed": true,
+          "latency_ms": 5661.461042007431,
+          "finish_reason": "tool_calls",
+          "command": "ls /workspace/input/levels | awk '/\\.txt$/ {system(\"wc -l \" $1)}' | awk '{sum+=$1} END {printf \"{\\\"total\\\": %d}\\n\", sum}'"
+        },
+        "1.2_multi_tool": {
+          "passed": true,
+          "latency_ms": 2920.408417005092,
+          "tool_selected": "read",
+          "arguments": {
+            "path": "/workspace/input/levels/level_01.txt"
+          }
+        },
+        "1.3_special_escapes": {
+          "passed": true,
+          "latency_ms": 5376.89733307343,
+          "command": "echo \"$USER `id` \\\"hello world\\\"\" > /workspace/output.txt"
+        }
+      }
+    },
+    "suite_2_multi_turn_errors": {
+      "passed": true,
+      "tests": {
+        "2.1_error_recovery_exit_127": {
+          "passed": true,
+          "latency_ms": 3361.436791950837,
+          "finish_reason": "tool_calls",
+          "corrective_command": "find /workspace -type f 2>/dev/null | head -50"
+        },
+        "2.2_large_obs_30kb": {
+          "passed": true,
+          "latency_ms": 4268.188250018284,
+          "finish_reason": "tool_calls"
+        },
+        "2.3_continuous_chain_4turn": {
+          "passed": true,
+          "steps_completed": 3,
+          "latencies_ms": [
+            2470.1994170900434,
+            2629.0456249844283,
+            2879.102500039153
+          ]
+        }
+      }
+    },
+    "suite_3_schema_edge_cases": {
+      "passed": true,
+      "tests": {
+        "3.1_empty_prompt": {
+          "passed": true,
+          "status": 200,
+          "latency_ms": 4906.073416001163
+        },
+        "3.2_whitespace_prompt": {
+          "passed": true,
+          "status": 200,
+          "latency_ms": 4879.724875092506
+        },
+        "3.3a_8k_tokens_tool_call": {
+          "passed": true,
+          "status": 200,
+          "latency_ms": 4719.293333007954
+        },
+        "3.3b_8k_tokens_text": {
+          "passed": true,
+          "status": 200,
+          "latency_ms": 20611.253582988866,
+          "answer": "Fox",
+          "finish_reason": "stop"
+        },
+        "3.4_tool_choice_none": {
+          "passed": true,
+          "status": 200,
+          "finish_reason": "stop",
+          "tool_calls": null
+        },
+        "3.5_prompt_injection": {
+          "passed": true,
+          "status": 200,
+          "latency_ms": 6965.660000103526
+        },
+        "3.6_token_truncation_boundary": {
+          "passed": true,
+          "status": 200,
+          "finish_reason": "length",
+          "latency_ms": 820.7047920441255
+        }
+      }
+    },
+    "suite_4_latency_sla": {
+      "passed": true,
+      "metrics": {
+        "passed": true,
+        "all_200": true,
+        "n_requests": 5,
+        "min_ms": 2649.167666910216,
+        "median_ms": 3233.737124945037,
+        "mean_ms": 3217.9133833618835,
+        "max_ms": 3972.9954169597477,
+        "p95_ms": 3972.9954169597477,
+        "latencies_ms": [
+          3233.737124945037,
+          3499.861125019379,
+          3972.9954169597477,
+          2649.167666910216,
+          2733.8055829750374
+        ]
+      }
+    },
+    "suite_5_l1_integration": {
+      "passed": true,
+      "tests": {
+        "passed": true,
+        "status": 200,
+        "latency_ms": 2672.6588750025257,
+        "finish_reason": "tool_calls",
+        "calls_count": 1
+      }
+    }
+  }
+}

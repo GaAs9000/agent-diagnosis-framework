@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.2.0",
+  "benchmark": {
+    "adapter": "lhtb-native",
+    "task_id": "sokoban",
+    "data_dir": "../../benchmarks/lhtb/data",
+    "data_lock": "../../benchmarks/lhtb/data/data.lock.json",
+    "source_commit": "7ca0cacea9bf6a0694eaad7306bed794eaaaabce"
+  },
+  "model": {
+    "adapter": "openai-compatible",
+    "kind": "local",
+    "model": "Qwen/Qwen3.6-27B",
+    "api_key_env": null,
+    "base_url": "http://127.0.0.1:8001/v1",
+    "parameters": {
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "seed": 42,
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    },
+    "timeout_seconds": 300,
+    "retry": {
+      "max_attempts": 3,
+      "retry_on_status": [429, 500, 502, 503, 504],
+      "retry_on_transport_error": true,
+      "backoff_seconds": [2, 5, 10],
+      "honor_retry_after": true
+    },
+    "supports_images": false
+  },
+  "runtime": {
+    "adapter": "docker-cold",
+    "image": "l1-lhtb-sokoban-cold:0.2.1"
+  },
+  "evaluation": {
+    "adapter": "lhtb-verifier",
+    "image": "zli12321/lhtb-sokoban:20260615",
+    "outcome_policy": "official_dimensions"
+  },
+  "budget": {
+    "max_model_requests": 20,
+    "max_tool_calls": 20,
+    "wall_time_seconds": 1800
+  },
+  "recording": {
+    "checkpoints": true,
+    "objects": false
+  },
+  "agent": {
+    "name": "native-tool-agent",
+    "version": "0.2.0"
+  }
+}
