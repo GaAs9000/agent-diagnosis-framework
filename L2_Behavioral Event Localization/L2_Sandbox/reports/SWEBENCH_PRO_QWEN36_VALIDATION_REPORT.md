@@ -115,36 +115,32 @@ L2 v0.4 guarantees that snapshot scoring at the terminal checkpoint $s(T)$ match
 
 ---
 
-## 6. Counterfactual Continuation Verification (`l2 verify`)
+## 6. Counterfactual Continuation Verification (`l2 verify`) — 5-Arm Causal Ablation
 
-To rigorously test whether Qwen3.6's failure on SWE-bench Pro V2 could be remedied by steering or whether budget exhaustion represents an intrinsic threshold, counterfactual continuation verification was executed on `run_task1_s42`.
+To rigorously disentangle whether Qwen3.6's failure on SWE-bench Pro V2 (`run_task1_s42`, Episode `ep_6789f6fc5beb44c2a5b126f0cbaf07a0`) reflects a fundamental coding inability or an interaction between horizon exhaustion and `docker-cold` container filesystem invariants, we executed a 5-comparison counterfactual continuation series across checkpoints $k=4$, $k=16$, and $k=19$ ($n=4$ per arm).
 
-### 6.1 Experimental Setup
-- **Parent Run**: `run_task1_s42` (Episode `ep_6789f6fc5beb44c2a5b126f0cbaf07a0`)
-- **Resumption Checkpoint**: $k^* = 4$ (state after initial repository exploration, leaving 16 remaining requests).
-- **Intervention Requirement**: *"Fix the Ansible issue by implementing \_\_or\_\_ and \_\_ror\_\_ in VarsWithSources and save the patch to /workspace/submission/patch.diff"*.
-- **Sample Allocation**: $N = 4$ branches per arm ($8$ total branches), executed concurrently under max concurrency 4.
+### 6.1 Summary of Counterfactual Comparisons on `run_task1_s42`
 
-### 6.2 Empirical Outcomes
+| Comparison | Checkpoint $k^*$ (Remaining Budget) | Control Arm (`plain`) | Treatment Arm | Control $\bar{Y}_{\text{ctrl}}$ | Treatment $\bar{Y}_{\text{treat}}$ | Effect $\hat{\Delta}$ | Exact Permutation $p$ | Evidence Level | Root-Cause Mechanism Revealed |
+| :--- | :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Arm 1 (Early Goal Reminder)** | $k=4$ (16 turns left) | `plain@k4` ($n=4$) | `rule_68e1f25d@k4` ($n=4$) | `0.0000` (15/16 tests) | `0.0000` (15/16 tests) | `0.0000` | `1.000000` | `E0` | Early goal reminder cannot compress the 15-turn repository localization & reproduction loop. |
+| **Arm 2 (Late Generic `deliver`)** | $k=19$ (1 turn left) | `plain@k19` ($n=4$) | `deliver@k19` ($n=4$) | `0.0000` (15/16 tests) | `0.0000` (15/16 tests) | `0.0000` | `1.000000` | `E0` | Generic `DELIVER_REMINDER` ("...之后再决定是否继续改进") causes agent to copy unpatched `manager.py` to `submission/manager.py` assuming more turns remain. |
+| **Arm 3 (Late Direct Edit on `/app`)** | $k=19$ (1 turn left) | `plain@k19` ($n=4$) | `rule_121d00c8@k19` ($n=4$) | `0.0000` (15/16 tests) | `0.0000` (15/16 tests) | `0.0000` | `1.000000` | `E0` | All 4 branches fail at Turn 20 with `OSError: [Errno 30] Read-only file system: 'lib/ansible/vars/manager.py'` because `/app` is on the `--read-only` rootfs. |
+| **Arm 4 (Multi-Step `/tmp` Staging)** | $k=16$ (4 turns left) | `plain@k16` ($n=4$) | `rule_7534cf4b@k16` ($n=4$) | `0.0000` (15/16 tests) | `0.0000` (15/16 tests) | `0.0000` | `1.000000` | `E0` | Turn 17 runs `cp /app/.../manager.py /tmp/manager.py` (`exit_code=0`), then Turn 18 fails with `sed: can't read /tmp/manager.py` because `docker-cold` resets `/tmp` per tool call and only persists `/workspace`. |
+| **Arm 5 (Environment-Invariant + Single-Step Diff to `/workspace`)** | **$k=19$ (1 turn left)** | **`plain@k19` ($n=4$)** | **`rule_81b583b8@k19` ($n=4$)** | **`0.0000` (`[0,0,0,0]`, 15/16 tests)** | **`1.0000` (`[1,1,1,1]`, 16/16 tests)** | **`+1.0000`** | **`0.014286`** | **`E2` (`confirmed`)** | **100% Causal Rescue**: Informing the agent at $c_{19}$ of the `docker-cold` invariant (read-only `/app`, ephemeral `/tmp`, persistent `/workspace`) and final-turn budget yields valid unified diffs in `/workspace/submission/patch.diff` that pass 16/16 official tests across all 4 branches. |
 
-| Branch ID | Arm | Initial $k$ | Remaining Requests | Completed Turns | Passed Tests | Terminal Score $Y$ | Exit Status |
+### 6.2 Branch-Level Verification for Arm 5 (`run_task1_s42_k19_workspace_rule`)
+
+| Branch ID | Arm | Checkpoint $k$ | Completed Turns | Exported Deliverable | Official Tests Passed | Official Reward $Y$ | `c3-l1 verify` |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `plain_k004_i00` | `plain` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `plain_k004_i01` | `plain` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `plain_k004_i02` | `plain` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `plain_k004_i03` | `plain` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `rule_68e1f25d_k004_i00` | `rule` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `rule_68e1f25d_k004_i01` | `rule` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `rule_68e1f25d_k004_i02` | `rule` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-| `rule_68e1f25d_k004_i03` | `rule` | 4 | 16 | 20 | 15 / 16 | 0.000000 | `request_budget` |
-
-### 6.3 Statistical & Causal Inference
-- Control Arm Mean: $\bar{Y}_{\text{ctrl}} = 0.000000$
-- Treatment Arm Mean: $\bar{Y}_{\text{treat}} = 0.000000$
-- Causal Effect Size: $\hat{\Delta} = \bar{Y}_{\text{treat}} - \bar{Y}_{\text{ctrl}} = \mathbf{0.000000}$
-- Exact Permutation Test $p$-value ($B = 5000$): $p = \mathbf{1.000000}$ (Holm-adjusted: $1.000000$)
-- Evidence Level: `E0`
-- Verification Status: `not_confirmed`
+| `plain_k019_i00` | `plain` | 19 | 20 | `[]` | 15 / 16 | `0.0` | `valid` |
+| `plain_k019_i01` | `plain` | 19 | 20 | `[]` | 15 / 16 | `0.0` | `valid` |
+| `plain_k019_i02` | `plain` | 19 | 20 | `[]` | 15 / 16 | `0.0` | `valid` |
+| `plain_k019_i03` | `plain` | 19 | 20 | `[]` | 15 / 16 | `0.0` | `valid` |
+| `rule_81b583b8_k019_i00` | `rule` | 19 | 20 | `['patch.diff']` | **16 / 16** (`test_combine_vars_replace` PASSED) | **`1.0`** | `valid` |
+| `rule_81b583b8_k019_i01` | `rule` | 19 | 20 | `['patch.diff']` | **16 / 16** (`test_combine_vars_replace` PASSED) | **`1.0`** | `valid` |
+| `rule_81b583b8_k019_i02` | `rule` | 19 | 20 | `['patch.diff']` | **16 / 16** (`test_combine_vars_replace` PASSED) | **`1.0`** | `valid` |
+| `rule_81b583b8_k019_i03` | `rule` | 19 | 20 | `['patch.diff']` | **16 / 16** (`test_combine_vars_replace` PASSED) | **`1.0`** | `valid` |
 
 ---
 
@@ -156,16 +152,16 @@ The table below synthesizes behavioral diagnostic and cognitive boundary pattern
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
 | **1. OfficeVal** (Document Engineering) | `officeval_070.r04` (Word/Excel/PowerPoint) | **`undelivered`** (做得到但未提交) | **High** ($g = 0.4103$, peak $s(k) = 0.5288$) | Delivery reminder at $c_{29}$ | **$\hat{\Delta} = +0.3365$** | **$p = 0.0002$** (Significant, `E1+`) | **Execution Oversight**: Agent generates valid artifacts in workspace but gets trapped in iterative visual previewing (`view_image`/`numpy` overlays), failing to copy final output to `submission/`. The intervention successfully rescues performance. |
 | **2. LHTB Sokoban** (Combinatorial Planning) | `lhtb-native:sokoban` (Terminal-Bench) | **`never`** (根本做不到) | **Zero** ($g = 0.0000$, all $s(k) \le 0.0032$) | Rule reminder at $c_4$ | **$\hat{\Delta} = 0.0000$** | **$p = 1.0000$** (Null, `E0`) | **Search Complexity Explosion**: Agent understands rules and writes BFS algorithms, but cannot solve combinatorial multi-box deadlocks within 20 turns. The failure is an intrinsic capability boundary; steering has zero effect. |
-| **3. SWE-bench Pro V2** (Software Engineering) | `swebench_pro-native` (Ansible bug fixing) | **`never`** (能定位但预算不足以完成修改与交付) | **Zero** ($g = 0.0000$, all $s(k) = 0.0$) | Targeted requirement reminder at $c_4$ | **$\hat{\Delta} = 0.0000$** | **$p = 1.0000$** (Null, `E0`) | **Budget Exhaustion during Multi-Step Code Modification**: Agent successfully navigates large codebases, isolates the root cause (Turn 10), and validates a prototype fix (Turn 18). However, the 20-request budget is exhausted during file insertion before generating `patch.diff`. Steering reminds the model of the goal but cannot compress multi-step file editing into limited remaining requests. |
+| **3. SWE-bench Pro V2** (Software Engineering) | `swebench_pro-native` (Ansible bug fixing) | **`never`** (能定位并写出原型修复，但受限于步数边界与容器状态不变式) | **Zero** ($g = 0.0000$, all $s(k) = 0.0$) | Early rule at $c_4$ vs Environment-invariant + budget-aware rule at $c_{19}$ | **$c_4: \hat{\Delta} = 0.0000$<br>$c_{19}: \hat{\Delta} = +1.0000$** | **$c_4: p = 1.0000$ (`E0`)<br>$c_{19}: p = 0.0143$ (`E2`)** | **Horizon Cliff & Stateless Container Friction**: Agent isolates the bug (Turn 10) and validates the fix in `/tmp/test_fix.py` (Turn 18), but fails to emit `patch.diff` before Turn 20 (`E0` at $c_4$). At $c_{19}$, naive edits fail due to read-only `/app` (`Errno 30`) and ephemeral `/tmp` in `docker-cold`, whereas single-step diff export to `/workspace/submission/patch.diff` flips pass rate from $0\% \to 100\%$ ($\hat{\Delta}=+1.0, p=0.0143, \text{E2}$). |
 
 ---
 
 ## 8. Methodological & Cognitive Boundary Insights for Agent Diagnosis
 
-1. **Three Distinct Failure Archetypes Discovered**:
-   - *Type 1 (Delivery Distraction)*: Present in OfficeVal. Capability is high, intermediate artifact is correct, but self-verification loops crowd out final delivery. Rescued by procedural reminders.
-   - *Type 2 (Combinatorial Intractability)*: Present in Sokoban. Planning horizon is intrinsically insufficient to navigate exponential state spaces. Reminders have zero causal impact.
-   - *Type 3 (Process Horizon Exhaustion)*: Present in SWE-bench Pro V2. Code comprehension and localization are successful (15/16 and 26/30 test passes), but linear command-by-command tool execution exceeds budget constraints before patch synthesis.
+1. **Three Distinct Failure Archetypes Discovered & Verified**:
+   - *Type 1 (Delivery Distraction — OfficeVal)*: High capability with valid intermediate artifacts in `/workspace`, rescued by generic delivery reminder ($\hat{\Delta} = +0.3365, p = 0.0002$).
+   - *Type 2 (Combinatorial Intractability — LHTB Sokoban)*: Planning horizon is intrinsically insufficient to solve multi-box deadlocks; reminders have zero causal impact ($\hat{\Delta} = 0.0, p = 1.0$).
+   - *Type 3 (Horizon Cliff + Stateless Environment Friction — SWE-bench Pro V2)*: Agent possesses full domain coding capability (validating the exact fix in `/tmp/test_fix.py` at Turn 18), but fails at the terminal boundary due to (a) lack of remaining-turn awareness and (b) `docker-cold` filesystem constraints (read-only `/app`, non-persistent `/tmp`). Targeted intervention at $c_{19}$ addressing both constraints flips official task resolution from $0.0 \to 1.0$ ($\hat{\Delta} = +1.0000, p = 0.014286, \text{E2}$).
 2. **Value of Structured Facts for LLM Analysts ($Y15$)**:
    The comparative trial demonstrated that LLM Analysts provided with raw execution logs (Group B) are prone to hallucinating partial actions as completed artifacts (causing false `undelivered` classifications). Supplying turn-indexed structured facts (`facts.jsonl`) and peer cohort contrast (Group C) eliminates these hallucinations, elevating kind accuracy from 66.7% to 100.0%.
 3. **Zero-Request Snapshot Grading as an Empirical Foundation ($Y1–Y3$)**:
