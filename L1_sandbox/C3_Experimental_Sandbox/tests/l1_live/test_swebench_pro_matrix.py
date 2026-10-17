@@ -111,3 +111,72 @@ def test_swebench_pro_end_to_end_scripted_execution(tmp_path):
     v = verify(out)
     assert v["verified"], f"SWE-bench Pro evidence verification errors: {v['errors']}"
     assert not v["errors"]
+
+
+def test_swebench_pro_f27_writable_app_persistence_and_cold_resume(tmp_path):
+    """F27: Verify that in-place edits inside /app persist across docker-cold steps,
+    sync into /workspace/patch.diff and /workspace/submission/patch.diff, are captured
+    in checkpoints, and survive cold resume with identical official and snapshot scores.
+    """
+    _require_swebench_assets()
+    parent_out = (tmp_path / "parent_episode").resolve()
+    cfg = resolve(ROOT / "configs/l1/swebench_pro.gemini-35lite.json")
+
+    bench_reg = benchmark_registry()
+    eval_reg = eval_registry()
+    benchmark = bench_reg.create("swebench_pro-native", cfg["benchmark"])
+    task = benchmark.load(TASK1_ID)
+    evaluator = eval_reg.create("swebench_pro-verifier", cfg["evaluation"])
+
+    # Apply gold patch directly inside /app (without manually writing /workspace/submission/*)
+    gold_patch_text = task.private_files["source/solution/gold_patch.diff"].read_text()
+    escaped_patch = gold_patch_text.replace("'", "'\\''")
+    step1_cmd = f"printf '%s' '{escaped_patch}' | git -C /app apply -"
+    step2_cmd = "git -C /app status --short && test -s /workspace/submission/patch.diff"
+
+    parent_model = ScriptedGemini(cfg["model"], [
+        gemini_call("run", {"command": step1_cmd}),
+        gemini_call("run", {"command": step2_cmd}),
+        gemini_done(),
+    ])
+    parent_runtime = DockerRuntime(cfg["runtime"])
+
+    parent_res = run(cfg, parent_out, injected={
+        "model": parent_model,
+        "runtime": parent_runtime,
+        "evaluation": evaluator,
+        "benchmark": benchmark,
+    })
+    assert parent_res["status"]["task_outcome"] == "success"
+    assert parent_res["status"]["evaluation_validity"] == "valid"
+    parent_grade = __import__("json").loads((parent_out / "official_grade.json").read_text())
+    assert parent_grade["official_raw"]["reward"] == 1.0
+    pv = verify(parent_out)
+    assert pv["verified"], f"Parent verification errors: {pv['errors']}"
+
+    # Cold resume from cp000001 (right after Step 1 applied patch in /app)
+    child_out = (tmp_path / "child_resume_cp000001").resolve()
+    child_model = ScriptedGemini(cfg["model"], [
+        gemini_call("run", {"command": "git -C /app diff --stat HEAD"}),
+        gemini_done(),
+    ])
+    child_runtime = DockerRuntime(cfg["runtime"])
+    child_res = run(
+        cfg,
+        child_out,
+        injected={
+            "model": child_model,
+            "runtime": child_runtime,
+            "evaluation": evaluator,
+            "benchmark": benchmark,
+        },
+        parent=parent_out,
+        checkpoint_id="cp000001",
+    )
+    assert child_res["status"]["task_outcome"] == "success"
+    assert child_res["status"]["evaluation_validity"] == "valid"
+    child_grade = __import__("json").loads((child_out / "official_grade.json").read_text())
+    assert child_grade["official_raw"]["reward"] == 1.0
+    cv = verify(child_out)
+    assert cv["verified"], f"Child cold-resume verification errors: {cv['errors']}"
+

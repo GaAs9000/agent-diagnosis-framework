@@ -1,0 +1,1446 @@
+{
+  "audit_id": "V3_P0A_ZERO_COST_CANDIDATE_AND_RUBRIC_AUDIT",
+  "created_at": "2026-10-17",
+  "dev45": {
+    "episodes_count": 45,
+    "total_loss": 33.461024,
+    "total_never_loss": 32.022135,
+    "substate_episode_counts": {
+      "perfect_score": 3,
+      "broken": 0,
+      "undelivered": 1,
+      "never:no_candidate_ever": 6,
+      "never:unsubmitted_score0_candidate": 3,
+      "never:submitted_dim1_gate_failed": 8,
+      "never:delivered_but_item_wrong": 24
+    },
+    "substate_episodes": {
+      "perfect_score": [
+        "officeval_060.requests_035.r02",
+        "officeval_070.requests_035.r00",
+        "officeval_070.requests_035.r02"
+      ],
+      "broken": [],
+      "undelivered": [
+        "officeval_010.requests_035.r04"
+      ],
+      "never:no_candidate_ever": [
+        "officeval_003.requests_035.r00",
+        "officeval_010.requests_035.r00",
+        "officeval_010.requests_035.r02",
+        "officeval_010.requests_035.r03",
+        "officeval_050.requests_035.r03",
+        "officeval_070.requests_035.r04"
+      ],
+      "never:unsubmitted_score0_candidate": [
+        "officeval_003.requests_035.r03",
+        "officeval_050.requests_035.r00",
+        "officeval_060.requests_035.r03"
+      ],
+      "never:submitted_dim1_gate_failed": [
+        "officeval_004.requests_035.r00",
+        "officeval_004.requests_035.r04",
+        "officeval_010.requests_035.r01",
+        "officeval_085.requests_035.r00",
+        "officeval_085.requests_035.r01",
+        "officeval_085.requests_035.r02",
+        "officeval_085.requests_035.r03",
+        "officeval_085.requests_035.r04"
+      ],
+      "never:delivered_but_item_wrong": [
+        "officeval_003.requests_035.r01",
+        "officeval_003.requests_035.r02",
+        "officeval_003.requests_035.r04",
+        "officeval_004.requests_035.r01",
+        "officeval_004.requests_035.r02",
+        "officeval_004.requests_035.r03",
+        "officeval_033.requests_035.r00",
+        "officeval_033.requests_035.r01",
+        "officeval_033.requests_035.r02",
+        "officeval_033.requests_035.r03",
+        "officeval_033.requests_035.r04",
+        "officeval_050.requests_035.r01",
+        "officeval_050.requests_035.r02",
+        "officeval_050.requests_035.r04",
+        "officeval_060.requests_035.r00",
+        "officeval_060.requests_035.r01",
+        "officeval_060.requests_035.r04",
+        "officeval_070.requests_035.r01",
+        "officeval_070.requests_035.r03",
+        "officeval_090.requests_035.r00",
+        "officeval_090.requests_035.r01",
+        "officeval_090.requests_035.r02",
+        "officeval_090.requests_035.r03",
+        "officeval_090.requests_035.r04"
+      ]
+    },
+    "substate_deductions": {
+      "broken": 0.0,
+      "undelivered": 1.438889,
+      "never:no_candidate_ever": 6.0,
+      "never:unsubmitted_score0_candidate": 1.616667,
+      "never:submitted_dim1_gate_failed": 8.0,
+      "never:delivered_but_item_wrong": 16.405469
+    },
+    "substate_share_of_total_loss": {
+      "broken": 0.0,
+      "undelivered": 0.043002,
+      "never:no_candidate_ever": 0.179313,
+      "never:unsubmitted_score0_candidate": 0.048315,
+      "never:submitted_dim1_gate_failed": 0.239084,
+      "never:delivered_but_item_wrong": 0.490286
+    },
+    "substate_share_of_never_loss": {
+      "never:no_candidate_ever": 0.18737,
+      "never:unsubmitted_score0_candidate": 0.050486,
+      "never:submitted_dim1_gate_failed": 0.249827,
+      "never:delivered_but_item_wrong": 0.512317
+    },
+    "delivered_item_wrong_rubric_source": {
+      "total_delivered_never_deduction": 16.405469,
+      "deduction_by_source": {
+        "explicit": 2.992097,
+        "ambiguous": 10.110644,
+        "implicit": 3.302727
+      },
+      "share_of_delivered_never_deduction": {
+        "explicit": 0.182384,
+        "ambiguous": 0.616297,
+        "implicit": 0.201319
+      },
+      "defect_item_counts_by_source": {
+        "explicit": 19,
+        "ambiguous": 207,
+        "implicit": 24
+      },
+      "task_rule_audit": {
+        "officeval:officeval_003": {
+          "文档表格中没有空白行": {
+            "source_category": "explicit",
+            "rationale": "Prompt 明确要求：'再把没有字的空行删掉'",
+            "occurrences": 1,
+            "total_deduction": 0.333333
+          },
+          "文档表格中所有文本：下方都出现横线；横线长度与表格上边框长度一致；颜色为黑色，类型为细实线": {
+            "source_category": "explicit",
+            "rationale": "Prompt 明确要求：'每一行文字都放到表里面并加上横线，横线样式和图片中的一样'，且 image.png 清晰展示黑色细实线",
+            "occurrences": 3,
+            "total_deduction": 0.999999
+          },
+          "文档表格中所有横线：相邻两条横线之间的距离几乎相等，只允许有0.15cm的误差": {
+            "source_category": "ambiguous",
+            "rationale": "image.png 展示等距横线，但 '相邻两条横线距离只允许有0.15cm误差' 的硬数值容差仅在评分器中定义",
+            "occurrences": 3,
+            "total_deduction": 0.999999
+          },
+          "文中没有出现\"侯景澜：上月两项重点现场事项整改推进如下：\"文本内容": {
+            "source_category": "explicit",
+            "rationale": "Prompt 明确要求：'其他格式保持不变'（保留原文正文内容）",
+            "occurrences": 1,
+            "total_deduction": 0.066667
+          }
+        },
+        "officeval:officeval_004": {
+          "实习报告文档第2页“题目：关于在合润童悦幼儿园开展学前教育实践的报告”文本字体为黑体三号、加粗": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 3,
+            "total_deduction": 0.136365
+          },
+          "实习报告文档从第2页起，除表格、标题、“指导教师签名”、“日期”及“成绩评定”外其他文本：字体为宋体、四号；首行缩进2字符；1.1倍行距": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 3,
+            "total_deduction": 0.409092
+          },
+          "实习鉴定表中“实习单位评价”右侧单元格：文本采用宋体小四号，单倍行距，首行缩进2字符": {
+            "source_category": "implicit",
+            "rationale": "image_001.png 左侧写明'文字部分：宋体四号'，仅在'自我评价'框内标注'宋体小四'，未在'实习单位评价'与'教学单位评价意见'标注宋体小四，但评分器要求这两格也用宋体小四",
+            "occurrences": 3,
+            "total_deduction": 0.136365
+          },
+          "实习鉴定表中“教学单位评价意见”右侧单元格：文本采用宋体小四号，单倍行距，首行缩进2字符": {
+            "source_category": "implicit",
+            "rationale": "image_001.png 左侧写明'文字部分：宋体四号'，仅在'自我评价'框内标注'宋体小四'，未在'实习单位评价'与'教学单位评价意见'标注宋体小四，但评分器要求这两格也用宋体小四",
+            "occurrences": 3,
+            "total_deduction": 0.136365
+          },
+          "实习鉴定表页面顶部没有出现黑体、20号、加粗、居中的“江淮文理学院毕业实习鉴定表”文本": {
+            "source_category": "ambiguous",
+            "rationale": "image_001.png 展示了表头与学号横向排版外观，但未文字标注20号字号硬阈值",
+            "occurrences": 2,
+            "total_deduction": 0.09091
+          },
+          "实习报告文档第1页“实习报告”采用宋体、二号、加粗": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 1,
+            "total_deduction": 0.045455
+          },
+          "实习报告文档第1页“实习单位：合润童悦幼儿园”、“实习日期：2025年10月20日至2025年12月26日”文本字体为宋体四号，数字用Times New Roman，四号；居中对齐": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 1,
+            "total_deduction": 0.045455
+          },
+          "实习报告文档第1页“关于在合润童悦幼儿园开展学前教育实践的报告”文本字体为黑体三号、加粗": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 1,
+            "total_deduction": 0.045455
+          },
+          "实习鉴定表文档中的表格：第1-4行和第1列中的所有中文文本字体都采用宋体四号，数字部分采用Times New Roman四号；居中对齐；单倍行距": {
+            "source_category": "explicit",
+            "rationale": "image_001.png 与 image_002.png 红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求",
+            "occurrences": 1,
+            "total_deduction": 0.227273
+          }
+        },
+        "officeval:officeval_010": {
+          "“技术路线图”文本位于页面顶端，距离页面上边距 1.8-2.5cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "“技术路线图”字体字号为黑体、小一、加粗，居中显示": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "“技术路线图”下方的横向线条颜色为灰色，距离“技术路线图”文本0.5-0.7cm，粗细约1.0-1.5磅，长度约17.5-18cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "页面上所有矩形框内文本的字体字号为黑体小五，居中对齐": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第一行横向矩形框位于标题“技术路线图”分隔横线的正下方，距离“技术路线图”分隔横线大约0.3-0.7cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "分隔横线下方大约0.3-0.7cm的第一行横向矩形框高度约0.6-1cm，宽度约5-6cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "分隔横线下方大约0.3-0.7cm的第一行横向矩形框内文本为“研究导入:明确目标与范围”": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "在“研究导入:明确目标与范围”矩形框底部中心向下引出一条绿色无箭头竖线，连接到其下方约0.35cm处的水平绿色主干线；水平主干线从“政策信息梳理”框顶部中心正上方延伸至“业务流程梳理”框顶部中心正上方；再从主干线分别向四个子框顶部中心引出四条垂直向下的绿色箭头线": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "所有绿色箭头线线宽1.0pt，实线，末端小三角箭头": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第二行四个横向的矩形框位于同一水平线上，四条垂直向下的绿色箭头线下方，箭头的最顶端指向每个矩形框上边框的中心点": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第二行四个横向的矩形框内填充文本从左至右分别为“政策信息梳理”“资料归集校核”“参照案例对照”“业务流程梳理”，宽为2.5-2.7cm，高为0.6-0.8cm，各间距宽为0.6-0.75cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "四个矩形框的底部中心点向下引出四条0.4-0.55cm线条，连接到其下方宽约9.90-10.5cm水平绿色主干线，绿色主干线中心点向下引出高度为0.3-0.4cm的绿色箭头线": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第三行横向的矩形框位于垂直向下的绿色箭头线的正下方，箭头的最顶端指向矩形框上边框的中心点": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第三行横向的矩形框内填充文本为“需求要点识别与目标分解”，宽为6-7cm，高为0.7-1.7cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第三行横向的矩形框的下框线中心点的位置向下引出一条高约0.4-1.4cm、宽约0.03-0.1cm的绿色箭头线": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第四行横向的菱形框位于垂直向下的绿色箭头线的正下方，箭头的最顶端指向菱形框上顶点": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第四行菱形框内填充文本为“可行性确认”，高为1.5-2cm，宽为2.7-3cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第四行菱形框右顶点处向右引出一条高为0.03-0.1cm、宽为2-3cm的绿色箭头线，箭头右顶点连接填充文本为“完善资料与方案”矩形框的左边框中心点的位置，高为0.7-1cm，宽为2.7-3cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第四行菱形框右侧有一矩形框，高为0.6-1cm，宽为2.5-3cm，内填充文本为“完善资料与方案”": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "“完善资料与方案”矩形框位于“可行性确认”矩形框右侧，框内文字居中，并通过绿色回路箭头返回上方“业务流程梳理”矩形框，箭头指向“业务流程梳理”矩形右侧中心位置，箭头水平方向长度约为0.8-1.2cm，竖直方向长度约为5.2-5.6cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "第五行横向矩形框居中放置，内填充文本为“运行环境综合研判”，高为0.6-1cm，宽为6.3-6.7cm，第四行菱形框下有一绿色箭头指向第五行矩形框中央，长度约0.6-0.8cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "“运行环境综合研判”矩形框下方有一绿色箭头分别连接到第六行两个矩形框，水平方向长度约为7.5-8cm，竖直方向长度约为0.6-1cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "第六行出现两个横向文本框，从左往右数第一个文本框内填充文本为“外部条件研判”，第二个文本框内填充文本为“内部能力评阅”，文本框宽为3-3.5cm，高为0.6-1cm，两个文本框间距为4.5-5cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "第六行左侧横向文本框下方有一绿色箭头分别连接到第七行左侧三个竖向文本框（水平2.5-3cm，竖直0.6-1cm）；第六行右侧横向文本框下方有一绿色箭头分别连接到第七行右侧四个竖向文本框（水平4-4.5cm，竖直0.6-1cm）": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第七行左侧三个竖向文本框从左往右依次为“政策环境扫描”“需求场景识别”“协同路径分析”，右侧四个竖向文本框从左往右依次为“资源储备评估”“流程执行能力”“技术支撑能力”“运营协调机制”；第3与第4个文本框间隔3.5-4cm，其余间隔0.8-1cm；文本框宽0.6-1cm、高2.5-3cm；文字都在框内，竖向排布": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "第八行有三个横向文本框，从左往右依次为“EFE评阅清单”“适配矩阵”“IFE评阅清单”，文本框宽2.5-3cm、高0.6-1cm；中间文本框左侧和右侧出现箭头分别指向两侧文本框，箭头长度0.2-0.5cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "“需求场景识别”文本框下方有一倾斜箭头指向“EFE评阅清单”文本框中心；“技术支撑能力”文本框下方有一倾斜箭头指向“IFE评阅清单”文本框中心，箭头长度约0.8-1.2cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.011111
+          },
+          "第九行横向矩形框居中放置，内填充文本为“实施路径定位与方案设计”，高0.6-1cm、宽6.3-6.7cm；“适配矩阵”文本框下方有一绿色箭头指向第九行横向文本框中心，长度0.6-1cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "第十行横向矩形框居中放置，内填充文本为“组织保障与质量闭环”，高0.6-1cm、宽6.3-6.7cm；“实施路径定位与方案设计”文本框下方有一绿色箭头指向第十行横向文本框中心，长度0.5-0.8cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "第十一行横向矩形框居中放置，内填充文本为“归纳与展望”，高0.6-1cm、宽6.3-6.7cm；“组织保障与质量闭环”文本框下方有一绿色箭头指向第十一行横向文本框中心，长度0.5-0.8cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.033333
+          },
+          "页面左侧出现四个灰色背景填充的竖向文本框，高为2.3-2.6cm,宽为0.6-1cm,从上往下填充文本依次为“导入”、“核验”、“研判”、“形成”，第一个文本框和第二个文本框的间距为1.2-1.4cm,第二个文本框和第三个文本框的间距为2.4-2.7cm，第三个文本框和第四个文本框的间距为5.8-6.2cm，字体加粗，距离页面左边界2.3-2.7cm": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅要求'第四行删除，字体需要移动到框内，做成可编辑的'，原图展示拓扑与文字，但评分器逐框检查精确厘米坐标/宽高/字号（如宽2.5-2.7cm、间距0.6-0.75cm、黑体小五）",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          }
+        },
+        "officeval:officeval_033": {
+          "+5：产品页推荐客餐厅配套品表": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅写'替换为乘以1.1之后的数值'，未规定小数取整规则；原表含 3855*1.1=4240.5、7515*1.1=8266.5、38675*1.1=42542.5，Python round() 银行家舍入得偶数(4240/8266/42542)，而评分器硬编码四舍五入(4241/8267/42543)",
+            "occurrences": 5,
+            "total_deduction": 1.45425
+          },
+          "+5：产品页定制价格表": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅写'替换为乘以1.1之后的数值'，未规定小数取整规则；原表含 3855*1.1=4240.5、7515*1.1=8266.5、38675*1.1=42542.5，Python round() 银行家舍入得偶数(4240/8266/42542)，而评分器硬编码四舍五入(4241/8267/42543)",
+            "occurrences": 5,
+            "total_deduction": 1.45425
+          },
+          "+1：门店订购记录页零售价列": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅写'替换为乘以1.1之后的数值'，未规定小数取整规则；原表含 3855*1.1=4240.5、7515*1.1=8266.5、38675*1.1=42542.5，Python round() 银行家舍入得偶数(4240/8266/42542)，而评分器硬编码四舍五入(4241/8267/42543)",
+            "occurrences": 5,
+            "total_deduction": 0.290852
+          },
+          "+5：产品页组合规格零售价表": {
+            "source_category": "explicit",
+            "rationale": "乘以 1.1 后无 .5 边界歧义的常规价格替换",
+            "occurrences": 2,
+            "total_deduction": 0.571896
+          },
+          "+1：订购与交付说明页价格换算提醒表": {
+            "source_category": "explicit",
+            "rationale": "乘以 1.1 后无 .5 边界歧义的常规价格替换",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          },
+          "-1：任意价格单元格出现超过页面50%的空白、乱码、非数字文本或错误符号": {
+            "source_category": "explicit",
+            "rationale": "Prompt 要求'其他格式不变，输出替换完成可修改的word文档'",
+            "occurrences": 1,
+            "total_deduction": 0.055556
+          }
+        },
+        "officeval:officeval_050": {
+          "+1 第1页左侧纵轴箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页纵轴标题\"System Conditions\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页底部横轴箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页横轴标题\"Time (T)\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页顶部浅蓝圆角矩形": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页\"Macro Environment\"标题": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第1页六组环境文本": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页顶部三条蓝色曲线": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第1页中部大椭圆": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页大椭圆标题\"Local Health Innovation Context\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第1页大椭圆上排三小椭圆": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页大椭圆下排三小椭圆": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页顶部矩形到椭圆蓝色下箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页椭圆到arena框绿色下箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第1页下方蓝色边框圆角矩形": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页\"Innovation Dynamics Arena\"标题条": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第1页需求模块两个虚线矩形": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页需求模块图标组": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第1页arena中部竖向虚线": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页arena中部向右箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+5 第1页四主体椭圆 Hospitals/Start-ups/Government/Citizens": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.15
+          },
+          "+3 第1页四主体图标": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第1页四主体双向箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第1页中心说明文本": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 中心文本到四椭圆虚线箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第1页左侧\"Digital health initiatives (T1)\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第1页右侧\"Digital health outcomes (T2)\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页左侧纵轴蓝色箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页纵轴文字组": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页底部横轴箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页横轴标题\"Time\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页成熟度曲线箭头": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页三个圆形节点": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页第一阶段外层卡片": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页第一阶段编号\"01\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第2页第一阶段标题条": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第一阶段里程碑": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第一阶段Stage profile": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第2页第二阶段外层卡片": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页第二阶段编号\"02\"": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第2页第二阶段标题条": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第二阶段里程碑": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第二阶段Stage profile": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第2页第三阶段外层卡片": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页第三阶段编号圆形": {
+            "source_category": "implicit",
+            "rationale": "Prompt 仅要求'改成可直接编辑状态，内容和原来一模一样'，未声明必须使用 Arial/Calibri 字体或第3阶段编号写'02'",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+3 第2页第三阶段标题条": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第三阶段里程碑": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+3 第2页第三阶段Stage profile": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.09
+          },
+          "+1 第2页左中竖向虚线分隔线": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页右中竖向虚线分隔线": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          },
+          "+1 第2页阶段间圆形箭头按钮": {
+            "source_category": "ambiguous",
+            "rationale": "原 PPT 为两页整图，视觉内容可见，但评分器对每个形状规定了精确厘米坐标框与字号区间（如距左13.5-21cm、宽6.2-6.6cm）",
+            "occurrences": 3,
+            "total_deduction": 0.03
+          }
+        },
+        "officeval:officeval_060": {
+          "第4页整页背景图片：图片覆盖完整幻灯片，四边界距页面对应边缘0—0.3厘米": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 仅写'对第四页PPT重新排版，要求图片组合符合页面比例，页面两边无大片空白'，而评分器要求单张背景图四边距页面边缘 0-0.3cm 且水罐/膜堆落在特定百分比区间",
+            "occurrences": 3,
+            "total_deduction": 1.363635
+          }
+        },
+        "officeval:officeval_070": {
+          "六个研究板块标题统一使用约10.5至11.5磅、加粗、左对齐，位于框内顶部。正文统一使用约7.2至8.2磅、常规字重，字号能够保证全部内容完整显示。": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 写'可以缩小字体和间距...调整成像临床问题和科学假说这两块的布局'，评分器则检查标题10.5-11.5pt、正文7.2-8.2pt、边距0.3-0.5cm等具体数值区间",
+            "occurrences": 2,
+            "total_deduction": 0.461538
+          },
+          "六个研究板块正文行距：统一设置为单倍或约0.9至1.0倍行距，段前、段后间距为0至2磅。文字距框体左右边线约0.3至0.5厘米，距上下边线不少于0.2厘米。": {
+            "source_category": "ambiguous",
+            "rationale": "Prompt 写'可以缩小字体和间距...调整成像临床问题和科学假说这两块的布局'，评分器则检查标题10.5-11.5pt、正文7.2-8.2pt、边距0.3-0.5cm等具体数值区间",
+            "occurrences": 1,
+            "total_deduction": 0.230769
+          }
+        },
+        "officeval:officeval_090": {
+          "“汇总”!H3:H62用公式=IFERROR(G/F,\"\")或等效并下拉填充至H62、格式0.00，结果与G列除以F列一致": {
+            "source_category": "implicit",
+            "rationale": "Prompt 仅写'将所有子表中的总重量合计数据以及砼体积数据提取到汇总表'，且原表 H 列(含量)已有静态数值；评分器却要求把 H3:H62 改写为公式 =IFERROR(G3/F3,\"\")",
+            "occurrences": 5,
+            "total_deduction": 1.0
+          },
+          "Sheet3及同结构子表：砼体积取各子表D20填入汇总F列、总重量合计取各子表I10填入汇总G列": {
+            "source_category": "implicit",
+            "rationale": "Prompt 仅写'提取到汇总表'，且细则第1条允许'全部为数值或引用公式'；但第4、5条评分器强制检查单元格必须为跨表公式引用 ='Sheet3'!D20，直接填入正确提取数值被判 0 分",
+            "occurrences": 5,
+            "total_deduction": 1.0
+          },
+          "Sheet5及同结构子表：砼体积取各子表E21填入汇总F列、总重量合计取各子表I11填入汇总G列": {
+            "source_category": "implicit",
+            "rationale": "Prompt 仅写'提取到汇总表'，且细则第1条允许'全部为数值或引用公式'；但第4、5条评分器强制检查单元格必须为跨表公式引用 ='Sheet3'!D20，直接填入正确提取数值被判 0 分",
+            "occurrences": 5,
+            "total_deduction": 1.0
+          }
+        }
+      }
+    },
+    "episodes": [
+      {
+        "run_label": "officeval_003.requests_035.r00",
+        "task_id": "officeval:officeval_003",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_003.requests_035.r01",
+        "task_id": "officeval:officeval_003",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_003.requests_035.r02",
+        "task_id": "officeval:officeval_003",
+        "terminal_score_Y": 0.3333333333333333,
+        "max_snapshot_score": 0.3333333333333333,
+        "k_star": 18,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.666667
+      },
+      {
+        "run_label": "officeval_003.requests_035.r03",
+        "task_id": "officeval:officeval_003",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.3333333333333333,
+        "k_star": 32,
+        "ever_had_candidate": true,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:unsubmitted_score0_candidate",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0.333333,
+        "deduction_never": 0.666667
+      },
+      {
+        "run_label": "officeval_003.requests_035.r04",
+        "task_id": "officeval:officeval_003",
+        "terminal_score_Y": 0.26666666666666666,
+        "max_snapshot_score": 0.26666666666666666,
+        "k_star": 35,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.733333
+      },
+      {
+        "run_label": "officeval_004.requests_035.r00",
+        "task_id": "officeval:officeval_004",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_004.requests_035.r01",
+        "task_id": "officeval:officeval_004",
+        "terminal_score_Y": 0.6818181818181818,
+        "max_snapshot_score": 0.6818181818181818,
+        "k_star": 34,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.318182
+      },
+      {
+        "run_label": "officeval_004.requests_035.r02",
+        "task_id": "officeval:officeval_004",
+        "terminal_score_Y": 0.3181818181818182,
+        "max_snapshot_score": 0.3181818181818182,
+        "k_star": 27,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.681818
+      },
+      {
+        "run_label": "officeval_004.requests_035.r03",
+        "task_id": "officeval:officeval_004",
+        "terminal_score_Y": 0.7272727272727273,
+        "max_snapshot_score": 0.7272727272727273,
+        "k_star": 28,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.272727
+      },
+      {
+        "run_label": "officeval_004.requests_035.r04",
+        "task_id": "officeval:officeval_004",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_010.requests_035.r00",
+        "task_id": "officeval:officeval_010",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_010.requests_035.r01",
+        "task_id": "officeval:officeval_010",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_010.requests_035.r02",
+        "task_id": "officeval:officeval_010",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_010.requests_035.r03",
+        "task_id": "officeval:officeval_010",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_010.requests_035.r04",
+        "task_id": "officeval:officeval_010",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.05555555555555555,
+        "k_star": 27,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0.055556,
+        "deduction_never": 0.944444
+      },
+      {
+        "run_label": "officeval_033.requests_035.r00",
+        "task_id": "officeval:officeval_033",
+        "terminal_score_Y": 0.35294117647058826,
+        "max_snapshot_score": 0.35294117647058826,
+        "k_star": 10,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.647059
+      },
+      {
+        "run_label": "officeval_033.requests_035.r01",
+        "task_id": "officeval:officeval_033",
+        "terminal_score_Y": 0.35294117647058826,
+        "max_snapshot_score": 0.35294117647058826,
+        "k_star": 22,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.647059
+      },
+      {
+        "run_label": "officeval_033.requests_035.r02",
+        "task_id": "officeval:officeval_033",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_033.requests_035.r03",
+        "task_id": "officeval:officeval_033",
+        "terminal_score_Y": 0.058823529411764705,
+        "max_snapshot_score": 0.058823529411764705,
+        "k_star": 8,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.941176
+      },
+      {
+        "run_label": "officeval_033.requests_035.r04",
+        "task_id": "officeval:officeval_033",
+        "terminal_score_Y": 0.35294117647058826,
+        "max_snapshot_score": 0.35294117647058826,
+        "k_star": 25,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.647059
+      },
+      {
+        "run_label": "officeval_050.requests_035.r00",
+        "task_id": "officeval:officeval_050",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.05,
+        "k_star": 26,
+        "ever_had_candidate": true,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:unsubmitted_score0_candidate",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0.05,
+        "deduction_never": 0.95
+      },
+      {
+        "run_label": "officeval_050.requests_035.r01",
+        "task_id": "officeval:officeval_050",
+        "terminal_score_Y": 0.05,
+        "max_snapshot_score": 0.05,
+        "k_star": 8,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.95
+      },
+      {
+        "run_label": "officeval_050.requests_035.r02",
+        "task_id": "officeval:officeval_050",
+        "terminal_score_Y": 0.05,
+        "max_snapshot_score": 0.05,
+        "k_star": 21,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.95
+      },
+      {
+        "run_label": "officeval_050.requests_035.r03",
+        "task_id": "officeval:officeval_050",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_050.requests_035.r04",
+        "task_id": "officeval:officeval_050",
+        "terminal_score_Y": 0.05,
+        "max_snapshot_score": 0.05,
+        "k_star": 8,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.95
+      },
+      {
+        "run_label": "officeval_060.requests_035.r00",
+        "task_id": "officeval:officeval_060",
+        "terminal_score_Y": 0.5454545454545454,
+        "max_snapshot_score": 0.5454545454545454,
+        "k_star": 9,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.454545
+      },
+      {
+        "run_label": "officeval_060.requests_035.r01",
+        "task_id": "officeval:officeval_060",
+        "terminal_score_Y": 0.5454545454545454,
+        "max_snapshot_score": 0.5454545454545454,
+        "k_star": 22,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.454545
+      },
+      {
+        "run_label": "officeval_060.requests_035.r02",
+        "task_id": "officeval:officeval_060",
+        "terminal_score_Y": 1.0,
+        "max_snapshot_score": 1.0,
+        "k_star": 14,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "perfect_score",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0
+      },
+      {
+        "run_label": "officeval_060.requests_035.r03",
+        "task_id": "officeval:officeval_060",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 1.0,
+        "k_star": 29,
+        "ever_had_candidate": true,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:unsubmitted_score0_candidate",
+        "deduction_broken": 0,
+        "deduction_undelivered": 1.0,
+        "deduction_never": 0
+      },
+      {
+        "run_label": "officeval_060.requests_035.r04",
+        "task_id": "officeval:officeval_060",
+        "terminal_score_Y": 0.5454545454545454,
+        "max_snapshot_score": 0.5454545454545454,
+        "k_star": 15,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.454545
+      },
+      {
+        "run_label": "officeval_070.requests_035.r00",
+        "task_id": "officeval:officeval_070",
+        "terminal_score_Y": 1.0,
+        "max_snapshot_score": 1.0,
+        "k_star": 29,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "perfect_score",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0
+      },
+      {
+        "run_label": "officeval_070.requests_035.r01",
+        "task_id": "officeval:officeval_070",
+        "terminal_score_Y": 0.5384615384615384,
+        "max_snapshot_score": 0.5384615384615384,
+        "k_star": 29,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.461538
+      },
+      {
+        "run_label": "officeval_070.requests_035.r02",
+        "task_id": "officeval:officeval_070",
+        "terminal_score_Y": 1.0,
+        "max_snapshot_score": 1.0,
+        "k_star": 26,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "perfect_score",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0
+      },
+      {
+        "run_label": "officeval_070.requests_035.r03",
+        "task_id": "officeval:officeval_070",
+        "terminal_score_Y": 0.7692307692307693,
+        "max_snapshot_score": 0.7692307692307693,
+        "k_star": 28,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.230769
+      },
+      {
+        "run_label": "officeval_070.requests_035.r04",
+        "task_id": "officeval:officeval_070",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": false,
+        "in_submission": false,
+        "dim1_pass": false,
+        "substate": "never:no_candidate_ever",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_085.requests_035.r00",
+        "task_id": "officeval:officeval_085",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_085.requests_035.r01",
+        "task_id": "officeval:officeval_085",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_085.requests_035.r02",
+        "task_id": "officeval:officeval_085",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_085.requests_035.r03",
+        "task_id": "officeval:officeval_085",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_085.requests_035.r04",
+        "task_id": "officeval:officeval_085",
+        "terminal_score_Y": 0.0,
+        "max_snapshot_score": 0.0,
+        "k_star": 0,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": false,
+        "substate": "never:submitted_dim1_gate_failed",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 1.0
+      },
+      {
+        "run_label": "officeval_090.requests_035.r00",
+        "task_id": "officeval:officeval_090",
+        "terminal_score_Y": 0.4,
+        "max_snapshot_score": 0.4,
+        "k_star": 5,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.6
+      },
+      {
+        "run_label": "officeval_090.requests_035.r01",
+        "task_id": "officeval:officeval_090",
+        "terminal_score_Y": 0.4,
+        "max_snapshot_score": 0.4,
+        "k_star": 6,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.6
+      },
+      {
+        "run_label": "officeval_090.requests_035.r02",
+        "task_id": "officeval:officeval_090",
+        "terminal_score_Y": 0.4,
+        "max_snapshot_score": 0.4,
+        "k_star": 10,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.6
+      },
+      {
+        "run_label": "officeval_090.requests_035.r03",
+        "task_id": "officeval:officeval_090",
+        "terminal_score_Y": 0.4,
+        "max_snapshot_score": 0.4,
+        "k_star": 11,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.6
+      },
+      {
+        "run_label": "officeval_090.requests_035.r04",
+        "task_id": "officeval:officeval_090",
+        "terminal_score_Y": 0.4,
+        "max_snapshot_score": 0.4,
+        "k_star": 13,
+        "ever_had_candidate": true,
+        "in_submission": true,
+        "dim1_pass": true,
+        "substate": "never:delivered_but_item_wrong",
+        "deduction_broken": 0,
+        "deduction_undelivered": 0,
+        "deduction_never": 0.6
+      }
+    ]
+  },
+  "holdout45_candidate_state_comparison": {
+    "episodes_count": 45,
+    "total_loss": 33.849528,
+    "total_never_loss": 32.27819,
+    "substate_episode_counts": {
+      "perfect_score": 0,
+      "broken": 0,
+      "undelivered": 2,
+      "never:no_candidate_ever": 11,
+      "never:unsubmitted_score0_candidate": 0,
+      "never:submitted_dim1_gate_failed": 4,
+      "never:delivered_but_item_wrong": 28
+    },
+    "substate_deductions": {
+      "broken": 1.446338,
+      "undelivered": 0.125,
+      "never:no_candidate_ever": 11.0,
+      "never:unsubmitted_score0_candidate": 0.0,
+      "never:submitted_dim1_gate_failed": 4.9375,
+      "never:delivered_but_item_wrong": 16.34069
+    },
+    "substate_share_of_total_loss": {
+      "broken": 0.042728,
+      "undelivered": 0.003693,
+      "never:no_candidate_ever": 0.324968,
+      "never:unsubmitted_score0_candidate": 0.0,
+      "never:submitted_dim1_gate_failed": 0.145866,
+      "never:delivered_but_item_wrong": 0.482745
+    },
+    "substate_share_of_never_loss": {
+      "never:no_candidate_ever": 0.340787,
+      "never:unsubmitted_score0_candidate": 0.0,
+      "never:submitted_dim1_gate_failed": 0.152967,
+      "never:delivered_but_item_wrong": 0.506246
+    }
+  }
+}

@@ -1,0 +1,678 @@
+{
+  "experiment_id": "V3_P1_QWEN36_PI_APPLICABILITY_PILOT",
+  "created_at": "2026-10-17T09:42:47Z",
+  "actor_model": "Qwen/Qwen3.6-27B",
+  "harness": "pi-coding-agent@0.73.1",
+  "vllm_max_model_len": 131072,
+  "criteria_evaluation": {
+    "1_package_completeness_and_context": {
+      "passed": true,
+      "verified_valid_count": "9/9",
+      "native_evaluation_validity_breakdown": "8/9 valid + 1/9 official_error (malformed PPTX <a:lnSpc/> -> score 0.0)",
+      "requests_exceeding_49k_tokens": 11,
+      "max_single_request_total_tokens": 78326,
+      "context_overflow_errors": 0
+    },
+    "2_score_floor": {
+      "passed": true,
+      "nonzero_episodes": "6/9",
+      "nonzero_families": [
+        "officeval_060",
+        "officeval_090"
+      ],
+      "nonzero_family_count": 2,
+      "mean_official_score": 0.3657,
+      "partial_score_episodes": 5,
+      "full_score_episodes": 1,
+      "family_breakdown": {
+        "officeval_070": {
+          "scores": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean_score": 0.0,
+          "max_score": 0.0,
+          "nonzero_count": 0,
+          "mean_requests": 15.666666666666666,
+          "mean_max_prompt_tokens": 40777
+        },
+        "officeval_060": {
+          "scores": [
+            0.5454545454545454,
+            0.5454545454545454,
+            1.0
+          ],
+          "mean_score": 0.6969696969696969,
+          "max_score": 1.0,
+          "nonzero_count": 3,
+          "mean_requests": 11,
+          "mean_max_prompt_tokens": 34389
+        },
+        "officeval_090": {
+          "scores": [
+            0.4,
+            0.4,
+            0.4
+          ],
+          "mean_score": 0.4,
+          "max_score": 0.4,
+          "nonzero_count": 3,
+          "mean_requests": 9,
+          "mean_max_prompt_tokens": 64062.666666666664
+        }
+      }
+    },
+    "3_sustained_throughput": {
+      "passed": true,
+      "total_model_requests": 107,
+      "total_tool_calls": 102,
+      "cohort_wall_seconds": 1093.28,
+      "sum_agent_phase_seconds": 3179.07,
+      "requests_per_hour_concurrent3": 352.33,
+      "requests_per_hour_single_stream": 121.17,
+      "estimated_hours_for_15k_requests_1gpu_concurrent3": 42.57,
+      "estimated_hours_for_15k_requests_2gpu": 21.29,
+      "completion_tokens_per_sec_wall": 59.61,
+      "cumulative_prompt_tokens": 3013575,
+      "cumulative_completion_tokens": 65167,
+      "latency_p50_seconds": 13.101,
+      "latency_mean_seconds": 28.945,
+      "latency_max_seconds": 280.937,
+      "total_retries": 0
+    },
+    "4_pi_session_and_cold_resume_v3_g1_g3": {
+      "passed": true,
+      "v3_g1_cold_resume": {
+        "passed": true,
+        "parent_run_label": "officeval_060.r00",
+        "parent_episode_id": "ep_f0034d3c7c574e8384f232b9b46c078b",
+        "checkpoint_id": "cp000010",
+        "resumed_request_id": "r000010",
+        "child_episode_id": "ep_11ea70878f7f4eabb00579f971e5b8dc",
+        "child_verified": true,
+        "parent_request_sha256": "c76ee2a29d56719e780677cce259b8698b9bb013f3933fd54ad4b521c8064110",
+        "child_request_sha256": "c76ee2a29d56719e780677cce259b8698b9bb013f3933fd54ad4b521c8064110",
+        "byte_identical_first_request": true,
+        "parent_snapshot_content_sha256": "30a41cf549b8ec94ff610fb396e9b2a7ae529c7ba680989e36886efd2b90e8eb",
+        "child_restored_snapshot_content_sha256": "30a41cf549b8ec94ff610fb396e9b2a7ae529c7ba680989e36886efd2b90e8eb",
+        "workspace_state_identical": true
+      },
+      "v3_g3_terminal_snapshot_max_abs_diff": 0.0,
+      "v3_g3_exact_match_count": "9/9"
+    }
+  },
+  "episodes": [
+    {
+      "run_label": "officeval_060.r00",
+      "task_id": "officeval_060",
+      "rep_id": "r00",
+      "episode_id": "ep_f0034d3c7c574e8384f232b9b46c078b",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_060.r00",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.5454545454545454,
+      "max_snapshot_score": 0.5454545454545454,
+      "terminal_snapshot_score": 0.5454545454545454,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 11,
+      "tool_calls": 10,
+      "tool_counts_by_name": {
+        "bash": 8,
+        "read": 2
+      },
+      "agent_phase_seconds": 265.986493165954,
+      "max_prompt_tokens": 36592,
+      "max_completion_tokens": 2340,
+      "max_single_request_total_tokens": 36821,
+      "cumulative_prompt_tokens": 176630,
+      "cumulative_completion_tokens": 5235,
+      "cumulative_total_tokens": 181865,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        2.024875625036657,
+        2.097814833978191,
+        19.454954333021306,
+        20.11703545798082,
+        45.22199837502558,
+        2.5437593329697847,
+        112.58592066704296,
+        29.798753584036604,
+        1.930949250003323,
+        13.100885499967262,
+        11.792226708028466
+      ],
+      "mean_request_latency_seconds": 23.697197606099177,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 1
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.454545454545
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_060.r01",
+      "task_id": "officeval_060",
+      "rep_id": "r01",
+      "episode_id": "ep_956aa55806fb4b99bfee3fd96c35421a",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_060.r01",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.5454545454545454,
+      "max_snapshot_score": 0.5454545454545454,
+      "terminal_snapshot_score": 0.5454545454545454,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 11,
+      "tool_calls": 11,
+      "tool_counts_by_name": {
+        "bash": 10,
+        "read": 1
+      },
+      "agent_phase_seconds": 573.324688875,
+      "max_prompt_tokens": 31128,
+      "max_completion_tokens": 5276,
+      "max_single_request_total_tokens": 31435,
+      "cumulative_prompt_tokens": 151675,
+      "cumulative_completion_tokens": 12447,
+      "cumulative_total_tokens": 164122,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        4.402244500000961,
+        17.78097404097207,
+        20.74057525000535,
+        20.311379249906167,
+        1.665415082941763,
+        250.3647618329851,
+        108.85028520796914,
+        110.16514841699973,
+        15.68822574999649,
+        4.278961625066586,
+        13.727869750000536
+      ],
+      "mean_request_latency_seconds": 51.634167336985804,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 1
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.454545454545
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_060.r02",
+      "task_id": "officeval_060",
+      "rep_id": "r02",
+      "episode_id": "ep_a9259f2e02b346c5b7a25bd70c1c2e4d",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_060.r02",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 1.0,
+      "max_snapshot_score": 1.0,
+      "terminal_snapshot_score": 1.0,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 11,
+      "tool_calls": 13,
+      "tool_counts_by_name": {
+        "bash": 7,
+        "read": 5,
+        "write": 1
+      },
+      "agent_phase_seconds": 487.5851277089678,
+      "max_prompt_tokens": 35447,
+      "max_completion_tokens": 5980,
+      "max_single_request_total_tokens": 35702,
+      "cumulative_prompt_tokens": 225991,
+      "cumulative_completion_tokens": 10297,
+      "cumulative_total_tokens": 236288,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        2.880325249978341,
+        3.6216578339226544,
+        4.764149416005239,
+        9.342868208070286,
+        2.9180612500058487,
+        114.02812404197175,
+        280.93726166698616,
+        11.72155220899731,
+        38.20422445901204,
+        3.02598895796109,
+        12.76181308296509
+      ],
+      "mean_request_latency_seconds": 44.018729670534164,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 0
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.0
+      },
+      "candidate_substate": "perfect_score"
+    },
+    {
+      "run_label": "officeval_070.r00",
+      "task_id": "officeval_070",
+      "rep_id": "r00",
+      "episode_id": "ep_741c33127f7649a9bc7c35a588ddaee3",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_070.r00",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.0,
+      "max_snapshot_score": 0.0,
+      "terminal_snapshot_score": 0.0,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 13,
+      "tool_calls": 12,
+      "tool_counts_by_name": {
+        "bash": 12
+      },
+      "agent_phase_seconds": 420.15516200009733,
+      "max_prompt_tokens": 41104,
+      "max_completion_tokens": 1526,
+      "max_single_request_total_tokens": 41440,
+      "cumulative_prompt_tokens": 383863,
+      "cumulative_completion_tokens": 8463,
+      "cumulative_total_tokens": 392326,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        21.127105791005306,
+        46.890450624981895,
+        13.33491562504787,
+        74.28079524997156,
+        35.690994500066154,
+        49.34214579092804,
+        53.85673062503338,
+        39.26693983399309,
+        6.541620625066571,
+        2.352438332978636,
+        45.48343087499961,
+        2.72372816700954,
+        14.976475041010417
+      ],
+      "mean_request_latency_seconds": 31.220597775545546,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 9
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.999999999999
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_070.r01",
+      "task_id": "officeval_070",
+      "rep_id": "r01",
+      "episode_id": "ep_8af4280024284a5ea12ac09f5d268b54",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_070.r01",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.0,
+      "max_snapshot_score": 0.0,
+      "terminal_snapshot_score": 0.0,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 16,
+      "tool_calls": 15,
+      "tool_counts_by_name": {
+        "bash": 15
+      },
+      "agent_phase_seconds": 401.35456487501506,
+      "max_prompt_tokens": 40533,
+      "max_completion_tokens": 3211,
+      "max_single_request_total_tokens": 40871,
+      "cumulative_prompt_tokens": 423391,
+      "cumulative_completion_tokens": 8273,
+      "cumulative_total_tokens": 431664,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        2.288582916953601,
+        2.2215807089814916,
+        18.464018083992414,
+        23.97209712502081,
+        16.88094733399339,
+        3.9120925420429558,
+        3.0234332499094307,
+        6.2387478339951485,
+        147.24581333401147,
+        71.36121520900633,
+        58.83178566605784,
+        10.73634495807346,
+        1.942953958059661,
+        3.234097042004578,
+        1.695130875101313,
+        14.778992917039432
+      ],
+      "mean_request_latency_seconds": 24.176739609640208,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 9
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.999999999999
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_070.r02",
+      "task_id": "officeval_070",
+      "rep_id": "r02",
+      "episode_id": "ep_b27a342f89a9450db695fbb2065ce530",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_070.r02",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "invalid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "invalid",
+      "terminal_score": 0.0,
+      "max_snapshot_score": 0.0,
+      "terminal_snapshot_score": 0.0,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 18,
+      "tool_calls": 17,
+      "tool_counts_by_name": {
+        "bash": 15,
+        "write": 2
+      },
+      "agent_phase_seconds": 555.2517575420206,
+      "max_prompt_tokens": 40694,
+      "max_completion_tokens": 2256,
+      "max_single_request_total_tokens": 40985,
+      "cumulative_prompt_tokens": 499860,
+      "cumulative_completion_tokens": 11565,
+      "cumulative_total_tokens": 511425,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        9.914713916019537,
+        13.442391541088,
+        27.338851290987805,
+        49.05953679198865,
+        12.881815790897235,
+        66.61687441694085,
+        34.825259958044626,
+        104.22260304098018,
+        2.753983916947618,
+        36.984249499975704,
+        44.63415279099718,
+        74.93139504105784,
+        2.301885582972318,
+        38.33240149996709,
+        3.1297119160881266,
+        4.659924416919239,
+        2.395716083003208,
+        11.864585292059928
+      ],
+      "mean_request_latency_seconds": 30.016114043718616,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 1
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 1.0
+      },
+      "candidate_substate": "never:submitted_dim1_gate_failed"
+    },
+    {
+      "run_label": "officeval_090.r00",
+      "task_id": "officeval_090",
+      "rep_id": "r00",
+      "episode_id": "ep_e2150d9ffd004a639963024db7772b13",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_090.r00",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.4,
+      "max_snapshot_score": 0.4,
+      "terminal_snapshot_score": 0.4,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 7,
+      "tool_calls": 6,
+      "tool_counts_by_name": {
+        "bash": 6
+      },
+      "agent_phase_seconds": 144.33256220794283,
+      "max_prompt_tokens": 67748,
+      "max_completion_tokens": 762,
+      "max_single_request_total_tokens": 67866,
+      "cumulative_prompt_tokens": 322768,
+      "cumulative_completion_tokens": 2615,
+      "cumulative_total_tokens": 325383,
+      "requests_over_49k_tokens": 4,
+      "retries": 0,
+      "request_latencies_seconds": [
+        8.880808874964714,
+        39.08968645799905,
+        14.52169295900967,
+        41.57106195797678,
+        22.24860249995254,
+        5.357075290987268,
+        5.58988041698467
+      ],
+      "mean_request_latency_seconds": 19.608401208267814,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 3
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.6000000000000001
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_090.r01",
+      "task_id": "officeval_090",
+      "rep_id": "r01",
+      "episode_id": "ep_cec19217c71a4697a7bbb3fe46767f89",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_090.r01",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.4,
+      "max_snapshot_score": 0.4,
+      "terminal_snapshot_score": 0.4,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 8,
+      "tool_calls": 7,
+      "tool_counts_by_name": {
+        "bash": 7
+      },
+      "agent_phase_seconds": 113.48596133291721,
+      "max_prompt_tokens": 46281,
+      "max_completion_tokens": 709,
+      "max_single_request_total_tokens": 46458,
+      "cumulative_prompt_tokens": 274784,
+      "cumulative_completion_tokens": 2173,
+      "cumulative_total_tokens": 276957,
+      "requests_over_49k_tokens": 0,
+      "retries": 0,
+      "request_latencies_seconds": [
+        9.013572291005403,
+        12.99605562502984,
+        21.625222874921747,
+        7.46793458389584,
+        31.893904958036728,
+        10.939062042045407,
+        4.247475582989864,
+        8.528251042007469
+      ],
+      "mean_request_latency_seconds": 13.338934874991537,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 3
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.6000000000000001
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    },
+    {
+      "run_label": "officeval_090.r02",
+      "task_id": "officeval_090",
+      "rep_id": "r02",
+      "episode_id": "ep_c8e4a4a1218e4da193444ae006cc5654",
+      "ep_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_090.r02",
+      "verified": true,
+      "status": {
+        "evaluation_validity": "valid",
+        "evidence_completeness": "complete",
+        "execution_validity": "valid",
+        "protocol_validity": "valid",
+        "task_outcome": "unknown",
+        "termination": "assistant_finished"
+      },
+      "termination": "assistant_finished",
+      "execution_validity": "valid",
+      "evaluation_validity": "valid",
+      "terminal_score": 0.4,
+      "max_snapshot_score": 0.4,
+      "terminal_snapshot_score": 0.4,
+      "v3_g3_abs_diff": 0.0,
+      "model_requests": 12,
+      "tool_calls": 11,
+      "tool_counts_by_name": {
+        "bash": 11
+      },
+      "agent_phase_seconds": 217.5941841249587,
+      "max_prompt_tokens": 78159,
+      "max_completion_tokens": 889,
+      "max_single_request_total_tokens": 78326,
+      "cumulative_prompt_tokens": 554613,
+      "cumulative_completion_tokens": 4099,
+      "cumulative_total_tokens": 558712,
+      "requests_over_49k_tokens": 7,
+      "retries": 0,
+      "request_latencies_seconds": [
+        2.1951997919240966,
+        8.771203374955803,
+        12.706216749968007,
+        22.999238083022647,
+        34.42303670803085,
+        7.6847742079989985,
+        9.252908917027526,
+        42.84873249998782,
+        44.047935124952346,
+        8.192949875025079,
+        6.37071933306288,
+        7.829181708046235
+      ],
+      "mean_request_latency_seconds": 17.27684136450019,
+      "defects_count_by_kind": {
+        "broken": 0,
+        "undelivered": 0,
+        "never": 3
+      },
+      "defects_deduction_by_kind": {
+        "broken": 0.0,
+        "undelivered": 0.0,
+        "never": 0.6000000000000001
+      },
+      "candidate_substate": "never:delivered_but_item_wrong"
+    }
+  ]
+}

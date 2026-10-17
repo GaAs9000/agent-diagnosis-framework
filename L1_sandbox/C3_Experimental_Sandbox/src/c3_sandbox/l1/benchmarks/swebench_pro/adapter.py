@@ -56,6 +56,8 @@ class NativeSWEBenchPro:
                     raise ValueError("task missing from data lock")
                 actual = set()
                 for path in task_dir.rglob("*"):
+                    if "__pycache__" in path.parts or path.name == ".DS_Store" or path.suffix == ".pyc":
+                        continue
                     if path.is_symlink():
                         raise ValueError("symlink task asset")
                     if not path.is_dir():
@@ -82,6 +84,8 @@ class NativeSWEBenchPro:
             s_dir = task_dir / subdir
             if s_dir.is_dir():
                 for p in sorted(s_dir.rglob("*")):
+                    if "__pycache__" in p.parts or p.name == ".DS_Store" or p.suffix == ".pyc":
+                        continue
                     if p.is_file():
                         rel = p.relative_to(task_dir).as_posix()
                         confined(task_dir, rel)

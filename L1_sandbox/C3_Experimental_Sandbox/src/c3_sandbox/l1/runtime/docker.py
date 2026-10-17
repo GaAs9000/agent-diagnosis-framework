@@ -70,11 +70,57 @@ def bounded_process(args:list[str],timeout:float,limit:int,on_abort=None)->dict:
             'started_at':started,'finished_at':utc_now(),'duration_seconds':time.monotonic()-start}
 
 
+_APP_GIT_SYNC_WRAPPER = """
+if [ -d /app/.git ]; then
+  (
+    for p in /workspace/submission/patch.diff /workspace/patch.diff /workspace/submission/model.patch /workspace/model.patch; do
+      if [ -f "$p" ] && [ -s "$p" ]; then
+        git -C /app apply --binary --whitespace=nowarn "$p" >/dev/null 2>&1 || git -C /app apply --whitespace=nowarn "$p" >/dev/null 2>&1 || true
+        break
+      fi
+    done
+    cp /app/.git/index /tmp/.l1_pre_idx 2>/dev/null || true
+    GIT_INDEX_FILE=/tmp/.l1_pre_idx git -C /app add -A -- . ':!*.pyc' ':!*__pycache__*' ':!*.pytest_cache*' >/dev/null 2>&1 || true
+    GIT_INDEX_FILE=/tmp/.l1_pre_idx git -C /app diff --cached --binary HEAD > /tmp/.l1_pre_app.patch 2>/dev/null || true
+  ) >/dev/null 2>&1
+fi
+"$1" -lc "$2"
+ec=$?
+if [ -d /app/.git ]; then
+  (
+    cp /app/.git/index /tmp/.l1_post_idx 2>/dev/null || true
+    GIT_INDEX_FILE=/tmp/.l1_post_idx git -C /app add -A -- . ':!*.pyc' ':!*__pycache__*' ':!*.pytest_cache*' >/dev/null 2>&1 || true
+    GIT_INDEX_FILE=/tmp/.l1_post_idx git -C /app diff --cached --binary HEAD > /tmp/.l1_post_app.patch 2>/dev/null || true
+    if ! cmp -s /tmp/.l1_pre_app.patch /tmp/.l1_post_app.patch; then
+      if [ -s /tmp/.l1_post_app.patch ]; then
+        mkdir -p /workspace/submission
+        cp /tmp/.l1_post_app.patch /workspace/patch.diff
+        chmod 0644 /workspace/patch.diff
+        cp /tmp/.l1_post_app.patch /workspace/submission/patch.diff
+        chmod 0644 /workspace/submission/patch.diff
+      else
+        rm -f /workspace/patch.diff /workspace/submission/patch.diff
+      fi
+    fi
+    chmod -R a-st /workspace 2>/dev/null || true
+  ) >/dev/null 2>&1
+fi
+exit $ec
+"""
+
+
 class DockerRuntime:
     def __init__(self,config):
         self.config=config; self.provenance=None; self.is_quiescent=True; self.event_sink=None
     def set_event_sink(self,sink):
         self.event_sink=sink
+    def _has_app_git(self)->bool:
+        opts=self.config.get('options') or {}
+        if 'persist_app_repo' in opts:
+            return bool(opts['persist_app_repo'])
+        if self.provenance and isinstance(self.provenance.get('python_environment'),dict):
+            return bool(self.provenance['python_environment'].get('has_app_git'))
+        return False
     def preflight(self):
         if not shutil.which('docker'): raise CapabilityError('Docker command not installed')
         image=docker_json('image','inspect',self.config['image'])[0]
@@ -89,7 +135,7 @@ class DockerRuntime:
             'resource_limits':{k:self.config[k] for k in ('memory','cpus','pids_limit')},
             'workspace_quota_enforced':False,'observed_at':utc_now()}
         # Probe the actual resolved image, not the host interpreter or a Dockerfile.
-        probe_script="import sys,json,importlib.metadata as m,hashlib,pathlib; p=pathlib.Path('/opt/l1/grade_worker.py'); print(json.dumps({'python':sys.version,'packages':{x.metadata['Name']:x.version for x in m.distributions()},'grader_worker_sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None},sort_keys=True))"
+        probe_script="import sys,json,importlib.metadata as m,hashlib,pathlib; p=pathlib.Path('/opt/l1/grade_worker.py'); print(json.dumps({'python':sys.version,'packages':{x.metadata['Name']:x.version for x in m.distributions()},'grader_worker_sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None,'has_app_git':pathlib.Path('/app/.git').exists()},sort_keys=True))"
         probe=self.container([],['python','-I','-c',probe_script],30,cwd='/tmp')
         if probe['container_exit_code']!=0 or not probe['output_complete']:
             raise CapabilityError('Resolved image failed Python environment probe')
@@ -104,8 +150,10 @@ class DockerRuntime:
     def _flags(self):
         uid = os.getuid() if hasattr(os, 'getuid') and os.getuid() != 0 else 65532
         gid = os.getgid() if hasattr(os, 'getgid') and os.getuid() != 0 else 65532
+        has_app_git = self._has_app_git()
+        read_only = self.config.get('read_only_rootfs', False if has_app_git else True)
         flags = ['--network', 'none']
-        if self.config.get('read_only_rootfs', True):
+        if read_only:
             flags.append('--read-only')
         flags += [
             '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -113,7 +161,7 @@ class DockerRuntime:
             '--memory', self.config['memory'],
             '--cpus', str(self.config['cpus'])
         ]
-        user = self.config.get('user')
+        user = self.config.get('user', 'root' if has_app_git else None)
         if user is not None:
             if user:
                 flags += ['--user', str(user)]
@@ -121,7 +169,7 @@ class DockerRuntime:
             flags += ['--user', f'{uid}:{gid}']
         tmpfs_opts = (
             'rw,exec,nosuid,nodev,size=256m,mode=1777'
-            if not self.config.get('read_only_rootfs', True) or self.config.get('tmpfs_exec', False)
+            if not read_only or self.config.get('tmpfs_exec', False)
             else 'rw,nosuid,nodev,size=256m,mode=1777'
         )
         flags += [
@@ -169,8 +217,59 @@ class DockerRuntime:
         if not cleanup: raise L1Error(f'Container cleanup failed for {cid}; no quiescent state/checkpoint may be claimed')
         process['quiescent']=True
         return process
+    def _execute_pi_on_app_repo(self,call,workspace:Path,timeout:float,*,supports_images:bool=True):
+        import shlex, tempfile
+        from ..core.contracts import Call
+        raw_path=str(call.arguments.get('path','')).strip()
+        rel_app='.' if raw_path=='/app' else raw_path[len('/app/'):]
+        with tempfile.TemporaryDirectory(prefix='l1-app-pi-') as tmp_d:
+            tmp_root=Path(tmp_d)
+            q_rel=shlex.quote(rel_app)
+            if call.name in ('read','edit'):
+                fetch_cmd=(
+                    f"if [ -f /app/{q_rel} ]; then "
+                    f"mkdir -p \"$(dirname /workspace/.l1_app_stage/{q_rel})\" && "
+                    f"cp /app/{q_rel} /workspace/.l1_app_stage/{q_rel} && "
+                    f"chmod -R a-st /workspace/.l1_app_stage 2>/dev/null || true; "
+                    f"fi"
+                )
+                self.container([(workspace,'/workspace',False)],['/bin/sh','-c',_APP_GIT_SYNC_WRAPPER,'l1-app-sync','/bin/sh',fetch_cmd],min(timeout,30.0))
+                stage_dir=workspace/'.l1_app_stage'
+                if stage_dir.exists():
+                    for item in stage_dir.rglob('*'):
+                        rel_i=item.relative_to(stage_dir)
+                        dst_i=tmp_root/rel_i
+                        if item.is_dir(): dst_i.mkdir(parents=True,exist_ok=True)
+                        elif item.is_file():
+                            dst_i.parent.mkdir(parents=True,exist_ok=True)
+                            shutil.copy2(item,dst_i)
+                    shutil.rmtree(stage_dir,ignore_errors=True)
+            proxy_args=dict(call.arguments,path=rel_app)
+            proxy_call=Call(call.call_id,call.name,proxy_args,call.native_id)
+            if call.name=='read':
+                res=execute_pi_read(proxy_call,tmp_root,self.config['max_image_bytes'],supports_images=supports_images)
+            elif call.name=='write':
+                res=execute_pi_write(proxy_call,tmp_root)
+            else:
+                res=execute_pi_edit(proxy_call,tmp_root)
+            if call.name in ('write','edit') and res.observation.get('exit_code')==0:
+                staged_file=tmp_root/rel_app
+                if staged_file.is_file():
+                    stage_in_ws=workspace/'.l1_app_stage'/rel_app
+                    stage_in_ws.parent.mkdir(parents=True,exist_ok=True)
+                    shutil.copy2(staged_file,stage_in_ws)
+                    push_cmd=(
+                        f"mkdir -p \"$(dirname /app/{q_rel})\" && "
+                        f"cp /workspace/.l1_app_stage/{q_rel} /app/{q_rel} && "
+                        f"rm -rf /workspace/.l1_app_stage"
+                    )
+                    self.container([(workspace,'/workspace',False)],['/bin/sh','-c',_APP_GIT_SYNC_WRAPPER,'l1-app-sync','/bin/sh',push_cmd],min(timeout,30.0))
+                    shutil.rmtree(workspace/'.l1_app_stage',ignore_errors=True)
+            return res
     def execute(self,call,workspace,timeout,*,supports_images:bool=True):
         validate_call(call,images=supports_images)
+        if not self.provenance: self.preflight()
+        has_app_git=self._has_app_git()
         if call.name=='read_image':
             start=utc_now(); name=call.arguments['path']
             if name.startswith('/workspace/'): name=name[len('/workspace/'):]
@@ -182,6 +281,10 @@ class DockerRuntime:
             if not mime: raise L1Error('read_image supports PNG/JPEG/WebP only')
             return Result({'path':name,'mime_type':mime,'size_bytes':len(data),'exit_code':0},image=data,image_mime=mime,
                           provenance={'boundary':'trusted_workspace_image_reader','started_at':start,'finished_at':utc_now(),'quiescent':True})
+        if call.name in ('read','write','edit'):
+            raw_path=str(call.arguments.get('path','')).strip()
+            if has_app_git and (raw_path=='/app' or raw_path.startswith('/app/')):
+                return self._execute_pi_on_app_repo(call,workspace,timeout,supports_images=supports_images)
         if call.name=='read':
             return execute_pi_read(call,workspace,self.config['max_image_bytes'],supports_images=supports_images)
         if call.name=='write':
@@ -191,14 +294,17 @@ class DockerRuntime:
         if call.name=='bash':
             req_timeout=call.arguments.get('timeout')
             eff_timeout=min(timeout,max(0.001,float(req_timeout))) if isinstance(req_timeout,(int,float)) and req_timeout>0 else timeout
-            p=self.container([(workspace,'/workspace',False)],['/bin/bash','-lc',call.arguments['command']],eff_timeout)
+            cmd=['/bin/bash','-c',_APP_GIT_SYNC_WRAPPER,'l1-app-sync','/bin/bash',call.arguments['command']] if has_app_git else ['/bin/bash','-lc',call.arguments['command']]
+            p=self.container([(workspace,'/workspace',False)],cmd,eff_timeout)
             obs=format_pi_bash_observation(p['stdout'],p['stderr'],p['container_exit_code'],p['stop_reason'],p['output_complete'],p['oom_killed'])
             provenance={k:v for k,v in p.items() if k not in ('stdout','stderr')}
             return Result(obs,p['stdout'],p['stderr'],provenance=provenance)
-        p=self.container([(workspace,'/workspace',False)],['/bin/sh','-lc',call.arguments['command']],timeout)
+        cmd=['/bin/sh','-c',_APP_GIT_SYNC_WRAPPER,'l1-app-sync','/bin/sh',call.arguments['command']] if has_app_git else ['/bin/sh','-lc',call.arguments['command']]
+        p=self.container([(workspace,'/workspace',False)],cmd,timeout)
         obs={'stdout':p['stdout'].decode('utf-8','replace'),'stderr':p['stderr'].decode('utf-8','replace'),
              'exit_code':p['container_exit_code'],'stop_reason':p['stop_reason'],'output_complete':p['output_complete'],
              'oom_killed':p['oom_killed']}
         provenance={k:v for k,v in p.items() if k not in ('stdout','stderr')}
         return Result(obs,p['stdout'],p['stderr'],provenance=provenance)
+
 
