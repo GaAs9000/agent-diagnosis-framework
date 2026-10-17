@@ -1,25 +1,121 @@
 {
-  "schema_version": "l2-0.5.1-v3-ladder",
+  "schema_version": "l2-0.5.2-v3-ladder",
   "stage": "D2",
-  "generated_at": "2026-10-17T14:25:32.427227+00:00",
+  "d1_plan_sha256": null,
+  "d1_outcomes_sha256": null,
+  "simulated_offline": false,
+  "mode": "plan_only",
+  "generated_at": "2026-10-17T15:45:48.533634+00:00",
   "actor_requests_issued": 0,
   "analyst_requests_issued": 0,
-  "status": "pending_d1_execution",
+  "status": "plan_only_pending_d1_execution",
   "d0_parameters": {
     "ceiling_threshold": 0.05,
     "delta": 0.1,
     "tau": 0.2,
-    "alpha": 0.05
+    "alpha": 0.05,
+    "min_replicates_per_arm": 2
+  },
+  "d1_provenance_audit": {
+    "d1_outcomes_sha256": "6d97fa6732c7df98852450e24d34e38f9fd117607f657fc280a2c287837715a8",
+    "d1_plan_sha256_expected": null,
+    "d1_plan_sha256_actual": null,
+    "plan_binding_verified": false,
+    "plan_binding_errors": [
+      "invalid artifact_sha256 seal"
+    ],
+    "require_branch_receipts": true,
+    "input_unit_count": 0,
+    "verified_unit_count": 0,
+    "rejected_unit_count": 0,
+    "rejected_units": []
   },
   "cross_fitted_ceiling": {
-    "schema_version": "l2-0.5.1-v3-ladder",
+    "schema_version": "l2-0.5.2-v3-ladder",
     "proposition_id": "V3-P3",
     "eligible_unit_count": 0,
+    "ineligible_unit_ids": [],
+    "min_replicates_per_arm_required": 2,
+    "fixed_arm_pool": [
+      "P"
+    ],
+    "diagnostic_arm_pool": [
+      "P",
+      "D",
+      "S",
+      "R_explicit",
+      "R_single"
+    ],
     "folds_disjoint": true,
+    "branches_disjoint": true,
+    "fixed_policy_pool_complete": false,
+    "missing_fixed_arms": [
+      "D",
+      "S",
+      "R_explicit"
+    ],
+    "evidence_status": "inconclusive",
+    "split_unit": "continuation_branches_within_unit",
+    "family_cluster_count": 0,
     "unweighted_ceiling": 0.0,
     "deduction_weighted_ceiling": 0.0,
+    "unweighted_lb95": -1.0,
+    "unweighted_ub95": 1.0,
+    "deduction_weighted_lb95": -1.0,
+    "deduction_weighted_ub95": 1.0,
+    "interval_method": "conditional_direction_family_weighted_hoeffding_bonferroni",
+    "direction_intervals": [
+      {
+        "fold": 1,
+        "unweighted": [
+          -1.0,
+          1.0
+        ],
+        "unweighted_family_weights": {},
+        "weighted": [
+          -1.0,
+          1.0
+        ],
+        "weighted_family_weights": {}
+      },
+      {
+        "fold": 2,
+        "unweighted": [
+          -1.0,
+          1.0
+        ],
+        "unweighted_family_weights": {},
+        "weighted": [
+          -1.0,
+          1.0
+        ],
+        "weighted_family_weights": {}
+      }
+    ],
+    "best_case_equal_family_lower_bound_at_perfect_gain": -1.9604143746015965,
+    "threshold_attainable_with_observed_family_count": false,
+    "weighting": "deduction_weight/inclusion_prob",
     "ceiling_threshold": 0.05,
-    "passes_v3_p3_gate": false
+    "family_ids_complete": true,
+    "passes_v3_p3_gate": false,
+    "folds": [
+      {
+        "fold": 1,
+        "selection_half": 0,
+        "evaluation_half": 1,
+        "best_fixed_arm_unweighted": "P",
+        "best_fixed_arm_weighted": "P"
+      },
+      {
+        "fold": 2,
+        "selection_half": 1,
+        "evaluation_half": 0,
+        "best_fixed_arm_unweighted": "P",
+        "best_fixed_arm_weighted": "P"
+      }
+    ],
+    "unit_evaluations": []
   },
-  "d3_prerequisite_gate_open": false
+  "d3_prerequisite_gate_open": false,
+  "artifact_sha256": "8616942e504f32643ed2aeb6cac679feafc6e3f78b4e4acbafac05d46b8466b1"
 }

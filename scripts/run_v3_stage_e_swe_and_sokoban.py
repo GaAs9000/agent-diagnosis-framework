@@ -20,8 +20,7 @@ Computes and reports:
      `independent_state_damage_corner_deadlock` (独立核对的状态损害), NOT merged into `broken` (`broken = 0`).
    - Explicitly notes that static corner deadlock detection is sound for corner deadlocks but incomplete
      (does not cover all bipartite/corridor deadlocks).
-   - Records both pre-reset (`turn 9`, `r000008_c0.json`) and post-reset (`turn 15`, `r000014_c0.json`)
-     corner deadlock turns for `run_seed42`.
+   - Renders detected turns and reset boundaries from the same facts in JSON and Markdown.
 """
 from __future__ import annotations
 
@@ -37,9 +36,7 @@ sys.path.insert(0, str(L1_ROOT / "src"))
 sys.path.insert(0, str(L2_ROOT / "src"))
 
 from c3_sandbox.l1.evidence.live import verify as verify_episode_dir
-from l2_sandbox.evidence.l1 import L1Package
-from l2_sandbox.grades import grade_episode_snapshots as grade_episode
-from l2_sandbox.io import read_json, read_jsonl, write_json as atomic_write_json, write_jsonl
+from l2_sandbox.io import read_json, read_jsonl, write_json as atomic_write_json
 
 OUT_JSON = L2_ROOT / "reports" / "v3_stage_e_swe_and_sokoban_v05_20261017.json"
 OUT_MD = L2_ROOT / "reports" / "V3_STAGE_E_MULTI_BENCHMARK_V05_REPORT_20261017.md"
@@ -71,6 +68,7 @@ def _has_corner_deadlock(stdout: str) -> bool:
 def _detect_deadlock_turns(ep_dir: Path) -> dict[str, Any]:
     """Detect all turns with static corner deadlock (including pre-reset and post-reset turns)."""
     deadlock_turns_obs: list[int] = []
+    reset_turns_obs: list[int] = []
     obs_dir = ep_dir / "observations"
     if obs_dir.is_dir():
         for obs_file in sorted(obs_dir.glob("r*.json")):
@@ -81,6 +79,8 @@ def _detect_deadlock_turns(ep_dir: Path) -> dict[str, Any]:
             turn = req_idx + 1
             obs = read_json(obs_file)
             stdout = str(obs.get("stdout") or "")
+            if "reset to its starting layout" in stdout.lower():
+                reset_turns_obs.append(turn)
             if _has_corner_deadlock(stdout):
                 deadlock_turns_obs.append(turn)
 
@@ -109,14 +109,17 @@ def _detect_deadlock_turns(ep_dir: Path) -> dict[str, Any]:
                 deadlock_turns_journal.append(max(1, turn))
 
     all_turns = sorted(set(deadlock_turns_obs or deadlock_turns_journal))
-    first_pre_reset = all_turns[0] if all_turns else None
+    reset_turns = sorted(set(reset_turns_obs or reset_turns))
+    first_overall = all_turns[0] if all_turns else None
+    pre = [t for t in all_turns if not reset_turns or t < reset_turns[0]]
     first_post_reset = None
     if all_turns and reset_turns:
         post = [t for t in all_turns if t > reset_turns[0]]
         if post:
             first_post_reset = post[0]
     return {
-        "first_corner_deadlock_turn_overall": first_pre_reset,
+        "first_corner_deadlock_turn_overall": first_overall,
+        "first_corner_deadlock_turn_pre_reset": pre[0] if pre else None,
         "first_corner_deadlock_turn_post_reset": first_post_reset,
         "reset_turns": sorted(set(reset_turns)),
         "all_corner_deadlock_turns": all_turns,
@@ -148,11 +151,8 @@ def evaluate_sokoban_v05() -> dict[str, Any]:
         d_dir = soko_diag_root / run_name
         grades_path = d_dir / "grades.jsonl"
         if not grades_path.exists():
-            pkg = L1Package(ep_dir)
-            rows = grade_episode(pkg, cache_dir=soko_diag_root / "grade_cache", verify_terminal_submission=True)
-            write_jsonl(grades_path, rows)
-        else:
-            rows = read_jsonl(grades_path)
+            raise FileNotFoundError(f"Read-only report requires existing grades: {grades_path}")
+        rows = read_jsonl(grades_path)
         cp_rows = [r for r in rows if r.get("kind") == "checkpoint"]
         term_row = next((r for r in rows if r.get("kind") in ("terminal", "terminal_submission")), {})
         total_cps += len(cp_rows)
@@ -181,7 +181,8 @@ def evaluate_sokoban_v05() -> dict[str, Any]:
             "e1_class": "never_succeeded_on_disk",
             "broken_count": 0,
             "independent_state_damage": "corner_deadlock_detected" if has_dl else "no_corner_deadlock_detected (incomplete_detector)",
-            "first_deadlock_turn_pre_reset": dl_info["first_corner_deadlock_turn_overall"],
+            "first_deadlock_turn_overall": dl_info["first_corner_deadlock_turn_overall"],
+            "first_deadlock_turn_pre_reset": dl_info["first_corner_deadlock_turn_pre_reset"],
             "first_deadlock_turn_post_reset": dl_info["first_corner_deadlock_turn_post_reset"],
             "reset_turns": dl_info["reset_turns"],
             "all_corner_deadlock_turns": dl_info["all_corner_deadlock_turns"],
@@ -194,11 +195,11 @@ def evaluate_sokoban_v05() -> dict[str, Any]:
         "stage_status": "e1_pre_split_completed_pending_intervention_closure",
         "episode_count": total_eps,
         "checkpoint_count": total_cps,
-        "terminal_snapshot_consistency": f"{terminal_matches}/{total_eps} (100%)",
+        "terminal_snapshot_consistency": f"{terminal_matches}/{total_eps} ({100 * terminal_matches / total_eps:.1f}%)" if total_eps else "0/0 (N/A)",
         "not_applicable_categories": ["undelivered", "delivery_responsive", "rule_responsive"],
         "broken_count": 0,
         "independent_state_damage_corner_deadlock_count": sum(
-            1 for e in episodes_out if e["first_deadlock_turn_pre_reset"] is not None
+            1 for e in episodes_out if e["first_deadlock_turn_overall"] is not None
         ),
         "detector_coverage_note": "Static 2x2/corner deadlock detector is sound for corner deadlocks but incomplete for general Sokoban deadlocks.",
         "episodes": episodes_out,
@@ -282,9 +283,8 @@ def evaluate_swebench_pro_f27_v05() -> dict[str, Any]:
     }
 
 
-def main() -> None:
-    soko = evaluate_sokoban_v05()
-    swe = evaluate_swebench_pro_f27_v05()
+def render_report(soko: dict[str, Any], swe: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Render both formats from previously collected facts; never execute a scorer."""
     payload = {
         "report_id": "V3_STAGE_E_MULTI_BENCHMARK_E1_PRE_SPLIT_20261017",
         "revision": "R4_fact_grounded_20261017",
@@ -292,7 +292,6 @@ def main() -> None:
         "swebench_pro": swe,
         "lhtb_sokoban": soko,
     }
-    atomic_write_json(OUT_JSON, payload)
 
     md_lines = [
         "# V3 Stage E: 多基准（SWE-bench Pro V2 & LHTB Sokoban）E1 预拆与边界核验报告",
@@ -300,7 +299,7 @@ def main() -> None:
         "> **更正说明（2026-10-17，对应修订前提交 `0058bde`，执行项 `R4`）**：",
         "> 1. **阶段状态明确化**：本阶段当前状态为 **“E1 预拆完成，待补最小干预闭环（部分完成）”**，不宣称 Stage E 已全部完成。",
         "> 2. **SWE `task2_s42_f27` 原件事实纠正**：核对 `diagnoses/swebench_pro_f27_live_20261017/task2_s42_f27/grades.jsonl` 原件，在 `cp000011`、`cp000012` 与 `terminal_submission` 上均为 `candidate = [\"submission/patch.diff\"]`、`in_submission = true`、`dim1_pass = false`、`score = 0.0`（且 `V3-G1/F27` 回执记录 `2,038` 字节提交补丁）。因此删除旧报告中“未提交补丁（`undelivered`）”与“终态 `broken = 3`”的表述，严格按原件分开报告：(a) **提交补丁存在**（`in_submission = true`）；(b) **门槛/测试失败**（`4/4 fail_to_pass` 通过，但 `pass_to_pass` 为 `23/26`，触发 `dim1_pass = false, dim1_gate = 0.9, score = 0.0`）；(c) **候选内回归（`in_candidate_regression`）单列**（`3` 项 `pass_to_pass` 回归单列，不计入终态 `broken`）。",
-        "> 3. **Sokoban 状态损害单列与死锁轮次统一**：将静态 2×2/角落死锁检测结果单列为 **“独立核对的状态损害（`independent_state_damage_corner_deadlock`）”**，不并入 `broken`（`broken = 0`），并注明静态角落死锁检测不能覆盖全部死锁；同时统一 `run_seed42` 的死锁回合记录（**重置前第 9 回合 `r000008_c0.json` 首次出现角落死锁，第 10 回合 `reset` 后在第 15 回合 `r000014_c0.json` 再次出现角落死锁**）。",
+        "> 3. **Sokoban 状态损害单列**：角落检测结果见下表，与 JSON 同源；未检出不代表可解。重置前指首次 reset 之前，整体首次与重置后首次分别列报，不把其他死锁误记为静态墙角。",
         "",
         "- **统一被测 Actor**：`Qwen/Qwen3.6-27B (revision 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9)`",
         "- **机读结果文件**：[`reports/v3_stage_e_swe_and_sokoban_v05_20261017.json`](./v3_stage_e_swe_and_sokoban_v05_20261017.json)",
@@ -313,7 +312,7 @@ def main() -> None:
         "| 基准 (Benchmark) | 原生环境与 Harness | 终态快照与 L1 官方分一致性 | 终态 `broken` (E1) | 终态 `undelivered` (E1) | 终态未得分 / 门槛未过 (`never_succeeded_on_disk`) | 独立单列项（候选内回归 / 独立核对的状态损害） | 当前状态与边界说明 |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |",
         "| **SWE-bench Pro V2 (`task2_s42_f27`, Post-`F27`)** | `native-tool-agent` + 持久可写 `/app` | `4/4 (100%)`（3 条 pre-`F27` + 1 条 post-`F27`） | **`0`** | **`0`**（`submission/patch.diff` 已交，`in_submission=true`） | **`1` 条运行**（`dim1_pass=false, score=0.0`；其中 `4/4 fail_to_pass` 在提交补丁内已通过） | **候选内回归 (`in_candidate_regression`)：`3` 项**（`pass_to_pass` 在第 11 步补丁内由绿变红） | 补丁已写入 `submission/patch.diff`（`2,038B`），因 `23/26 pass_to_pass` 未过官方 `dim1_pass` 门槛得 `0.0` 分；**E1 预拆完成，待补最小干预闭环** |",
-        "| **LHTB Sokoban (`3` seeds)** | `native-tool-agent` + `/workspace/.lhtb_state` | `3/3 (100%)`（`63` 个检查点） | **`0`** | `N/A` (`not_applicable`) | **`3` 条运行**（全程 `band = 0`） | **独立核对的状态损害 (`corner_deadlock`)：`2` 条运行**（`run_seed42`、`run_seed2026`） | 无独立交付通道（`undelivered = N/A`）；静态角落死锁检测单列，且不覆盖全部死锁类型；**E1 预拆完成，待补最小干预闭环** |",
+        f"| **LHTB Sokoban (`{len(soko['episodes'])}` seeds)** | `native-tool-agent` + `/workspace/.lhtb_state` | `{soko.get('terminal_snapshot_consistency', 'unknown')}`（`{soko.get('checkpoint_count', 'unknown')}` 个检查点） | `{soko.get('broken_count', 0)}` | `N/A` (`not_applicable`) | `{sum(e['e1_class'] == 'never_succeeded_on_disk' for e in soko['episodes'])}` 条运行 | 独立状态损害 `corner_deadlock`：`{sum(e['first_deadlock_turn_overall'] is not None for e in soko['episodes'])}` 条运行 | 静态角落检测不覆盖全部死锁；E1 预拆完成，待补最小干预闭环 |",
         "",
         "---",
         "",
@@ -343,14 +342,24 @@ def main() -> None:
         "",
         "> **检测器覆盖范围声明**：下表使用的静态 2×2/角落死锁检测器仅检查非目标格箱子 `$` 是否被正交相邻墙面 `#` 卡死（对角落死锁是充分且零成本的），但**不能覆盖全部 Sokoban 死锁形态**（如通道封死、双箱贴墙死锁等）；因此未检出角落死锁不代表盘面仍可解，且角落死锁统一单列为“独立核对的状态损害”，不并入 `broken`。",
         "",
-        "| Episode | `k_star` | 重置前首次角落死锁回合 | `reset` 回合 | 重置后首次角落死锁回合 | 终态 `e1_class` | 终态 `broken` | 独立核对的状态损害 (`independent_state_damage`) | 当前状态 |",
-        "| :--- | :---: | :---: | :---: | :---: | :--- | :---: | :--- | :--- |",
-        "| `run_seed42` | `0` | **第 `9` 回合** (`r000008_c0.json`) | 第 `10` 回合 | **第 `15` 回合** (`r000014_c0.json`) | `never_succeeded_on_disk` | `0` | **`corner_deadlock_detected`**（重置前第 9 回合、重置后第 15 回合） | `E1 预拆完成，待补最小干预闭环` |",
-        "| `run_seed101` | `0` | `None` | `[8]` | `None` | `never_succeeded_on_disk` | `0` | `no_corner_deadlock_detected`（静态角落检测未触发，不排除其他类型死锁） | `E1 预拆完成，待补最小干预闭环` |",
-        "| `run_seed2026` | `0` | **第 `4` 回合** (`r000003_c0.json`) | `[9]` | **第 `12` 回合** (`r000011_c0.json`) | `never_succeeded_on_disk` | `0` | **`corner_deadlock_detected`**（重置前第 4 回合、重置后第 12 回合） | `E1 预拆完成，待补最小干预闭环` |",
+        "| Episode | `k_star` | 整体首次角落死锁回合 | 重置前首次 | `reset` 回合 | 重置后首次 | 全部检出回合 | 终态 `e1_class` | `broken` | 独立状态损害 |",
+        "|---|---:|---|---|---|---|---|---|---:|---|",
         "",
     ]
-    OUT_MD.write_text("\n".join(md_lines), encoding="utf-8")
+    for ep in soko["episodes"]:
+        md_lines.append(
+            f"| `{ep['episode_id']}` | `{ep['k_star']}` | `{ep['first_deadlock_turn_overall']}` | "
+            f"`{ep['first_deadlock_turn_pre_reset']}` | `{ep['reset_turns']}` | "
+            f"`{ep['first_deadlock_turn_post_reset']}` | `{ep['all_corner_deadlock_turns']}` | "
+            f"`{ep['e1_class']}` | `{ep['broken_count']}` | `{ep['independent_state_damage']}` |"
+        )
+    return payload, "\n".join(md_lines) + "\n"
+
+
+def main() -> None:
+    payload, markdown = render_report(evaluate_sokoban_v05(), evaluate_swebench_pro_f27_v05())
+    atomic_write_json(OUT_JSON, payload)
+    OUT_MD.write_text(markdown, encoding="utf-8")
     print(f"Wrote {OUT_JSON} and {OUT_MD}")
 
 

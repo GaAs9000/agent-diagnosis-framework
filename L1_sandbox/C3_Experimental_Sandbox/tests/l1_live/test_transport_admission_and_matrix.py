@@ -60,6 +60,41 @@ def test_limiter_covers_each_native_send_and_retry(tmp_path, config, components)
     assert read_json(out / 'raw/resolved_config.json') == read_json(baseline / 'raw/resolved_config.json')
 
 
+def test_external_stage_deadline_bounds_model_and_tool_without_changing_config(tmp_path, config, components, monkeypatch):
+    monkeypatch.setattr(orchestrator, 'time', SimpleNamespace(monotonic=lambda: 100.0, sleep=lambda seconds: None))
+    observed_model, observed_tool = [], []
+    model, runtime = components['model'], components['runtime']
+    send, execute = model.send, runtime.execute
+    def bounded_send(body, timeout):
+        observed_model.append(timeout)
+        return send(body, timeout)
+    def bounded_execute(call, workspace, timeout):
+        observed_tool.append(timeout)
+        return execute(call, workspace, timeout)
+    monkeypatch.setattr(model, 'send', bounded_send)
+    monkeypatch.setattr(runtime, 'execute', bounded_execute)
+    limiter = SpyLimiter()
+    limiter.remaining_seconds = lambda: .25
+    output = tmp_path / 'external-deadline'
+    result = orchestrator.run(config, output, injected=components, request_limiter=limiter)
+    assert result['verification']['verified']
+    assert observed_model and observed_tool
+    assert all(0 < timeout <= .25 for timeout in observed_model + observed_tool)
+    assert read_json(output / 'raw/resolved_config.json')['budget']['wall_time_seconds'] == 60
+    started = scan(output / 'trajectory.jsonl')['events'][0]
+    assert started['data']['external_wall_seconds'] == .25
+
+
+def test_expired_external_stage_deadline_sends_nothing(tmp_path, config, components):
+    limiter = SpyLimiter()
+    limiter.remaining_seconds = lambda: 0.0
+    result = orchestrator.run(config, tmp_path / 'expired-stage', injected=components, request_limiter=limiter)
+    assert result['verification']['verified']
+    assert result['status']['termination'] == 'wall_time_budget'
+    assert components['model'].bodies == []
+    assert limiter.acquired == []
+
+
 @pytest.mark.parametrize('expired_after_admission', [False, True])
 def test_admission_timeout_never_sends(tmp_path, config, components, monkeypatch, expired_after_admission):
     now = [100.0]

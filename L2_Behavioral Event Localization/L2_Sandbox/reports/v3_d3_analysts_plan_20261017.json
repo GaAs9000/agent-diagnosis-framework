@@ -1,33 +1,33 @@
 {
-  "schema_version": "l2-0.5.1-v3-ladder",
+  "schema_version": "l2-0.5.2-v3-ladder",
   "stage": "D3",
   "mode": "plan_only",
-  "generated_at": "2026-10-17T14:26:29.184466+00:00",
+  "generated_at": "2026-10-17T15:46:09.889894+00:00",
   "prerequisite_d2_gate": {
-    "d2_report_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/reports/v3_d2_ceiling_report_20261017.json",
-    "d2_status": "pending_d1_execution",
+    "d2_report_path": "L2_Behavioral Event Localization/L2_Sandbox/validation/r_repair_codex_20261017/draft_d2_plan_final.json",
+    "d2_status": "plan_only_pending_d1_execution",
     "d3_prerequisite_gate_open": false,
     "rule": "Stage D3 LLM Analyst calls (B/C) are strictly blocked unless Stage D2 V3-P3 ceiling >= threshold."
   },
-  "analyst_groups": {
-    "M": "Zero-cost majority-class / best-fixed-arm baseline (0 LLM requests)",
-    "A": "Deterministic rule / keyword heuristic baseline on L2 facts.jsonl (0 LLM requests; R17)",
-    "B": "Real LLM (gemini-3.8-flash) reading raw L1 trajectory log up to anchor k (1 LLM request / unit)",
-    "C": "Real LLM (gemini-3.8-flash) reading L1 trajectory + L2 zero-request facts.jsonl up to anchor k (1 LLM request / unit)"
-  },
-  "prompt_hashes": {
-    "B_system_prompt_sha256": "ce2e0554503780d568440dc07685605b3b9cae7758d2fbc2a948f8af4778d7c4",
-    "C_system_prompt_sha256": "87226e4b8d67aea83e324d035572ab2b73f8ac1c1ef2099e4f6aa9471eef13bb"
-  },
+  "execution_ready": false,
+  "readiness_errors": [
+    "development_baseline:[Errno 2] No such file or directory: '/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/configs/v3_d3_development_baseline.json'",
+    "D2 frozen provenance is not production execution"
+  ],
   "budget_and_stop_conditions": {
-    "target_unit_count": 9,
+    "target_unit_count": 6,
     "actor_requests_cap": 0,
-    "analyst_llm_requests_cap": 18,
-    "estimated_api_cost_usd_upper_bound": 0.054,
+    "analyst_llm_requests_cap": 12,
+    "estimated_api_cost_usd_upper_bound": null,
+    "pricing_status": "requires frozen conservative usd_per_token_upper_bound and token reservations",
     "stop_conditions": [
       "Do not execute unless D2 V3-P3 gate is open (`d3_prerequisite_gate_open == True`).",
       "Abort if any B/C prompt fails zero-score-leakage check (no s(k) or grades.jsonl allowed).",
       "Abort if HTTP error or invalid JSON schema rate exceeds 5%."
     ]
-  }
+  },
+  "summary_only": true,
+  "source_full_plan_sha256": "12292a9cd9276a49bee624a924c2dca27c29e559899400b8c12600f89b08616f",
+  "source_full_plan_path": "L2_Behavioral Event Localization/L2_Sandbox/validation/r_repair_codex_20261017/draft_d3_plan_final.json",
+  "note": "Summary only, not an executable or approved plan. The full local draft includes raw L1 prompt material and is not committed."
 }

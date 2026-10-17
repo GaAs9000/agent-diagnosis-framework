@@ -1,31 +1,26 @@
-# V3-G3 新开发集 (`v3_qwen36_pi_dev45_20261017`) 20 检查点人工核查表（R20）
+# V3-G3 checkpoint dossier (R20)
 
-- **所属工作项**：`R20`（`V3-G3` 快照评分一致性门禁）
-- **状态**：**待人工核查**（严禁以程序自动比对或模板 `PASS` 代替真人签字）
-- **程序自动核对结果（单独列报，不抵扣人工核查）**：已完成 L2 快照评分的新 `dev45` 轨迹共 `5` 条，终态快照分与 L1 官方终态分自动比对一致率 `5/5`；P1 探针 9 条轨迹终态快照分与 L1 官方终态分自动比对一致率 `9/9`。
-- **当前新 `dev45` 检查点抽样池规模**：`516` 个检查点（固定随机种子 `20261017` 抽取 `20` 个检查点供人工核验）。
+Pending human review. Unknown restored directories/scorer exits remain unknown; no scorer was run.
 
-## 20 个抽样检查点人工核查记录表（由用户或指定审阅人填写）
-
-| # | 运行 ID (`episode_id`) | 检查点 (`checkpoint_id`) | 快照归档 (`snapshot_id`) | 候选路径 (`candidate`) | 自动快照状态 | 自动快照分/参考 | 审阅人 | 审阅时间 | 人工核查结论 | 备注 |
-|---:|---|---|---|---|---|---|---|---|---|---|
-| 1 | `officeval_003.r00` | `cp000004` | `s000004` | `(none)` | `no_candidate` | `0.0000` |  |  |  |  |
-| 2 | `officeval_003.r02` | `cp000007` | `s000007` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 3 | `officeval_004.r03` | `cp000008` | `s000008` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.6364)` |  |  |  |  |
-| 4 | `officeval_010.r01` | `cp000017` | `s000017` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 5 | `officeval_010.r02` | `cp000009` | `s000009` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 6 | `officeval_033.r00` | `cp000001` | `s000001` | `(none)` | `no_candidate` | `0.0000` |  |  |  |  |
-| 7 | `officeval_033.r00` | `cp000014` | `s000014` | `submission/家居零售价目册_已调价.docx` | `ok` | `0.0000` |  |  |  |  |
-| 8 | `officeval_033.r00` | `cp000016` | `s000016` | `submission/家居零售价目册_已调价.docx` | `ok` | `0.0000` |  |  |  |  |
-| 9 | `officeval_033.r00` | `cp000021` | `s000021` | `submission/家居零售价目册_已调价.docx` | `ok` | `0.0000` |  |  |  |  |
-| 10 | `officeval_033.r00` | `cp000023` | `s000023` | `submission/家居零售价目册_已调价.docx` | `ok` | `0.0000` |  |  |  |  |
-| 11 | `officeval_033.r03` | `cp000015` | `s000015` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 12 | `officeval_050.r01` | `cp000003` | `s000003` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0500)` |  |  |  |  |
-| 13 | `officeval_050.r02` | `cp000020` | `s000020` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0500)` |  |  |  |  |
-| 14 | `officeval_060.r00` | `cp000005` | `s000005` | `(none)` | `no_candidate` | `0.0000` |  |  |  |  |
-| 15 | `officeval_060.r00` | `cp000008` | `s000008` | `(none)` | `no_candidate` | `0.0000` |  |  |  |  |
-| 16 | `officeval_070.r01` | `cp000003` | `s000003` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 17 | `officeval_085.r00` | `cp000010` | `s000010` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 18 | `officeval_085.r01` | `cp000003` | `s000003` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.0000)` |  |  |  |  |
-| 19 | `officeval_090.r00` | `cp000003` | `s000003` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.4000)` |  |  |  |  |
-| 20 | `officeval_090.r01` | `cp000000` | `s000000` | `(pending_l2_snapshot_grade)` | `recorded_on_disk` | `(terminal=0.4000)` |  |  |  |  |
+| # | episode_id | checkpoint_id | snapshot_id | snapshot_path | snapshot_sha256 | candidate | candidate_status | auto_snapshot_score | restored_directory | scorer_exit_code | reviewer | reviewed_at | human_conclusion | notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | officeval_003.r02 | cp000008 | s000009 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_003.r02/states/snapshots/s000009.json | eec240785d8559fe41b315ebfcba4bbe9162749e7243a4945653d4052b26878f | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 2 | officeval_004.r01 | cp000006 | s000007 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_004.r01/states/snapshots/s000007.json | 99efab6cfd375a7d7a64faf5a6a328f27d7cafcc35a0558f715040ea194278e5 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 3 | officeval_004.r03 | cp000020 | s000021 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_004.r03/states/snapshots/s000021.json | 35437c6960aaeb99eb6a22ed81b653357cb34f6d895dba0aafa111b756cccfa9 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 4 | officeval_010.r01 | cp000021 | s000021 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_010.r01/states/snapshots/s000021.json | 78f83fe1e00caa2d0693c24f6bf811da2d59b41baced7e4ff8f19f74c08fe453 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 5 | officeval_010.r02 | cp000005 | s000005 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_010.r02/states/snapshots/s000005.json | 200dcdc87cf8c2a4e62750b8ca3095aca9934a35577a45fe77e8f748d2532afb | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 6 | officeval_033.r00 | cp000033 | s000034 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_033.r00/states/snapshots/s000034.json | 0bb265fd6ba6794601c2b55b1b10f59ad7190c971d75d8a8cacde86534361030 | ['submission/家居零售价目册_已调价.docx'] | ok | 0.29411764705882354 | unknown | unknown |  |  |  |  |
+| 7 | officeval_033.r03 | cp000006 | s000006 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_033.r03/states/snapshots/s000006.json | 4e6dc2adf032f49ac708d274e622f59510c92c05319c090c87af0dc797ff3b5f | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 8 | officeval_050.r01 | cp000014 | s000015 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_050.r01/states/snapshots/s000015.json | c88af043c7e89cac02bfaedce872a9659a4fb04e2c507b7b71061608b1fc0b54 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 9 | officeval_060.r00 | cp000011 | s000011 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_060.r00/states/snapshots/s000011.json | 4f86dfe7fd5674bcdb63702dc0af4028d616da0a5bdea40c186ff51d36e0521f | [] | no_candidate | 0.0 | unknown | unknown |  |  |  |  |
+| 10 | officeval_060.r03 | cp000012 | s000012 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_060.r03/states/snapshots/s000012.json | 7bca99871084ef4ce219ec463e04b9ff7406b7d945c5837547c21644f9cea4bb | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 11 | officeval_070.r00 | cp000000 | s000000 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r00/states/snapshots/s000000.json | 9bbd02cd38916fac5215a69fcfc678ff2afa446b739515e653f1ec032ab72877 | [] | no_candidate | 0.0 | unknown | unknown |  |  |  |  |
+| 12 | officeval_070.r01 | cp000016 | s000016 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r01/states/snapshots/s000016.json | 6af40af5bb856dc558f7118b4a3fd6b5021e990d31567a0e410f8bf2fde607bd | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 13 | officeval_070.r02 | cp000006 | s000006 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r02/states/snapshots/s000006.json | df88ed65e33024d7a6bed84eed24039755d9bcdddcf9836bb5f4c5b26c37c3ab | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 14 | officeval_070.r02 | cp000008 | s000008 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r02/states/snapshots/s000008.json | fa60e34971e7ef3779021697a0a9a9df613274365b76fcf5df537d6d4b651b72 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 15 | officeval_070.r02 | cp000015 | s000015 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r02/states/snapshots/s000015.json | 6d42ca6dc06f65df99b48ca168bedff89bdce2482fac9af6edca8b7c30c70fab | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 16 | officeval_070.r03 | cp000019 | s000019 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r03/states/snapshots/s000019.json | 22c1f19a3dc139528d5ba3818c938ac5ee8fc5f822c94c5171c8688e1e699f95 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 17 | officeval_070.r03 | cp000022 | s000022 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r03/states/snapshots/s000022.json | 0abbe3f945a4d0b8f89274be243b1c80226b18396ba81a03c0ab2f966866e7a6 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 18 | officeval_070.r03 | cp000024 | s000024 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_070.r03/states/snapshots/s000024.json | 4818725489779321b6a6c020e28ba8fbaca97937e3d4c19644eb36f33c346031 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 19 | officeval_085.r00 | cp000005 | s000006 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_085.r00/states/snapshots/s000006.json | c486481ec033bf7e6353cacfc6701c3b6671cd669a12b722cbc5f28795834278 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |
+| 20 | officeval_085.r01 | cp000011 | s000013 | L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes/officeval_085.r01/states/snapshots/s000013.json | b039827b9f809509dfa5f88507e0432d1a4608476a861109743fcaa01d2b2f26 | unknown | unknown | unknown | unknown | unknown |  |  |  |  |

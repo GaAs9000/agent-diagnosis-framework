@@ -7,6 +7,7 @@ The production registries contain no fixture backend or unrestricted host runtim
 from __future__ import annotations
 import copy
 import json
+import math
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -311,6 +312,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     reconcile(estimate, actual) retains unknown usage with actual=None. An
     admitted attempt that never sends refunds its reservation with actual=0.
     The limiter is external runtime state and never enters resolved config.
+    An optional remaining_seconds() also bounds transport and tool deadlines.
     """
     config=copy.deepcopy(validate(config)); output=Path(output).absolute()
     config['agent']['system_prompt']=build_execution_contract_prompt(config)
@@ -339,7 +341,6 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 raise ConfigurationError('Branch intervention on cold resume must target a request strictly after the checkpoint')
         lineage={'parent_episode_id':parent_manifest['episode_id'],'parent_checkpoint_id':checkpoint_id,
                  'parent_index_sha256':pv['index_sha256'],'parent_checkpoint_sha256':file_digest(parent/f'checkpoints/{checkpoint_id}.json')}
-    output.mkdir(parents=True,exist_ok=False,mode=0o700)
     eid='ep_'+uuid.uuid4().hex
     created=utc_now(); started=time.monotonic()
     inherited=parent_cp.get('budget_used',{}) if parent_cp else {}
@@ -347,8 +348,18 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     request_count=inherited.get('model_requests',0); tool_count=inherited.get('tool_calls',0)
     token_count=inherited.get('known_total_tokens',0); usage_complete=True
     deadline=started+max(0,config['budget']['wall_time_seconds']-elapsed_before)
+    external_remaining=None
+    remaining_seconds=getattr(request_limiter,'remaining_seconds',None)
+    if callable(remaining_seconds):
+        external_remaining=remaining_seconds()
+        if type(external_remaining) not in (int,float) or not math.isfinite(external_remaining) or external_remaining<0:
+            raise ConfigurationError('External admission deadline must be finite and nonnegative')
+        deadline=min(deadline,started+external_remaining)
+    output.mkdir(parents=True,exist_ok=False,mode=0o700)
     journal=Journal(output,eid); write_json(output,'raw/resolved_config.json',config)
-    journal.emit('episode.started',{'config':journal.ref('raw/resolved_config.json'),'lineage':lineage})
+    start_data={'config':journal.ref('raw/resolved_config.json'),'lineage':lineage}
+    if external_remaining is not None: start_data['external_wall_seconds']=external_remaining
+    journal.emit('episode.started',start_data)
     workspace=output.parent/('.l1-work-'+eid)
     workspace.mkdir(mode=0o700)
     # Shared host directories may inherit setgid even with mode=0700. The

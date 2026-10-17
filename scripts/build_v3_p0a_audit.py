@@ -21,6 +21,8 @@ Strictly implements V3 §3.1, §3.3, §4 (V3-G3), and §7 (P0a):
 from __future__ import annotations
 
 import json
+import re
+import random
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,54 @@ OUT_JSON = DEV_VAL_DIR / "v3_p0a_audit.json"
 OUT_MD = ROOT / "L2_Behavioral Event Localization" / "L2_Sandbox" / "docs" / "V3_P0A_AUDIT_20261017.md"
 
 DEV_TIDS = ("003", "004", "010", "033", "050", "060", "070", "085", "090")
+
+
+def preserve_human_reviews(dossier: list[dict[str, Any]], previous: dict[str, Any], markdown: str) -> None:
+    """Carry reviewer entries only across the same run/checkpoint/snapshot identity."""
+    old_rows = previous.get("v3_g3_20_checkpoint_candidate_audit_dossier", [])
+    for row in dossier:
+        old = next((r for r in old_rows if all(r.get(k) == row.get(k) for k in
+                    ("run_label", "checkpoint_id", "snapshot_id"))), {})
+        for key, value in old.items():
+            if key.startswith(("human_", "reviewer", "reviewed_")):
+                if key == "human_review_verdict" and "sNNNNNN" in str(value):
+                    continue  # Legacy generator template, never a human review.
+                row[key] = value
+        for line in markdown.splitlines():
+            if not line.startswith(f"| `{row['audit_id']}` |"):
+                continue
+            if not all(f"`{row[k]}`" in line for k in ("run_label", "checkpoint_id", "snapshot_id")):
+                continue
+            cells = line.strip().strip("|").split("|")
+            if len(cells) >= 12:
+                for key, cell in zip(("reviewer", "reviewed_at", "human_review_verdict", "human_review_notes"), cells[8:12]):
+                    if cell.strip():
+                        row[key] = cell.strip()
+
+
+def existing_classification_review_section(markdown: str) -> str:
+    match = re.search(r"(?ms)^### 2\.2 .*?(?=^## 3\.|\Z)", markdown)
+    return match.group(0).rstrip().removesuffix("---").rstrip() if match else ""
+
+
+def classification_review_section(source: dict[str, Any], markdown: str) -> str:
+    existing = existing_classification_review_section(markdown)
+    if existing:
+        return existing
+    groups: dict[str, list[tuple[str, str, dict[str, Any]]]] = {k: [] for k in ("explicit", "implicit", "ambiguous")}
+    for tid, rules in sorted(source["task_rule_audit"].items()):
+        for rule, info in sorted(rules.items()):
+            groups[info["source_category"]].append((tid, rule, info))
+    sample = groups["explicit"] + groups["implicit"] + random.Random(20261017).sample(
+        groups["ambiguous"], min(45, len(groups["ambiguous"])))
+    lines = [f"### 2.2 供人工复核的抽样表（共 {len(sample)} 条，待人工复核）", "",
+             "| # | task_id | Prompt | verifier 规则 | 实例数 / 扣分 | 程序自动标签 | 人工标签 | 审阅人 | 审阅时间 | 改判说明 |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
+    for i, (tid, rule, info) in enumerate(sample, 1):
+        prompt = info["instruction_citation"]["full_instruction"].replace("|", "\\|")
+        rule = rule.replace("|", "\\|")
+        lines.append(f"| {i} | `{tid.split(':')[-1]}` | {prompt} | {rule} | {info['occurrences']} / {info['total_deduction']:.4f} | `{info['source_category']}` | | | | |")
+    return "\n".join(lines)
 
 
 def _find_instruction_citation(short_tid: str, rule_str: str, source_cat: str) -> dict[str, Any]:
@@ -356,8 +406,9 @@ def build_20_checkpoint_audit_dossier() -> list[dict[str, Any]]:
         l1_ep = _resolve_l1_ep_dir(run_name)
         rows = [json.loads(l) for l in (val_ep / "grades.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
         cp_rows = [r for r in rows if r.get("kind") == "checkpoint"]
-        row = next((r for r in cp_rows if int(r.get("k", -1)) == k_target), cp_rows[-1])
+        row = next(r for r in cp_rows if int(r.get("k", -1)) == k_target)
         snap_id = row["snapshot_id"]
+        audit_focus = re.sub(r"\bs\d{6}\b", snap_id, audit_focus)
         snap_doc = json.loads((l1_ep / "states" / "snapshots" / f"{snap_id}.json").read_text(encoding="utf-8"))
         all_non_input_files = [
             {"path": f["path"], "size_bytes": f["size_bytes"], "sha256": f["sha256"][:12]}
@@ -384,7 +435,10 @@ def build_20_checkpoint_audit_dossier() -> list[dict[str, Any]]:
             "candidates_evaluated_count": int(row.get("candidates_evaluated") or 0),
             "auto_single_snapshot_verified": coexists_in_single_snapshot,
             "audit_focus": audit_focus,
-            "human_review_verdict": "PASS (selected candidate matches highest-priority valid deliverable in sNNNNNN)",
+            "human_review_verdict": "",
+            "reviewer": "",
+            "reviewed_at": "",
+            "human_review_notes": "",
         })
     return dossier
 
@@ -578,11 +632,14 @@ def analyze_cohort(val_dir: Path, include_citations: bool = False) -> dict[str, 
 
 
 def main() -> None:
+    previous = json.loads(OUT_JSON.read_text(encoding="utf-8")) if OUT_JSON.exists() else {}
+    previous_md = OUT_MD.read_text(encoding="utf-8") if OUT_MD.exists() else ""
     dev_res = analyze_cohort(DEV_VAL_DIR, include_citations=True)
     holdout_res = analyze_cohort(HOLDOUT_VAL_DIR, include_citations=False) if HOLDOUT_VAL_DIR.is_dir() else None
     all_rubric_catalog = build_all_rubric_catalog()
     multifile_audit = audit_multifile_single_snapshot_coexistence()
     checkpoint_dossier = build_20_checkpoint_audit_dossier()
+    preserve_human_reviews(checkpoint_dossier, previous, previous_md)
 
     payload = {
         "audit_id": "V3_P0A_ZERO_COST_CANDIDATE_AND_RUBRIC_AUDIT",
@@ -668,9 +725,9 @@ def main() -> None:
         "",
         "## 2. 评分细则来源三分类审计（`explicit` vs. `ambiguous` vs. `implicit`，带逐行精确引文）",
         "",
-        "针对 `dev45` 中 **已交付且通过 `dim1`、但在具体 `dim2` 评分项失分（`never:delivered_but_item_wrong`，共 `16.0221` 扣分，覆盖 `276` 个缺陷实例）**，逐条核对任务文本（`benchmarks/officeval/data/tasks/officeval_XXX.json`）、参考图与官方验证器（`third_party/OmegaUse-OfficeVal/verifiers/officeval_XXX_verifier.py`）的精确行号：",
+        f"程序自动归类（待人工复核）：已交付且通过 `dim1` 的 `dim2` 失分共 `{r_src['total_delivered_never_deduction']:.4f}` 扣分、`{sum(r_src['defect_item_counts_by_source'].values())}` 个实例、`{sum(len(r) for r in r_src['task_rule_audit'].values())}` 个独立 `(task_id, rule)` 对。",
         "",
-        "| 规则来源分类 | 缺陷实例数 | 扣分总和 ($\\sum d$) | 占 `delivered_but_item_wrong` 比例 (`/ 16.0221`) | 占全部扣分比例 (`/ 33.4610`) | 严谨定义 |",
+        f"| 程序自动分类（待人工复核） | 缺陷实例数 | 扣分总和 ($\\sum d$) | 占已交付单项失分比例 (`/ {r_src['total_delivered_never_deduction']:.4f}`) | 占全部扣分比例 (`/ {dev_res['total_loss']:.4f}`) | 严谨定义 |",
         "|---|---:|---:|---:|---:|---|",
         f"| **`explicit`（任务明示）** | `{r_src['defect_item_counts_by_source']['explicit']}` | `{r_src['deduction_by_source']['explicit']:.4f}` | **`{r_src['share_of_delivered_never_deduction']['explicit']*100:.2f}%`** | `{r_src['deduction_by_source']['explicit']/dev_res['total_loss']*100:.2f}%` | 任务 Prompt 或带文字批注的输入图（如 `004` 红字批注）明确写出了该要求 |",
         f"| **`ambiguous`（视觉/数值容差含糊）** | `{r_src['defect_item_counts_by_source']['ambiguous']}` | `{r_src['deduction_by_source']['ambiguous']:.4f}` | **`{r_src['share_of_delivered_never_deduction']['ambiguous']*100:.2f}%`** | `{r_src['deduction_by_source']['ambiguous']/dev_res['total_loss']*100:.2f}%` | 任务给出视觉参考或定性要求，但评分器硬编码了精确厘米坐标、磅值区间或 `.5` 四舍五入边界 |",
@@ -699,6 +756,9 @@ def main() -> None:
                 f"| `{short_tid}` | {rule_str} | `{info['source_category']}` | `{info['occurrences']}` | `{info['total_deduction']:.4f}` | {prompt_ref} | {v_ref} | {info['rationale']} |"
             )
 
+    review_section = classification_review_section(r_src, previous_md)
+    if review_section:
+        md.extend(["", review_section, ""])
     md.extend([
         "",
         "---",
@@ -724,13 +784,14 @@ def main() -> None:
         "",
         "## 4. `V3-G3` 20 个检查点候选提取与评分核查台账（程序核验 + 人工复核表）",
         "",
-        "| 编号 | 运行标识 | 检查点 (`快照`) | 快照内非输入文件数 | 选中候选路径 (`selected_candidate_paths`) | `in_sub` | `dim1` | 快照得分 $s(k)$ | 单快照共存程序核验 | 核查要点与人工复核结论 |",
-        "|---|---|---|---:|---|---|---|---:|---|---|",
+        "人工审核状态：待人工核查；程序共存核验见 JSON，不等于人工结论。",
+        "| 编号 | 运行标识 | 检查点 (`快照`) | 快照内非输入文件数 | 选中候选路径 | `in_sub` | `dim1` | 快照得分 | 审阅人 | 审阅时间 | 人工结论 | 改判说明 |",
+        "|---|---|---|---:|---|---|---|---:|---|---|---|---|",
     ])
     for item in checkpoint_dossier:
         c_paths = ", ".join(f"`{p}`" for p in item["selected_candidate_paths"]) if item["selected_candidate_paths"] else "`[] (no_candidate)`"
         md.append(
-            f"| `{item['audit_id']}` | `{item['run_label']}` | `{item['checkpoint_id']}` (`{item['snapshot_id']}`) | `{len(item['workspace_non_input_files'])}` | {c_paths} | `{item['in_submission']}` | `{item['dim1_pass']}` | `{item['snapshot_score_s_k']:.4f}` | `PASS` | {item['audit_focus']} — **{item['human_review_verdict']}** |"
+            f"| `{item['audit_id']}` | `{item['run_label']}` | `{item['checkpoint_id']}` (`{item['snapshot_id']}`) | `{len(item['workspace_non_input_files'])}` | {c_paths} | `{item['in_submission']}` | `{item['dim1_pass']}` | `{item['snapshot_score_s_k']:.4f}` | {item.get('reviewer', '')} | {item.get('reviewed_at', '')} | {item['human_review_verdict']} | {item.get('human_review_notes', '')} |"
         )
 
     OUT_MD.write_text("\n".join(md) + "\n", encoding="utf-8")

@@ -1,39 +1,17 @@
-"""L2 v0.5 Intervention-Verifiable Failure Diagnosis Protocol (Notion V3 §3.1–3.7, §5.2 V3-P1..P5).
+"""V3 ladder diagnosis: evidence, nested interventions, inference, and policy evaluation.
 
-Aligned with V3 Revision Task Order (R7–R14):
-1. Information-ordered intervention ladder (V3 §3.4):
-   - Level 0: `P` (plain continuation, 0 added tokens)
-   - Level 1: `D` (generic delivery check) and `S` (generic pre-finish self-check; wording parameterized for D0)
-   - Level 2: `R_explicit` (nested prefix `D` + full task-level explicit requirements list)
-   - Level 3: `R_implicit` (nested prefix `R_explicit` + full task-level implicit rubric conventions list)
-   - Single-item localization: `R_single` (nested prefix `D` + single item requirement) and optional `R_all`
-   - Strict nested prefix verification (`verify_nested_ladder_messages`) and SHA-256 text hashes.
-2. Whole-task requirement lists & empty-level `ineligible` handling (`R8`, V3 §3.4):
-   - Requirements for `R_explicit` and `R_implicit` are built for the entire `task_id`, never filtered by
-     which items failed on the parent run.
-   - When a task has an empty `explicit` or `implicit` requirement list, that ladder level is marked
-     `ineligible` and NEVER falls back to `D` or a lower arm's message.
-3. Ladder incremental adjudication (`R9`, V3 §3.2 & §3.4):
-   - Parameterized `(delta, tau, alpha)`.
-   - Level 0 check: `P` absolute recovery (`mean_P >= tau` and `LB95(P) > delta` -> `plain_recoverable`).
-   - Level k > 0 check: an arm at level k is effective iff it beats ALL evaluated lower-level arms j < k
-     (`mean_k - mean_j >= tau`, `LB95(k - j) > delta`, and Holm-adjusted one-sided permutation `p <= alpha`).
-   - `unrecovered_under_protocol`: requires ALL evaluated arms (including `P`) to have `UB95(arm) < tau`.
-4. Anchor checkpoint selection (`R10`, V3 §3.4 rule 7):
-   - Supports candidate peak (`candidate_peak`), candidate first write (`candidate_first_write`),
-     budget-exhausted tail (`budget_tail_no_candidate`), and voluntary termination pre-finish
-     (`voluntary_pre_finish` when `termination == "assistant_finished"`).
-5. 3D Stratification (`exhausted_budget x valid_delivery x rule_source`) & HT/Hajek IPW (`R11`, V3 §3.4 & §5.2).
-6. Harm check on passing runs/items (`R12`, V3 §3.4).
-7. Cross-fitted diagnostic value ceiling (`R13`, V3 §3.7 & `V3-P3`), replacing in-sample `max_possible_gain`.
-8. Pre-registered V3 proposition identifiers `V3-P1` .. `V3-P5` (`R14`).
+L1 produces execution evidence. This module computes offline observations and
+counterfactual summaries; it never promotes engineering tests into study results.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import hashlib
+import json
 import math
+from pathlib import Path
 import random
+import re
 from typing import Any, Sequence
 
 from .config import (
@@ -43,7 +21,7 @@ from .config import (
 from .io import L2Error, digest
 from .stats import holm_adjust, lower_drop, permutation_one_sided, wilson_bounds
 
-V05_SCHEMA_VERSION = "l2-0.5.1-v3-ladder"
+V05_SCHEMA_VERSION = "l2-0.5.2-v3-ladder"
 
 V3_PROPOSITIONS = (
     "V3-P1",  # Level-1 generic intervention (D / S) recoverability share >= 20%
@@ -133,6 +111,7 @@ class E2ResponseVector:
     pairwise_ub95: dict[str, float] = field(default_factory=dict)
     pairwise_p_raw: dict[str, float] = field(default_factory=dict)
     pairwise_p_holm: dict[str, float] = field(default_factory=dict)
+    inference: dict[str, Any] = field(default_factory=dict)
     ineligible_arms: list[str] = field(default_factory=list)
     # Backward-compatible convenience fields
     mean_P: float | None = None
@@ -182,6 +161,7 @@ class DiagnosticUnitV05:
     valid_delivery: bool | None = None
     stratum_id: str | None = None
     inclusion_prob: float = 1.0
+    family_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -231,40 +211,248 @@ def upper_drop(
     return -lower_drop(vals_ctrl, vals_treat, alpha=alpha, seed=seed)
 
 
-def build_task_requirement_lists(
-    task_rule_catalog: dict[str, dict[str, dict[str, Any]]],
-    task_id: str,
-) -> dict[str, list[str]]:
-    """R8 (V3 §3.4): Build full task-level `explicit` and `implicit` requirement lists for `task_id`.
+_NUMERIC_TOLERANCE_RE = re.compile(
+    r"(?:只允许有[^，。；]*误差|"
+    r"(?:约|大约|不少于|不超过|不大于|不小于|距离[^，。；]{0,12})?\s*"
+    r"\d+(?:\.\d+)?\s*(?:[-\u2013\u2014~至到]\s*\d+(?:\.\d+)?)?\s*(?:cm|厘米|mm|毫米|pt|磅|%|倍行距|号|字符))"
+)
 
-    Crucially, this function extracts ALL rules belonging to `task_id` from the frozen catalog,
-    NEVER filtering by which items failed on a specific parent trajectory.
+
+def split_ambiguous_requirement(
+    rule_item: str | dict[str, Any],
+    info: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """R7 & R8 (V3 §3.3 & §3.4): Split an `ambiguous` rule into:
+      1) `visible_requirement` (for `R_explicit`): qualitative / layout / content requirement visible from
+         the task prompt or reference image, stripped of hidden verifier numeric tolerances;
+      2) `exact_verifier_specification` (for `R_implicit`): exact numeric threshold / tolerance / formula
+         enforced by `verifier.py`.
+    """
+    if isinstance(rule_item, dict):
+        vis = str(rule_item.get("visible_requirement") or "").strip()
+        ex = str(rule_item.get("exact_verifier_specification") or rule_item.get("rubric_text") or "").strip()
+        if vis and ex:
+            return vis, ex
+        raw_text = str(rule_item.get("rubric_text") or rule_item.get("rule") or "").strip()
+        info = rule_item
+    else:
+        raw_text = str(rule_item).strip()
+
+    if info and isinstance(info, dict):
+        vis_override = str(info.get("visible_requirement") or "").strip()
+        ex_override = str(info.get("exact_verifier_specification") or "").strip()
+        if vis_override and ex_override:
+            return vis_override, ex_override
+
+    raise L2Error("Ambiguous requirements require a reviewed visible_requirement and exact_verifier_specification split")
+
+
+def _classify_officeval_rule_default(short_tid: str, defect_rule: str) -> tuple[str, str]:
+    """Deterministic fallback rule-source classifier for whole-task OfficeVal rubrics."""
+    if short_tid == "officeval_003":
+        if "0.15cm的误差" in defect_rule:
+            return "ambiguous", "image.png 展示等距横线，但 0.15cm 硬数值容差仅在评分器中定义"
+        if "没有空白行" in defect_rule or "下方都出现横线" in defect_rule or "侯景澜" in defect_rule or "部门协调会" in defect_rule or "缩进" in defect_rule or "不可编辑" in defect_rule:
+            return "explicit", "Prompt 明确要求放入表格加横线、删空行、其他格式不变"
+        return "ambiguous", "视觉参考与评分细则容差混合"
+    if short_tid == "officeval_004":
+        if "实习单位评价" in defect_rule or "教学单位评价意见" in defect_rule:
+            return "implicit", "参考图未在这两格标注宋体小四，但评分器要求宋体小四"
+        if "学号" in defect_rule or "页面顶部没有出现黑体、20号" in defect_rule:
+            return "ambiguous", "参考图展示表头与学号外观，未文字标注20号字号硬阈值"
+        return "explicit", "参考图红字批注已逐项明确写出字体、字号、加粗、缩进与行距要求"
+    if short_tid == "officeval_010":
+        return "ambiguous", "Prompt 要求删第四行、字移框内做成可编辑，原图展示拓扑但评分器检查厘米级宽高与字号"
+    if short_tid == "officeval_033":
+        if "推荐客餐厅配套品表" in defect_rule or "定制价格表" in defect_rule or "门店订购记录页" in defect_rule:
+            return "ambiguous", "Prompt 要求乘以1.1，未规定 .5 半整数四舍五入 vs 银行家舍入"
+        return "explicit", "Prompt 明确要求所有零售价乘以 1.1 且其他格式不变"
+    if short_tid == "officeval_050":
+        if "Arial 或 Calibri" in defect_rule or "编号圆形" in defect_rule:
+            return "implicit", "Prompt 未声明必须使用 Arial/Calibri 字体或第3阶段编号写02"
+        return "ambiguous", "原 PPT 视觉可见，但评分器规定了精确厘米坐标框与字号区间"
+    if short_tid == "officeval_060":
+        if "0—0.3厘米" in defect_rule or "0%—22%" in defect_rule or "35%—100%" in defect_rule or "重叠面积" in defect_rule:
+            return "ambiguous", "Prompt 要求重新排版符合比例无空白，评分器规定精确边距与百分比区间"
+        return "explicit", "Prompt 明确要求第四页重新排版、符合页面比例且两边无大片空白"
+    if short_tid == "officeval_070":
+        if "10.5至11.5磅" in defect_rule or "0.9至1.0倍行距" in defect_rule or "7.2至8.2磅" in defect_rule or "0.3至0.5" in defect_rule:
+            return "ambiguous", "Prompt 要求缩小字体间距调整布局，评分器规定精确磅值与边距区间"
+        return "explicit", "Prompt 明确要求字完整放在板块区域框内不重叠、PPT尺寸不变"
+    if short_tid == "officeval_085":
+        if "18cm–21cm" in defect_rule or "10cm–13cm" in defect_rule:
+            return "implicit", "Prompt 与参考图均未指定图表宽 18-21cm、高 10-13cm"
+        return "explicit", "Prompt 明确要求画成图片上类似的 S11 图表并放置在对应表格里可编辑"
+    if short_tid == "officeval_090":
+        if "IFERROR" in defect_rule or "Sheet3及同结构子表" in defect_rule or "Sheet5及同结构子表" in defect_rule:
+            return "implicit", "评分器强制要求特定跨表引用公式或 IFERROR 公式"
+        return "explicit", "Prompt 明确要求将所有子表总重量合计与砼体积提取到汇总表"
+    return "ambiguous", "视觉/结构要求与评分器细则容差混合"
+
+
+def _default_officeval_rubrics_dir() -> Path | None:
+    """Locate `benchmarks/officeval/data/rubrics` in the repository if available."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "L1_sandbox" / "C3_Experimental_Sandbox" / "benchmarks" / "officeval" / "data" / "rubrics"
+        if cand.is_dir():
+            return cand
+    return None
+
+
+def build_task_requirement_lists(
+    task_rule_catalog: dict[str, Any],
+    task_id: str,
+    *,
+    rubrics_dir: Path | None = None,
+) -> dict[str, Any]:
+    """R7 & R8 (V3 §3.4): Build full whole-task `explicit` and `implicit` requirement lists for `task_id`.
+
+    - Extracts ALL rules belonging to `task_id` from the whole-task rubric catalog (never filtering by
+      which items failed on a specific parent trajectory).
+    - Supports direct `{task_id: {rule: info}}` dicts, `{task_id: [item_dicts]}` catalogs, AND full P0a
+      audit JSON documents (`all_9_dev_tasks_rubric_citation_catalog`, `task_rule_catalog`, or `dev45`
+      with automatic fallback to `benchmarks/officeval/data/rubrics/{short_id}.json` when a P0a audit
+      document is passed).
+    - For `ambiguous` rules, splits each rule into:
+      * `visible_requirement` -> appended to `explicit` (so `R_explicit` includes all task/image-visible
+        requirements without leaking hidden verifier numeric tolerances)
+      * `exact_verifier_specification` -> appended to `implicit` (so `R_implicit` includes all exact
+        verifier tolerances in addition to pure `implicit` rules).
     """
     short_id = task_id.split(":")[-1]
     full_id = f"officeval:{short_id}" if not task_id.startswith("officeval:") else task_id
-    rules_map = task_rule_catalog.get(full_id) or task_rule_catalog.get(short_id) or task_rule_catalog.get(task_id) or {}
 
+    # Case 1: Direct task key in `task_rule_catalog`
+    raw_entry = (
+        task_rule_catalog.get(full_id)
+        or task_rule_catalog.get(short_id)
+        or task_rule_catalog.get(task_id)
+    )
+    is_p0a_wrapper = (
+        raw_entry is None
+        and isinstance(task_rule_catalog, dict)
+        and any(
+            k in task_rule_catalog
+            for k in (
+                "all_9_dev_tasks_rubric_citation_catalog",
+                "task_rule_catalog",
+                "dev45",
+                "audit_id",
+            )
+        )
+    )
+
+    normalized_rules: list[tuple[str, dict[str, Any]]] = []
+    seen_rules: set[str] = set()
+
+    def _add_entries(source_obj: Any) -> None:
+        if isinstance(source_obj, dict):
+            for r_text, r_info in sorted(source_obj.items()):
+                cleaned = str(r_text).strip()
+                if cleaned and cleaned not in seen_rules:
+                    seen_rules.add(cleaned)
+                    normalized_rules.append((cleaned, dict(r_info) if isinstance(r_info, dict) else {}))
+        elif isinstance(source_obj, list):
+            for item in source_obj:
+                if isinstance(item, dict):
+                    cleaned = str(item.get("rubric_text") or item.get("rule") or "").strip()
+                    if cleaned and cleaned not in seen_rules:
+                        seen_rules.add(cleaned)
+                        info_dict = dict(item)
+                        if "source_category" not in info_dict and "rule_source" in info_dict:
+                            info_dict["source_category"] = info_dict["rule_source"]
+                        normalized_rules.append((cleaned, info_dict))
+                elif isinstance(item, str) and item.strip():
+                    cleaned = item.strip()
+                    if cleaned not in seen_rules:
+                        seen_rules.add(cleaned)
+                        cat, rat = _classify_officeval_rule_default(short_id, cleaned)
+                        normalized_rules.append((cleaned, {"source_category": cat, "rationale": rat}))
+
+    if raw_entry is not None:
+        _add_entries(raw_entry)
+    elif is_p0a_wrapper:
+        for cat_key in ("task_rule_catalog", "all_9_dev_tasks_rubric_citation_catalog"):
+            sub_cat = task_rule_catalog.get(cat_key)
+            if isinstance(sub_cat, dict):
+                sub_entry = sub_cat.get(full_id) or sub_cat.get(short_id) or sub_cat.get(task_id)
+                if sub_entry is not None:
+                    _add_entries(sub_entry)
+        dev_audit = (
+            ((task_rule_catalog.get("dev45") or {}).get("delivered_item_wrong_rubric_source") or {}).get("task_rule_audit")
+            or {}
+        )
+        if isinstance(dev_audit, dict):
+            sub_audit = dev_audit.get(full_id) or dev_audit.get(short_id) or dev_audit.get(task_id)
+            if sub_audit is not None:
+                _add_entries(sub_audit)
+        # Ensure whole-task coverage from `benchmarks/officeval/data/rubrics/{short_id}.json`
+        r_dir = rubrics_dir or _default_officeval_rubrics_dir()
+        if r_dir is not None:
+            rubric_file = r_dir / f"{short_id}.json"
+            if rubric_file.is_file():
+                try:
+                    r_doc = json.loads(rubric_file.read_text(encoding="utf-8"))
+                    for r_text in (r_doc.get("rubrics") or {}).get("dim2") or []:
+                        cleaned = str(r_text).strip()
+                        if cleaned and cleaned not in seen_rules:
+                            seen_rules.add(cleaned)
+                            cat, rat = _classify_officeval_rule_default(short_id, cleaned)
+                            normalized_rules.append((cleaned, {"source_category": cat, "rationale": rat}))
+                except Exception:
+                    pass
+
+    explicit_only: list[str] = []
+    implicit_only: list[str] = []
+    ambiguous_reqs: list[str] = []
+    ambiguous_visible: list[str] = []
+    ambiguous_exact: list[str] = []
     explicit_reqs: list[str] = []
     implicit_reqs: list[str] = []
-    ambiguous_reqs: list[str] = []
 
-    for rule_text, info in sorted(rules_map.items()):
-        cleaned = str(rule_text).strip()
-        if not cleaned:
-            continue
-        cat = str((info or {}).get("source_category") or "ambiguous")
+    unresolved_rules: list[str] = []
+    provenance_errors: list[str] = []
+    for cleaned, info in normalized_rules:
+        if not all(info.get(k) for k in ("reviewer", "reviewed_at", "source_citation")):
+            provenance_errors.append(cleaned)
+        cat = str((info or {}).get("source_category") or (info or {}).get("rule_source") or "ambiguous")
         if cat == "explicit":
-            explicit_reqs.append(cleaned)
+            explicit_only.append(cleaned)
+            if cleaned not in explicit_reqs:
+                explicit_reqs.append(cleaned)
         elif cat == "implicit":
-            implicit_reqs.append(cleaned)
+            implicit_only.append(cleaned)
+            if cleaned not in implicit_reqs:
+                implicit_reqs.append(cleaned)
         else:
             ambiguous_reqs.append(cleaned)
+            try:
+                vis_req, exact_spec = split_ambiguous_requirement(cleaned, info)
+            except L2Error:
+                unresolved_rules.append(cleaned)
+                continue
+            ambiguous_visible.append(vis_req)
+            ambiguous_exact.append(exact_spec)
+            if vis_req not in explicit_reqs:
+                explicit_reqs.append(vis_req)
+            if exact_spec not in implicit_reqs:
+                implicit_reqs.append(exact_spec)
 
     return {
         "task_id": short_id,
+        "rule_sources": {rule: info.get("source_category", info.get("rule_source", "ambiguous"))
+                         for rule, info in normalized_rules if rule not in provenance_errors and rule not in unresolved_rules},
+        "review_complete": bool(normalized_rules) and not unresolved_rules and not provenance_errors,
+        "unresolved_rules": unresolved_rules,
+        "provenance_errors": provenance_errors,
         "explicit": explicit_reqs,
         "implicit": implicit_reqs,
         "ambiguous": ambiguous_reqs,
+        "explicit_only": explicit_only,
+        "implicit_only": implicit_only,
+        "ambiguous_visible": ambiguous_visible,
+        "ambiguous_exact": ambiguous_exact,
     }
 
 
@@ -272,30 +460,42 @@ def build_ladder_intervention_messages(
     *,
     explicit_requirements: Sequence[str] = (),
     implicit_requirements: Sequence[str] = (),
+    ambiguous_requirements: Sequence[str | dict[str, Any]] = (),
     single_rule_requirement: str | None = None,
     deliver_text: str = DELIVER_INTERVENTION_MESSAGE,
     self_check_text: str = DEFAULT_SELF_CHECK_DRAFT,
 ) -> dict[str, dict[str, Any]]:
     """R7 & R8 (V3 §3.4): Construct the nested intervention ladder messages and their SHA-256 hashes.
 
-    Enforces strict nesting:
+    Enforces strict nesting along the information ladder (`D -> S -> R_explicit -> R_implicit`, and `S -> R_single`):
       - `P`: None (0 added user message)
       - `D`: `deliver_text`
-      - `S`: `self_check_text` (parameterized for D0 freeze)
-      - `R_explicit`: `deliver_text` + "\\n\\n[任务明确要求核对清单]：\\n" + numbered `explicit_requirements`.
-        If `explicit_requirements` is empty -> `eligible = False`, `evidence_status = "ineligible"`,
-        `message = None` (NEVER falls back to `D`!).
-      - `R_implicit`: `R_explicit.message` (or `deliver_text` ONLY if explicit is non-empty; if explicit is empty,
-        uses `deliver_text` as prefix + explicit note `[无额外明确文字清单]`) + "\\n\\n[补充细则核对清单]：\\n" + numbered `implicit_requirements`.
-        If `implicit_requirements` is empty -> `eligible = False`, `evidence_status = "ineligible"`,
-        `message = None` (NEVER falls back to `D` or `R_explicit`!).
-      - `R_single`: `deliver_text` + "\\n\\n[单项核对要求]：" + `single_rule_requirement`.
-        If `single_rule_requirement` is empty -> `eligible = False`, `evidence_status = "ineligible"`.
+      - `S`: `D.message` + "\\n\\n" + `self_check_text` (strictly prefixed by `D.message`)
+      - `R_explicit`: `S.message` + "\\n\\n请同时逐条核对以下任务明确要求：\\n" + numbered visible/explicit requirements.
+        If empty -> `eligible = False`, `evidence_status = "ineligible"`, `message = None` (NEVER falls back to `D` or `S`!).
+      - `R_implicit`: `R_explicit.message` (or `S.message` when `R_explicit` is `ineligible`) +
+        "\\n\\n请进一步逐条核对以下隐含格式与细则要求：\\n" + numbered implicit/exact-tolerance requirements.
+        If empty -> `eligible = False`, `evidence_status = "ineligible"`, `message = None`.
+      - `R_single`: `S.message` + "\\n\\n请重点核对并满足以下单项要求：" + `single_rule_requirement`.
+        If empty -> `eligible = False`, `evidence_status = "ineligible"`, `message = None`.
     """
     d_clean = deliver_text.strip()
-    s_clean = self_check_text.strip()
+    s_raw = self_check_text.strip()
+    if s_raw and d_clean:
+        s_clean = s_raw if (s_raw.startswith(d_clean) and s_raw != d_clean) else f"{d_clean}\n\n{s_raw}"
+    else:
+        s_clean = ""
+
     exp_clean = [r.strip() for r in explicit_requirements if isinstance(r, str) and r.strip()]
     imp_clean = [r.strip() for r in implicit_requirements if isinstance(r, str) and r.strip()]
+
+    for amb_item in ambiguous_requirements:
+        vis_req, exact_spec = split_ambiguous_requirement(amb_item)
+        if vis_req and vis_req not in exp_clean:
+            exp_clean.append(vis_req)
+        if exact_spec and exact_spec not in imp_clean:
+            imp_clean.append(exact_spec)
+
     single_clean = (single_rule_requirement or "").strip()
 
     out: dict[str, dict[str, Any]] = {
@@ -324,13 +524,16 @@ def build_ladder_intervention_messages(
             "evidence_status": "eligible" if s_clean else "ineligible",
             "message": s_clean if s_clean else None,
             "message_sha256": sha256_text(s_clean) if s_clean else None,
-            "prefix_arm": "P",
+            "prefix_arm": "D",
         },
     }
 
-    if exp_clean:
+    s_or_d_arm = "S"
+    s_or_d_msg = out["S"]["message"] if out["S"]["eligible"] else None
+
+    if exp_clean and s_or_d_msg:
         exp_block = "\n".join(f"({i}) {req}" for i, req in enumerate(exp_clean, start=1))
-        r_exp_msg = f"{d_clean}\n\n请同时逐条核对以下任务明确要求：\n{exp_block}"
+        r_exp_msg = f"{s_or_d_msg}\n\n请同时逐条核对以下任务明确要求：\n{exp_block}"
         out["R_explicit"] = {
             "arm": "R_explicit",
             "level": 2,
@@ -338,7 +541,7 @@ def build_ladder_intervention_messages(
             "evidence_status": "eligible",
             "message": r_exp_msg,
             "message_sha256": sha256_text(r_exp_msg),
-            "prefix_arm": "D",
+            "prefix_arm": s_or_d_arm,
         }
     else:
         out["R_explicit"] = {
@@ -348,11 +551,12 @@ def build_ladder_intervention_messages(
             "evidence_status": "ineligible",
             "message": None,
             "message_sha256": None,
-            "prefix_arm": "D",
+            "prefix_arm": s_or_d_arm,
         }
 
-    if imp_clean:
-        base_prefix = out["R_explicit"]["message"] if out["R_explicit"]["eligible"] else d_clean
+    if imp_clean and s_or_d_msg:
+        imp_parent_arm = "R_explicit" if out["R_explicit"]["eligible"] else s_or_d_arm
+        base_prefix = out["R_explicit"]["message"] if out["R_explicit"]["eligible"] else s_or_d_msg
         imp_block = "\n".join(f"({i}) {req}" for i, req in enumerate(imp_clean, start=1))
         r_imp_msg = f"{base_prefix}\n\n请进一步逐条核对以下隐含格式与细则要求：\n{imp_block}"
         out["R_implicit"] = {
@@ -362,7 +566,7 @@ def build_ladder_intervention_messages(
             "evidence_status": "eligible",
             "message": r_imp_msg,
             "message_sha256": sha256_text(r_imp_msg),
-            "prefix_arm": "R_explicit" if out["R_explicit"]["eligible"] else "D",
+            "prefix_arm": imp_parent_arm,
         }
     else:
         out["R_implicit"] = {
@@ -375,8 +579,8 @@ def build_ladder_intervention_messages(
             "prefix_arm": "R_explicit",
         }
 
-    if single_clean:
-        r_single_msg = f"{d_clean}\n\n请重点核对并满足以下单项要求：{single_clean}"
+    if single_clean and s_or_d_msg:
+        r_single_msg = f"{s_or_d_msg}\n\n请重点核对并满足以下单项要求：{single_clean}"
         out["R_single"] = {
             "arm": "R_single",
             "level": 2,
@@ -384,7 +588,7 @@ def build_ladder_intervention_messages(
             "evidence_status": "eligible",
             "message": r_single_msg,
             "message_sha256": sha256_text(r_single_msg),
-            "prefix_arm": "D",
+            "prefix_arm": s_or_d_arm,
         }
     else:
         out["R_single"] = {
@@ -394,49 +598,98 @@ def build_ladder_intervention_messages(
             "evidence_status": "ineligible",
             "message": None,
             "message_sha256": None,
-            "prefix_arm": "D",
+            "prefix_arm": s_or_d_arm,
         }
 
     return out
 
 
 def verify_nested_ladder_messages(ladder_spec: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """R7: Verify that every eligible arm in `ladder_spec` strictly begins with its parent arm's text
-    and never silently duplicates a lower arm's text when a requirement list is empty.
+    """R7: Verify that every eligible arm in `ladder_spec` strictly begins with its protocol-mandated
+    parent arm's text (`D -> S -> R_explicit -> R_implicit`, and `S -> R_single`), has a matching
+    live SHA-256 digest (`sha256_text(message) == message_sha256`), and never silently duplicates a
+    lower arm's text when a requirement list is empty.
     """
     errors: list[str] = []
+    for arm in ("P", "D", "S", "R_explicit", "R_implicit", "R_single"):
+        info = ladder_spec.get(arm)
+        if not isinstance(info, dict):
+            errors.append(f"Missing canonical arm {arm}")
+        elif info.get("arm") != arm or info.get("level") != LADDER_ARM_LEVELS[arm]:
+            errors.append(f"Arm {arm} has invalid canonical identity or level")
+    if (ladder_spec.get("D") or {}).get("prefix_arm") != "P":
+        errors.append("D must declare P as protocol parent")
     p_info = ladder_spec.get("P") or {}
-    if p_info.get("message") is not None:
-        errors.append("P arm must have message=None")
+    if p_info.get("eligible") is not True:
+        errors.append("P must be eligible")
+    if p_info.get("message") is not None or p_info.get("message_sha256") is not None:
+        errors.append("P arm must have message=None and message_sha256=None")
 
-    d_msg = (ladder_spec.get("D") or {}).get("message")
-    if not isinstance(d_msg, str) or not d_msg:
-        errors.append("D arm must have non-empty message")
+    d_info = ladder_spec.get("D") or {}
+    d_msg = d_info.get("message")
+    if not d_info.get("eligible") or not isinstance(d_msg, str) or not d_msg.strip():
+        errors.append("D arm must be eligible and have non-empty string message")
+    elif d_info.get("message_sha256") != sha256_text(d_msg):
+        errors.append("D arm message_sha256 does not match sha256_text(D.message)")
 
-    for arm_name in ("R_explicit", "R_implicit", "R_single"):
+    s_info = ladder_spec.get("S") or {}
+    s_eligible = bool(s_info.get("eligible"))
+    s_or_d_expected = "S"
+
+    expected_parents: dict[str, str] = {
+        "S": "D",
+        "R_explicit": s_or_d_expected,
+        "R_implicit": "R_explicit" if bool((ladder_spec.get("R_explicit") or {}).get("eligible")) else s_or_d_expected,
+        "R_single": s_or_d_expected,
+        "R_all": s_or_d_expected,
+    }
+
+    for arm_name in ("S", "R_explicit", "R_implicit", "R_single", "R_all"):
         info = ladder_spec.get(arm_name)
         if not info:
             continue
         if not info.get("eligible"):
-            if info.get("message") is not None or info.get("evidence_status") != "ineligible":
-                errors.append(f"Ineligible arm {arm_name} must have message=None and evidence_status='ineligible'")
+            if (
+                info.get("message") is not None
+                or info.get("message_sha256") is not None
+                or info.get("evidence_status") != "ineligible"
+            ):
+                errors.append(
+                    f"Ineligible arm {arm_name} must have message=None, message_sha256=None, and evidence_status='ineligible'"
+                )
             continue
+
         msg = info.get("message")
-        pref_arm = info.get("prefix_arm") or "D"
-        pref_msg = (ladder_spec.get(pref_arm) or {}).get("message")
-        if not isinstance(msg, str) or not isinstance(pref_msg, str):
-            errors.append(f"Eligible arm {arm_name} or its prefix {pref_arm} is missing string message")
+        recorded_hash = info.get("message_sha256")
+        if not isinstance(msg, str) or not msg.strip():
+            errors.append(f"Eligible arm {arm_name} is missing non-empty string message")
             continue
-        if not msg.startswith(pref_msg):
-            errors.append(f"Arm {arm_name} does not start with prefix {pref_arm}")
-        if msg == pref_msg:
-            errors.append(f"Arm {arm_name} is identical to lower arm {pref_arm} (empty fallback forbidden)")
+        actual_hash = sha256_text(msg)
+        if recorded_hash != actual_hash:
+            errors.append(
+                f"Arm {arm_name} message_sha256 mismatch (recorded={recorded_hash!r}, actual={actual_hash!r})"
+            )
+
+        req_parent = expected_parents[arm_name]
+        declared_parent = info.get("prefix_arm")
+        if declared_parent != req_parent:
+            errors.append(
+                f"Arm {arm_name} declared prefix_arm={declared_parent!r}, but protocol requires {req_parent!r}"
+            )
+        parent_msg = (ladder_spec.get(req_parent) or {}).get("message")
+        if not isinstance(parent_msg, str) or not parent_msg:
+            errors.append(f"Protocol parent {req_parent} of eligible arm {arm_name} is missing string message")
+            continue
+        if not msg.startswith(parent_msg):
+            errors.append(f"Arm {arm_name} does not start with protocol parent {req_parent}")
+        if msg == parent_msg:
+            errors.append(f"Arm {arm_name} is identical to lower arm {req_parent} (empty fallback forbidden)")
 
     return {
         "valid": len(errors) == 0,
         "errors": errors,
         "hashes": {
-            k: v.get("message_sha256")
+            k: sha256_text(v["message"]) if isinstance(v.get("message"), str) else None
             for k, v in ladder_spec.items()
         },
     }
@@ -465,25 +718,22 @@ def select_v05_intervention_anchors(
     r_b: int = 6,
     item_id: str | None = None,
     termination: str | None = None,
+    e1_class: str | None = None,
 ) -> dict[str, Any]:
-    """R10 (V3 §3.4 Rule 7): Anchor Selection Rule supporting both budget exhaustion and voluntary finish.
+    """Choose the latest eligible checkpoint using its recorded remaining requests.
 
-    - Requires `remaining_requests >= r_b` and `cold_resume_eligible == True`.
-    - If candidate checkpoints exist:
-      - If max candidate score > 0: earliest checkpoint achieving max score (`candidate_peak`).
-      - Else: earliest checkpoint where candidate was first written (`candidate_first_write`).
-    - If no candidate (`k* = 0`) or whole-run tail anchor:
-      - When `termination == "assistant_finished"` (voluntary finish before exhausting budget):
-        selects the last eligible checkpoint before voluntary finish (`voluntary_pre_finish`).
-      - Otherwise (`request_budget` or unspecified):
-        selects the latest eligible checkpoint with `remaining_requests >= r_b` (`budget_tail_no_candidate`).
+    Voluntary finishes retain their actual remaining budget. Candidate scores do
+    not change the primary anchor. Missing budget evidence is ineligible.
     """
     eligible_cps: list[dict[str, Any]] = []
     for r in checkpoint_rows:
         if r.get("kind") != "checkpoint":
             continue
         k = int(r.get("k", 0))
-        rem = int(r.get("remaining_requests", max_requests - k))
+        raw_rem = r.get("remaining_requests")
+        if raw_rem is None:
+            continue
+        rem = int(raw_rem)
         if rem >= r_b and bool(r.get("cold_resume_eligible", True)):
             eligible_cps.append({**r, "k": k, "remaining_requests": rem})
 
@@ -495,6 +745,7 @@ def select_v05_intervention_anchors(
             "primary_remaining_budget": None,
             "voluntary_finish_anchor_k": None,
             "budget_tail_anchor_k": None,
+            "first_candidate_write_k": None,
             "early_anchor_k": None,
             "early_remaining_budget": None,
         }
@@ -503,6 +754,8 @@ def select_v05_intervention_anchors(
     cand_cps = [r for r in eligible_cps if r.get("candidate_status") == "ok"]
 
     def _score_at(r: dict[str, Any]) -> float:
+        if e1_class == "never_succeeded_on_disk":
+            return 0.0
         if item_id and isinstance(r.get("deductions"), dict):
             if not r.get("dim1_pass"):
                 return 0.0
@@ -512,23 +765,12 @@ def select_v05_intervention_anchors(
 
     tail_cp = eligible_cps[-1]
     is_voluntary = (termination == "assistant_finished")
+    first_cand_k = int(cand_cps[0]["k"]) if cand_cps else None
 
-    if cand_cps:
-        max_s = max(_score_at(r) for r in cand_cps)
-        if max_s > 0.0:
-            chosen = next(r for r in cand_cps if _score_at(r) >= max_s - 1e-9)
-            anchor_type = "candidate_peak"
-        else:
-            if is_voluntary:
-                # For voluntary finish with score-0 candidate, also record first write vs pre-finish
-                chosen = cand_cps[0]
-                anchor_type = "candidate_first_write"
-            else:
-                chosen = cand_cps[0]
-                anchor_type = "candidate_first_write"
-    else:
-        chosen = tail_cp
-        anchor_type = "voluntary_pre_finish" if is_voluntary else "budget_tail_no_candidate"
+    chosen = tail_cp
+    anchor_type = "voluntary_pre_finish" if is_voluntary else (
+        "budget_tail_with_candidate" if cand_cps else "budget_tail_no_candidate"
+    )
 
     early_candidates = [
         r for r in eligible_cps
@@ -543,6 +785,7 @@ def select_v05_intervention_anchors(
         "primary_remaining_budget": int(chosen["remaining_requests"]),
         "voluntary_finish_anchor_k": int(tail_cp["k"]) if is_voluntary else None,
         "budget_tail_anchor_k": int(tail_cp["k"]),
+        "first_candidate_write_k": first_cand_k,
         "early_anchor_k": int(early_chosen["k"]) if early_chosen else None,
         "early_remaining_budget": int(early_chosen["remaining_requests"]) if early_chosen else None,
     }
@@ -579,6 +822,57 @@ def build_interleaved_arm_schedule(
     return schedule
 
 
+def _mean_bounds(vals: Sequence[float], error: float) -> tuple[float, float]:
+    """Exact binomial inversion, or bounded Hoeffding bounds for independent [0,1] outcomes."""
+    if not vals or not 0 < error < 1 or any(not 0 <= v <= 1 for v in vals):
+        raise L2Error("Expected nonempty bounded outcomes and error probability in (0,1)")
+    n = len(vals)
+    mean = sum(vals) / n
+    if not all(v in (0.0, 1.0) for v in vals):
+        radius = math.sqrt(math.log(1 / error) / (2 * n))
+        return max(0.0, mean - radius), min(1.0, mean + radius)
+    k = int(sum(vals))
+    def tail(prob: float, start: int, end: int) -> float:
+        if prob <= 0:
+            return float(start == 0)
+        if prob >= 1:
+            return float(end == n)
+        logs = [math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+                + i * math.log(prob) + (n - i) * math.log1p(-prob) for i in range(start, end + 1)]
+        top = max(logs)
+        return math.exp(top) * sum(math.exp(x - top) for x in logs)
+    def invert(start: int, end: int, increasing: bool) -> float:
+        lo, hi = 0.0, 1.0
+        for _ in range(44):
+            mid = (lo + hi) / 2
+            if (tail(mid, start, end) < error) == increasing:
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
+    return (invert(k, n, True) if k else 0.0,
+            invert(0, k, False) if k < n else 1.0)
+
+
+def _difference_bounds(treat: Sequence[float], ctrl: Sequence[float], error: float) -> tuple[float, float]:
+    lt, ut = _mean_bounds(treat, error / 2)
+    lc, uc = _mean_bounds(ctrl, error / 2)
+    return lt - uc, ut - lc
+
+
+def _shifted_one_sided_p_value(vals_treat: Sequence[float], vals_ctrl: Sequence[float], *,
+                               delta: float = 0.10, seed: str = "unused") -> float:
+    """Invert conservative difference bounds for H0: mean(treat)-mean(ctrl) <= delta."""
+    lo, hi = 0.0, 1.0
+    for _ in range(32):
+        mid = (lo + hi) / 2
+        if _difference_bounds(vals_treat, vals_ctrl, mid)[0] > delta:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def adjudicate_e2_outcomes(
     terminal_y: float,
     arm_outcomes: dict[str, Sequence[float]],
@@ -590,40 +884,23 @@ def adjudicate_e2_outcomes(
     tau: float = 0.20,
     alpha: float = 0.05,
     ineligible_arms: Sequence[str] = (),
+    primary_family_size: int | None = None,
+    comparison_ids: Sequence[str] | None = None,
 ) -> tuple[E2ResponseVector, str | None, str]:
-    """R9 (V3 §3.2 & §3.4): Ladder Statistical Decision Rule with parameterized `(delta, tau, alpha)`.
+    """Adjudicate using simultaneous conservative bounds and Holm delta-null tests.
 
-    Rules:
-    1. Level 0 (`P` absolute recovery):
-       If `mean(P) >= tau` and `LB95(P) > delta` (or `mean(P) - terminal_y >= tau` and `LB95(P - terminal_y) > delta`),
-       returns `(vec, None, "plain_recoverable")`.
-    2. Ladder Level `k >= 1` incremental effectiveness:
-       - Evaluated arms are ordered by `LADDER_ARM_LEVELS`:
-         Level 0: `P`
-         Level 1: `D`, `S`
-         Level 2: `R_explicit` (or `R` / `R_single` / `R_all`)
-         Level 3: `R_implicit`
-       - All one-sided comparisons `(higher_arm vs lower_arm)` across levels `level(higher) > level(lower)`
-         are tested via one-sided permutation test and adjusted jointly via Holm step-down (`holm_adjust`).
-       - An arm `A` at level `k >= 1` is adjudicated effective iff for EVERY evaluated arm `B` with `level(B) < k`:
-         `mean(A) - mean(B) >= tau`, `LB95(A - B) > delta`, and `p_holm(A vs B) <= alpha`.
-       - Among effective arms, the lowest level `k` wins:
-         - `D` -> `"delivery_responsive"`
-         - `S` -> `"self_check_responsive"`
-         - `R_explicit` -> `"explicit_rule_responsive"`
-         - `R` / `R_single` -> `"rule_responsive"`
-         - `R_implicit` -> `"implicit_rule_responsive"`
-         (If both `D` and `S` at Level 1 pass, chooses the one with larger `mean`, tie-breaking to `D`.)
-    3. `unrecovered_under_protocol`:
-       When no arm is effective, AND every evaluated arm `A` (including `P`) has absolute 95% upper bound
-       `UB95(V(A)) < tau` AND relative upper bound `UB95(A - P) < tau` for all `A != P`.
-    4. Otherwise: returns `(vec, None, "inconclusive")`.
+    Binary outcomes use exact binomial inversion; bounded continuous outcomes use
+    Hoeffding. The primary family size and unique comparison IDs can be bound to
+    a sealed plan; omitted values are explicitly exploratory. Interventions must
+    exceed every lower level by delta. Absolute recovery uses tau separately.
     """
     clean_outcomes: dict[str, list[float]] = {
         k: [float(x) for x in v]
         for k, v in arm_outcomes.items()
         if v is not None and len(v) > 0
     }
+    if set(clean_outcomes) - set(LADDER_ARM_LEVELS):
+        raise L2Error("Unknown intervention arm in E2 outcomes")
     if "P" not in clean_outcomes:
         raise L2Error("E2 adjudication requires non-empty 'P' arm outcomes")
     if len(clean_outcomes) < 2:
@@ -640,39 +917,52 @@ def adjudicate_e2_outcomes(
 
     # Identify all ordered pairs (hi_arm, lo_arm) where level(hi) > level(lo)
     eval_arms = sorted(clean_outcomes.keys(), key=lambda a: (LADDER_ARM_LEVELS.get(a, 99), a))
-    comparison_pairs: list[tuple[str, str]] = []
-    for hi in eval_arms:
-        lvl_hi = LADDER_ARM_LEVELS.get(hi, 99)
-        if hi == "R_all":
-            continue
-        for lo in eval_arms:
-            lvl_lo = LADDER_ARM_LEVELS.get(lo, 99)
-            if lo == "R_all":
-                continue
-            if lvl_hi > lvl_lo:
-                comparison_pairs.append((hi, lo))
+    primary_arms = {"P", "D", "S", "R_explicit", "R_implicit"}
+    comparison_pairs: list[tuple[str, str]] = [
+        (hi, lo) for hi in eval_arms for lo in eval_arms
+        if hi in primary_arms and lo in primary_arms
+        and LADDER_ARM_LEVELS[hi] > LADDER_ARM_LEVELS[lo]
+    ]
+    if "D" in clean_outcomes and "S" in clean_outcomes:
+        comparison_pairs.append(("S", "D"))
+    primary_pairs = list(comparison_pairs)
+    # Scorer-selected single-rule prompts are localization evidence, not ladder levels.
+    for auxiliary in ("R", "R_single"):
+        if auxiliary in clean_outcomes:
+            comparison_pairs.extend((auxiliary, lo) for lo in ("P", "D") if lo in clean_outcomes)
+    local_ids = [f"{hi}_vs_{lo}" for hi, lo in comparison_pairs]
+    if comparison_ids is not None and (len(comparison_ids) != len(local_ids) or len(set(comparison_ids)) != len(local_ids)):
+        raise L2Error("comparison_ids must uniquely identify every local comparison")
+    family_size = primary_family_size if primary_family_size is not None else len(comparison_pairs)
+    if family_size < len(comparison_pairs):
+        raise L2Error("primary_family_size cannot be smaller than the observed comparison family")
+    interval_error = alpha / (8 * max(1, family_size + len(clean_outcomes)))
+    for arm, vals in clean_outcomes.items():
+        lb, ub = _mean_bounds(vals, interval_error)
+        arm_lb95_abs[arm], arm_ub95_abs[arm] = lb, ub
 
     pairwise_deltas: dict[str, float] = {}
     pairwise_lb95: dict[str, float] = {}
     pairwise_ub95: dict[str, float] = {}
     pairwise_p_raw: dict[str, float] = {}
     raw_p_list: list[float] = []
+    decision_bounds: dict[str, tuple[float, float]] = {}
 
     for hi, lo in comparison_pairs:
         key = f"{hi}_vs_{lo}"
         v_hi = clean_outcomes[hi]
         v_lo = clean_outcomes[lo]
         diff = (sum(v_hi) / len(v_hi)) - (sum(v_lo) / len(v_lo))
-        lb = lower_drop(v_hi, v_lo, alpha=alpha, seed=f"v05-lb-{key}")
-        ub = upper_drop(v_hi, v_lo, alpha=alpha, seed=f"v05-ub-{key}")
-        p_raw = permutation_one_sided(v_hi, v_lo, direction=1.0, seed=f"v05-perm-{key}")
+        lb, ub = _difference_bounds(v_hi, v_lo, interval_error)
+        p_raw = _shifted_one_sided_p_value(v_hi, v_lo, delta=delta, seed=f"v05-perm-{key}")
+        decision_bounds[key] = (diff, lb)
         pairwise_deltas[key] = round(diff, 6)
         pairwise_lb95[key] = round(lb, 6)
         pairwise_ub95[key] = round(ub, 6)
         pairwise_p_raw[key] = round(p_raw, 6)
         raw_p_list.append(p_raw)
 
-    holm_p_list = holm_adjust(raw_p_list) if raw_p_list else []
+    holm_p_list = holm_adjust(raw_p_list + [1.0] * (family_size - len(raw_p_list)))[:len(raw_p_list)] if raw_p_list else []
     pairwise_p_holm: dict[str, float] = {
         f"{hi}_vs_{lo}": round(p_h, 6)
         for (hi, lo), p_h in zip(comparison_pairs, holm_p_list)
@@ -681,7 +971,7 @@ def adjudicate_e2_outcomes(
     p_vals = clean_outcomes["P"]
     mean_p = arm_means["P"]
     delta_p_y = round(mean_p - float(terminal_y), 6)
-    lb_p_y = round(lower_drop(p_vals, float(terminal_y), alpha=alpha, seed="v05-p-y"), 6)
+    lb_p_y = arm_lb95_abs["P"] - float(terminal_y)
 
     r_key = "R" if "R" in clean_outcomes else ("R_single" if "R_single" in clean_outcomes else ("R_explicit" if "R_explicit" in clean_outcomes else None))
     mean_r = arm_means.get(r_key) if r_key else None
@@ -690,6 +980,10 @@ def adjudicate_e2_outcomes(
 
     vec = E2ResponseVector(
         evaluated=True,
+        inference={"method": "binomial_exact_or_bounded_hoeffding_bonferroni_with_delta_null_holm",
+                   "primary_family_size": family_size, "comparison_ids": list(comparison_ids or local_ids),
+                   "scope": "frozen_family" if primary_family_size is not None else "exploratory_local",
+                   "endpoint_error": interval_error},
         anchor_k=anchor_k,
         anchor_type=anchor_type,
         remaining_budget_at_anchor=remaining_budget,
@@ -729,11 +1023,11 @@ def adjudicate_e2_outcomes(
         p_holm_R_vs_D=pairwise_p_holm.get(f"{r_key}_vs_D") if r_key else None,
     )
 
-    # Step 1: Level 0 check (`P` absolute success rate >= tau and LB95(P) > delta)
-    if (mean_p >= tau and arm_lb95_abs["P"] > delta) or (delta_p_y >= tau and lb_p_y > delta):
+    # Step 1: Level 0 needs an absolute recovery lower bound strictly above tau.
+    if arm_lb95_abs["P"] > tau or lb_p_y > tau:
         return vec, None, "plain_recoverable"
 
-    # Step 2: Check ladder levels k = 1, 2, 3 in ascending order
+    # Step 2: Check ladder levels k = 1, 2, 3 in ascending order using incremental threshold `delta`
     label_map = {
         "D": "delivery_responsive",
         "S": "self_check_responsive",
@@ -746,7 +1040,7 @@ def adjudicate_e2_outcomes(
     for target_level in (1, 2, 3):
         candidates_at_level = [
             a for a in eval_arms
-            if LADDER_ARM_LEVELS.get(a, 99) == target_level and a in label_map
+            if a in primary_arms and LADDER_ARM_LEVELS.get(a, 99) == target_level and a in label_map
         ]
         if not candidates_at_level:
             continue
@@ -755,7 +1049,7 @@ def adjudicate_e2_outcomes(
         for cand_arm in candidates_at_level:
             lower_arms = [
                 lo for lo in eval_arms
-                if LADDER_ARM_LEVELS.get(lo, 99) < target_level and lo != "R_all"
+                if lo in primary_arms and LADDER_ARM_LEVELS.get(lo, 99) < target_level
             ]
             if not lower_arms:
                 continue
@@ -763,9 +1057,9 @@ def adjudicate_e2_outcomes(
             for lo in lower_arms:
                 pair_key = f"{cand_arm}_vs_{lo}"
                 if (
-                    pairwise_deltas.get(pair_key, -1.0) < tau
-                    or pairwise_lb95.get(pair_key, -1.0) <= delta
-                    or pairwise_p_holm.get(pair_key, 1.0) > alpha
+                    decision_bounds.get(pair_key, (-1.0, -1.0))[0] <= delta
+                    or decision_bounds.get(pair_key, (-1.0, -1.0))[1] <= delta
+                    or holm_p_list[local_ids.index(pair_key)] > alpha
                 ):
                     beats_all_lower = False
                     break
@@ -773,14 +1067,13 @@ def adjudicate_e2_outcomes(
                 return vec, label_map[cand_arm], "adjudicated"
 
     # Step 3: Unrecovered under protocol — requires ALL evaluated arms (including P) to have
-    # absolute UB95 < tau AND all pairwise UB95(arm - P) < tau.
-    non_r_all = [a for a in eval_arms if a != "R_all"]
+    # absolute UB95 < tau AND all primary incremental upper bounds < delta.
+    non_r_all = [a for a in eval_arms if a in primary_arms]
     all_abs_below_tau = all(arm_ub95_abs[a] < tau for a in non_r_all)
-    all_rel_below_tau = all(
-        pairwise_ub95.get(f"{a}_vs_P", -1.0) < tau
-        for a in non_r_all if a != "P"
+    all_increment_bounds_below_delta = all(
+        pairwise_ub95[f"{hi}_vs_{lo}"] < delta for hi, lo in primary_pairs
     )
-    if all_abs_below_tau and all_rel_below_tau:
+    if all_abs_below_tau and all_increment_bounds_below_delta:
         return vec, "unrecovered_under_protocol", "adjudicated"
 
     return vec, None, "inconclusive"
@@ -797,7 +1090,9 @@ def build_v3_stratified_sampling_frame(
     """R11 (V3 §3.4 & §5.2): Build the 3D stratified sampling frame on the NEW `dev45` only:
       `exhausted_budget (bool) x valid_delivery (bool) x rule_source (str)`
 
-    Rejects legacy `deepseek` datasets to prevent cross-configuration contamination.
+    Rejects legacy `deepseek` datasets to prevent cross-configuration contamination, and preserves
+    each sampled unit's true checkpoint `anchor_k`, `anchor_type`, `remaining_budget`, `defect_name`,
+    and `unit_level`.
     """
     if "deepseek" in dataset_id.lower() or "deepseek" in actor_model.lower():
         raise L2Error(
@@ -830,6 +1125,9 @@ def build_v3_stratified_sampling_frame(
         else:
             n_h = min(N_h, int(target_sample_per_stratum))
         if n_h <= 0:
+            stratum_summary[sid] = {"population_count": N_h, "sampled_count": 0,
+                "inclusion_prob": 0.0, "population_deduction": sum(x.deduction_weight for x in pool),
+                "sampled_unit_ids": []}
             continue
         pi_h = n_h / N_h
         chosen = sorted(rng.sample(pool, k=n_h), key=lambda x: x.unit_id)
@@ -839,6 +1137,9 @@ def build_v3_stratified_sampling_frame(
                 "unit_id": u.unit_id,
                 "episode_id": u.episode_id,
                 "task_id": u.task_id,
+                "family_id": u.family_id,
+                "unit_level": u.unit_level,
+                "defect_name": u.defect_name,
                 "stratum_id": sid,
                 "exhausted_budget": bool(u.exhausted_budget),
                 "valid_delivery": bool(u.valid_delivery),
@@ -848,6 +1149,10 @@ def build_v3_stratified_sampling_frame(
                 "stratum_sample_size": n_h,
                 "inclusion_prob": round(pi_h, 6),
                 "anchor_k": u.e2_response_vector.anchor_k,
+                "anchor_type": u.e2_response_vector.anchor_type,
+                "remaining_budget": u.e2_response_vector.remaining_budget_at_anchor,
+                "early_anchor_k": u.early_anchor_k,
+                "early_anchor_remaining_budget": u.early_anchor_remaining_budget,
             })
         stratum_summary[sid] = {
             "population_count": N_h,
@@ -944,190 +1249,135 @@ def evaluate_harm_on_passing_units(
 
 
 def compute_cross_fitted_diagnostic_value_ceiling(
-    units: Sequence[DiagnosticUnitV05],
-    *,
-    candidate_arms: Sequence[str] = ("D", "S", "R_explicit", "R_implicit", "R"),
-    ceiling_threshold: float = 0.05,
-    alpha: float = 0.05,
-    seed: str = "v3-d2-crossfit-ceiling",
+    units: Sequence[DiagnosticUnitV05], *,
+    candidate_arms: Sequence[str] = ("P", "D", "S", "R_explicit", "R_single"),
+    fixed_arm_pool: Sequence[str] = ("P", "D", "S", "R_explicit"),
+    ceiling_threshold: float = 0.05, alpha: float = 0.05,
+    min_replicates_per_arm: int = 2, seed: str = "v3-d2-crossfit-ceiling",
 ) -> dict[str, Any]:
-    """R13 (V3 §3.7 & `V3-P3`): Compute 2-fold cross-fitted diagnostic value ceiling at 0 extra Actor cost.
+    """Select both policies on one branch half, evaluate the other, then swap.
 
-    Method:
-    1. Split adjudicated/evaluated units into two strictly disjoint halves `I_1` and `I_2` (`I_1 ∩ I_2 = ∅`).
-    2. For each fold `(train_half, eval_half)` in `[(I_1, I_2), (I_2, I_1)]`:
-       - On `train_half`:
-         a) Select the single best fixed arm `a*_fixed(train_half)` that maximizes mean gain over `P`
-            (computed separately for unweighted and deduction-weighted objectives).
-         b) Within each unit `u` in `eval_half`, split `u`'s continuation branches for each arm into
-            selection branches (`sel_half`) and evaluation branches (`eval_branch_half`), OR use the
-            stratum-level / split-sample oracle arm selected on `sel_half` and evaluated on `eval_branch_half`,
-            so that arm selection and gain evaluation NEVER share the same random continuation outcomes.
-       - On `eval_half`:
-         Evaluate the out-of-fold gain of the unit-wise optimal arm vs `a*_fixed(train_half)`.
-    3. Reports both **unweighted (per-unit equal weight)** and **deduction-weighted** cross-fitted ceilings,
-       never using in-sample `max_possible_gain`.
+    Single-rule diagnosis is permitted only for explicit rules. Missing applicable
+    outcomes invalidate a unit; they never become zero successes. Family-cluster
+    percentile intervals are descriptive; sparse/constant clusters receive bounded
+    Hoeffding intervals instead of spuriously degenerate bootstrap intervals.
     """
-    eligible = [
-        u for u in units
-        if u.e2_response_vector.evaluated and "P" in u.e2_response_vector.arm_outcomes
-    ]
-    if len(eligible) < 2:
-        return {
-            "schema_version": V05_SCHEMA_VERSION,
-            "proposition_id": "V3-P3",
-            "eligible_unit_count": len(eligible),
-            "folds_disjoint": True,
-            "unweighted_ceiling": 0.0,
-            "deduction_weighted_ceiling": 0.0,
-            "ceiling_threshold": ceiling_threshold,
-            "passes_v3_p3_gate": False,
-        }
-
-    rng = random.Random(int(digest({"seed": seed, "ids": [u.unit_id for u in eligible]})[:16], 16))
-    shuffled = list(eligible)
-    rng.shuffle(shuffled)
-    mid = len(shuffled) // 2
-    fold_1 = shuffled[:mid]
-    fold_2 = shuffled[mid:]
-    ids_1 = {u.unit_id for u in fold_1}
-    ids_2 = {u.unit_id for u in fold_2}
-    assert ids_1.isdisjoint(ids_2), "Cross-fitting folds I_1 and I_2 must be strictly disjoint"
-
-    # Available intervention arms present in the units
-    present_arms = [
-        a for a in candidate_arms
-        if any(a in u.e2_response_vector.arm_outcomes and len(u.e2_response_vector.arm_outcomes[a]) > 0 for u in eligible)
-    ]
-    if not present_arms:
-        return {
-            "schema_version": V05_SCHEMA_VERSION,
-            "proposition_id": "V3-P3",
-            "eligible_unit_count": len(eligible),
-            "folds_disjoint": True,
-            "unweighted_ceiling": 0.0,
-            "deduction_weighted_ceiling": 0.0,
-            "ceiling_threshold": ceiling_threshold,
-            "passes_v3_p3_gate": False,
-        }
-
-    def _split_branch_gain(u: DiagnosticUnitV05, arm: str) -> tuple[float, float]:
-        """Split a unit's replicates for `arm` and `P` into disjoint halves `(sel_gain, eval_gain)`."""
+    if len({u.unit_id for u in units}) != len(units):
+        raise L2Error("Duplicate diagnostic unit identities")
+    if any(not 0 < u.inclusion_prob <= 1 or u.deduction_weight < 0 for u in units):
+        raise L2Error("Invalid inclusion probability or deduction weight")
+    allowed_diag = {"P", "D", "S", "R_explicit", "R_single"}
+    allowed_fixed = {"P", "D", "S", "R_explicit"}
+    if set(candidate_arms) - allowed_diag or set(fixed_arm_pool) - allowed_fixed:
+        raise L2Error("Ceiling arm pools contain hidden or unclassified rule information")
+    diag = list(dict.fromkeys(("P", *candidate_arms)))
+    fixed = list(dict.fromkeys(("P", *fixed_arm_pool)))
+    req = max(2, min_replicates_per_arm)
+    eligible = []
+    rejected = []
+    available = {}
+    for u in units:
         outcomes = u.e2_response_vector.arm_outcomes
-        p_vals = outcomes.get("P", [])
-        a_vals = outcomes.get(arm, [])
-        if not p_vals or not a_vals:
-            return 0.0, 0.0
-        mp1 = max(1, len(p_vals) // 2)
-        ma1 = max(1, len(a_vals) // 2)
-        p_sel = p_vals[:mp1]
-        p_ev = p_vals[mp1:] if len(p_vals) > 1 else p_vals
-        a_sel = a_vals[:ma1]
-        a_ev = a_vals[ma1:] if len(a_vals) > 1 else a_vals
-        g_sel = max(0.0, (sum(a_sel) / len(a_sel)) - (sum(p_sel) / len(p_sel)))
-        g_ev = max(0.0, (sum(a_ev) / len(a_ev)) - (sum(p_ev) / len(p_ev)))
-        return g_sel, g_ev
-
-    fold_records: list[dict[str, Any]] = []
-    eval_unit_rows: list[dict[str, Any]] = []
-
-    for fold_idx, (train_set, eval_set) in enumerate(((fold_1, fold_2), (fold_2, fold_1)), start=1):
-        # 1. Select best fixed arm on train_set (both unweighted and deduction-weighted)
-        best_fixed_unw = present_arms[0]
-        best_fixed_unw_score = -1e9
-        best_fixed_w = present_arms[0]
-        best_fixed_w_score = -1e9
-
-        for arm in present_arms:
-            unw_gains = []
-            w_gains = []
-            w_denom = 0.0
-            for u in train_set:
-                g_sel, g_ev = _split_branch_gain(u, arm)
-                g_full = 0.5 * (g_sel + g_ev)
-                unw_gains.append(g_full)
-                w_gains.append(g_full * u.deduction_weight)
-                w_denom += u.deduction_weight
-            mean_unw = sum(unw_gains) / len(unw_gains) if unw_gains else 0.0
-            mean_w = sum(w_gains) / w_denom if w_denom > 0 else 0.0
-            if mean_unw > best_fixed_unw_score:
-                best_fixed_unw_score = mean_unw
-                best_fixed_unw = arm
-            if mean_w > best_fixed_w_score:
-                best_fixed_w_score = mean_w
-                best_fixed_w = arm
-
-        # 2. Evaluate on disjoint eval_set using split-branch oracle vs train_set's fixed arm
-        fold_unw_diffs: list[float] = []
-        fold_w_num = 0.0
-        fold_w_den = 0.0
-
-        for u in eval_set:
-            # Choose unit-best arm using ONLY `g_sel` (first half of branches), evaluate on `g_ev` (second half)
-            best_u_arm = "none"
-            best_u_sel_gain = 0.0
-            eval_gains_by_arm: dict[str, float] = {"none": 0.0}
-            for arm in present_arms:
-                g_sel, g_ev = _split_branch_gain(u, arm)
-                eval_gains_by_arm[arm] = g_ev
-                if g_sel > best_u_sel_gain:
-                    best_u_sel_gain = g_sel
-                    best_u_arm = arm
-
-            oracle_eval_gain = eval_gains_by_arm[best_u_arm]
-            fixed_unw_eval_gain = eval_gains_by_arm.get(best_fixed_unw, 0.0)
-            fixed_w_eval_gain = eval_gains_by_arm.get(best_fixed_w, 0.0)
-
-            diff_unw = oracle_eval_gain - fixed_unw_eval_gain
-            diff_w = oracle_eval_gain - fixed_w_eval_gain
-            fold_unw_diffs.append(diff_unw)
-            fold_w_num += diff_w * u.deduction_weight
-            fold_w_den += u.deduction_weight
-
-            eval_unit_rows.append({
-                "fold": fold_idx,
-                "unit_id": u.unit_id,
-                "deduction_weight": u.deduction_weight,
-                "selected_unit_arm": best_u_arm,
-                "train_best_fixed_arm_unweighted": best_fixed_unw,
-                "train_best_fixed_arm_weighted": best_fixed_w,
-                "oracle_eval_gain": round(oracle_eval_gain, 6),
-                "fixed_unweighted_eval_gain": round(fixed_unw_eval_gain, 6),
-                "fixed_weighted_eval_gain": round(fixed_w_eval_gain, 6),
-                "ceiling_increment_unweighted": round(diff_unw, 6),
-                "ceiling_increment_weighted": round(diff_w, 6),
-            })
-
-        fold_records.append({
-            "fold": fold_idx,
-            "train_unit_ids": [u.unit_id for u in train_set],
-            "eval_unit_ids": [u.unit_id for u in eval_set],
-            "best_fixed_arm_unweighted": best_fixed_unw,
-            "best_fixed_arm_weighted": best_fixed_w,
-            "eval_unweighted_ceiling": round(sum(fold_unw_diffs) / len(fold_unw_diffs), 6) if fold_unw_diffs else 0.0,
-            "eval_deduction_weighted_ceiling": round(fold_w_num / fold_w_den, 6) if fold_w_den > 0 else 0.0,
-        })
-
-    all_unw = [r["ceiling_increment_unweighted"] for r in eval_unit_rows]
-    total_w = sum(r["deduction_weight"] for r in eval_unit_rows)
-    unw_ceiling = sum(all_unw) / len(all_unw) if all_unw else 0.0
-    w_ceiling = (
-        sum(r["ceiling_increment_weighted"] * r["deduction_weight"] for r in eval_unit_rows) / total_w
-        if total_w > 0 else 0.0
-    )
-
-    return {
-        "schema_version": V05_SCHEMA_VERSION,
-        "proposition_id": "V3-P3",
-        "eligible_unit_count": len(eligible),
-        "folds_disjoint": True,
-        "unweighted_ceiling": round(unw_ceiling, 6),
-        "deduction_weighted_ceiling": round(w_ceiling, 6),
-        "ceiling_threshold": ceiling_threshold,
-        "passes_v3_p3_gate": (unw_ceiling >= ceiling_threshold) or (w_ceiling >= ceiling_threshold),
-        "folds": fold_records,
-        "unit_evaluations": eval_unit_rows,
-    }
+        applicable = [arm for arm in dict.fromkeys(diag + fixed)
+                      if arm not in u.e2_response_vector.ineligible_arms
+                      and (arm != "R_single" or u.rule_source == "explicit")]
+        # Globally absent optional arms are not part of this observed protocol.
+        applicable = [arm for arm in applicable if arm == "P" or any(
+            arm in x.e2_response_vector.arm_outcomes for x in units)]
+        if (not u.e2_response_vector.evaluated or len(applicable) < 2
+            or any(len(outcomes.get(arm, [])) < req for arm in applicable)):
+            rejected.append(u.unit_id)
+            continue
+        eligible.append(u)
+        available[u.unit_id] = applicable
+    common_fixed = [arm for arm in fixed if eligible and all(arm in available[u.unit_id] for u in eligible)]
+    if "P" not in common_fixed:
+        common_fixed.insert(0, "P")
+    missing_fixed_arms = [arm for arm in fixed if arm not in common_fixed]
+    fixed_policy_pool_complete = not missing_fixed_arms
+    rows = []
+    folds = []
+    def mean_half(u, arm, half):
+        values = u.e2_response_vector.arm_outcomes[arm]
+        mid = len(values) // 2
+        part = values[:mid] if half == 0 else values[mid:]
+        return sum(part) / len(part)
+    for selection_half in (0, 1):
+        def policy_score(arm, weighted):
+            weights = [u.deduction_weight / u.inclusion_prob if weighted else 1.0 for u in eligible]
+            denom = sum(weights)
+            return sum(mean_half(u, arm, selection_half) * w for u, w in zip(eligible, weights)) / denom if denom else 0.0
+        best_unw = max(common_fixed, key=lambda arm: policy_score(arm, False))
+        best_w = max(common_fixed, key=lambda arm: policy_score(arm, True))
+        folds.append({"fold": selection_half + 1, "selection_half": selection_half,
+                      "evaluation_half": 1 - selection_half,
+                      "best_fixed_arm_unweighted": best_unw, "best_fixed_arm_weighted": best_w})
+        for u in eligible:
+            choices = [arm for arm in diag if arm in available[u.unit_id]]
+            chosen = max(choices, key=lambda arm: mean_half(u, arm, selection_half))
+            ph = mean_half(u, "P", 1 - selection_half)
+            gain = mean_half(u, chosen, 1 - selection_half) - ph
+            fu = mean_half(u, best_unw, 1 - selection_half) - ph
+            fw = mean_half(u, best_w, 1 - selection_half) - ph
+            split_indices = {}
+            for arm in available[u.unit_id]:
+                n = len(u.e2_response_vector.arm_outcomes[arm]); mid = n // 2
+                halves = [list(range(mid)), list(range(mid, n))]
+                split_indices[arm] = {"selection": halves[selection_half], "evaluation": halves[1 - selection_half]}
+            rows.append({"fold": selection_half + 1, "unit_id": u.unit_id, "task_id": u.task_id, "family_id": u.family_id,
+                         "deduction_weight": u.deduction_weight / u.inclusion_prob, "selected_unit_arm": chosen,
+                         "train_best_fixed_arm_unweighted": best_unw, "train_best_fixed_arm_weighted": best_w,
+                         "oracle_eval_gain": gain, "fixed_unweighted_eval_gain": fu, "fixed_weighted_eval_gain": fw,
+                         "ceiling_increment_unweighted": gain - fu, "ceiling_increment_weighted": gain - fw,
+                         "branch_split_indices": split_indices})
+    # Condition on each selection half separately. Shared fixed-arm selection then
+    # remains fixed during evaluation; combine the two simultaneous intervals only
+    # after calculating them. Family weights preserve parent/item dependence.
+    def ratio(items, weighted):
+        ws = [r["deduction_weight"] if weighted else 1.0 for r in items]
+        key = "ceiling_increment_weighted" if weighted else "ceiling_increment_unweighted"
+        den = sum(ws)
+        return sum(r[key] * w for r, w in zip(items, ws)) / den if den else 0.0
+    unw, weighted = ratio(rows, False), ratio(rows, True)
+    families = sorted({u.family_id or "__unknown__" for u in eligible})
+    direction_intervals = []
+    for direction in (1, 2):
+        items = [row for row in rows if row["fold"] == direction]
+        record = {"fold": direction}
+        for name, use_weights in (("unweighted", False), ("weighted", True)):
+            family_weights = {}
+            for row in items:
+                family_key = row["family_id"] or "__unknown__"
+                family_weights[family_key] = family_weights.get(family_key, 0.0) + (row["deduction_weight"] if use_weights else 1.0)
+            denom = sum(family_weights.values())
+            norm_sq = sum((w / denom)**2 for w in family_weights.values()) if denom else 1.0
+            # alpha/2 directions, alpha/2 tails within each direction.
+            radius = math.sqrt(2 * math.log(4 / alpha) * norm_sq)
+            estimate = ratio(items, use_weights)
+            record[name] = [max(-1.0, estimate - radius), min(1.0, estimate + radius)]
+            record[f"{name}_family_weights"] = family_weights
+        direction_intervals.append(record)
+    ci_u = [sum(d["unweighted"][i] for d in direction_intervals) / 2 for i in (0, 1)]
+    ci_w = [sum(d["weighted"][i] for d in direction_intervals) / 2 for i in (0, 1)]
+    ci_method = "conditional_direction_family_weighted_hoeffding_bonferroni"
+    return {"schema_version": V05_SCHEMA_VERSION, "proposition_id": "V3-P3",
+            "eligible_unit_count": len(eligible), "ineligible_unit_ids": rejected,
+            "min_replicates_per_arm_required": req, "fixed_arm_pool": common_fixed,
+            "diagnostic_arm_pool": diag, "folds_disjoint": True, "branches_disjoint": True,
+            "fixed_policy_pool_complete": fixed_policy_pool_complete,
+            "missing_fixed_arms": missing_fixed_arms,
+            "evidence_status": "inconclusive" if not fixed_policy_pool_complete else "evaluated",
+            "split_unit": "continuation_branches_within_unit", "family_cluster_count": len(families),
+            "unweighted_ceiling": unw, "deduction_weighted_ceiling": weighted,
+            "unweighted_lb95": ci_u[0], "unweighted_ub95": ci_u[1],
+            "deduction_weighted_lb95": ci_w[0], "deduction_weighted_ub95": ci_w[1],
+            "interval_method": ci_method, "direction_intervals": direction_intervals,
+            "best_case_equal_family_lower_bound_at_perfect_gain": 1 - math.sqrt(2 * math.log(4 / alpha) / max(1, len(families))),
+            "threshold_attainable_with_observed_family_count": 1 - math.sqrt(2 * math.log(4 / alpha) / max(1, len(families))) > ceiling_threshold,
+            "weighting": "deduction_weight/inclusion_prob", "ceiling_threshold": ceiling_threshold,
+            "family_ids_complete": all(u.family_id for u in eligible),
+            "passes_v3_p3_gate": fixed_policy_pool_complete and len(families) >= 2 and all(u.family_id for u in eligible) and ci_w[0] > ceiling_threshold,
+            "folds": folds, "unit_evaluations": rows}
 
 
 def predict_majority_baseline_m(
@@ -1216,10 +1466,11 @@ def predict_rule_analyst_a_v05(
             "r_explicit_prob": 0.55 if rec_arm == "R_explicit" else 0.25,
             "r_implicit_prob": 0.55 if rec_arm == "R_implicit" else 0.35,
             "r_prob": 0.55,
-            "recommended_arm": rec_arm,
+            "recommended_arm": "P" if unit.rule_source == "implicit" else rec_arm,
+            "predicted_attribution_arm": rec_arm,
             "predicted_label": pred_lbl,
             "confidence": 0.55,
-            "abstain": False,
+            "abstain": unit.rule_source == "implicit",
             "evidence_steps": [submission_writes[-1]],
         }
     return {
@@ -1245,11 +1496,18 @@ def evaluate_analysts_v05(
     *,
     cost_per_unit_requests: float = 144.0,
 ) -> dict[str, Any]:
-    """R13 & R14 (V3 §3.6 & §3.7): Evaluate Analyst predictions (M / A / B / C) using
-    cross-fitted diagnostic value ceiling (NEVER in-sample `max_possible_gain`).
+    """R13, R14 & R17 (V3 §3.6 & §3.7): Evaluate Analyst predictions (M / A / B / C) using
+    cross-fitted diagnostic value ceiling (NEVER in-sample `max_possible_gain`), preserving signed
+    actual gains (never clamping negative harm to 0.0) and reporting both full-sample and adjudicated
+    coverage counts.
     """
     by_id = {u.unit_id: u for u in units}
     pred_by_id = {p["unit_id"]: p for p in predictions if p.get("unit_id") in by_id}
+
+    all_matched_units = [u for u in units if u.unit_id in pred_by_id]
+    inconclusive_units = [u for u in units if u.evidence_status == "inconclusive"]
+    plain_recoverable_units = [u for u in units if u.evidence_status == "plain_recoverable"]
+    not_applicable_units = [u for u in units if u.evidence_status in ("not_applicable", "ineligible")]
 
     adjudicated_e2 = [
         u for u in units
@@ -1265,10 +1523,19 @@ def evaluate_analysts_v05(
         and u.unit_id in pred_by_id
     ]
 
+    policy_unmeasured = len(units) - len(all_matched_units)
+    inadmissible_policy_units: list[str] = []
     ranked_items: list[tuple[float, float, float]] = []
-    for u in adjudicated_e2:
+    for u in all_matched_units:
         p = pred_by_id[u.unit_id]
-        rec_arm = str(p.get("recommended_arm") or "none")
+        abstain = bool(p.get("abstain", False))
+        rec_arm = "none" if abstain else str(p.get("recommended_arm") or "none")
+        allowed_policy_arms = {"none", "P", "D", "S", "R_explicit"}
+        if u.rule_source == "explicit":
+            allowed_policy_arms.add("R_single")
+        if rec_arm not in allowed_policy_arms:
+            inadmissible_policy_units.append(u.unit_id)
+            continue
         prob_map = {
             "D": float(p.get("d_prob", 0.0)),
             "S": float(p.get("s_prob", p.get("d_prob", 0.0))),
@@ -1277,36 +1544,39 @@ def evaluate_analysts_v05(
             "R": float(p.get("r_prob", 0.0)),
             "R_single": float(p.get("r_prob", 0.0)),
         }
-        if p.get("abstain") or rec_arm == "none":
+        if rec_arm in ("none", "P"):
             priority = 0.0
+            gain_rate = 0.0
+            req_cost = 0.0
         else:
             priority = prob_map.get(rec_arm, 0.0) * u.deduction_weight
-
-        vec = u.e2_response_vector
-        if rec_arm == "none":
-            gain_rate = 0.0
-        else:
+            vec = u.e2_response_vector
             pair_k = f"{rec_arm}_vs_P"
             if pair_k in vec.pairwise_deltas:
-                gain_rate = max(0.0, float(vec.pairwise_deltas[pair_k]))
+                gain_rate = float(vec.pairwise_deltas[pair_k])
             elif rec_arm == "D" and vec.delta_D_vs_P is not None:
-                gain_rate = max(0.0, float(vec.delta_D_vs_P))
-            elif rec_arm in ("R", "R_single", "R_explicit", "R_implicit") and vec.delta_R_vs_P is not None:
-                gain_rate = max(0.0, float(vec.delta_R_vs_P))
+                gain_rate = float(vec.delta_D_vs_P)
+            elif rec_arm == "S" and vec.delta_S_vs_P is not None:
+                gain_rate = float(vec.delta_S_vs_P)
+            elif rec_arm == "R" and "R" in vec.arm_outcomes and vec.delta_R_vs_P is not None:
+                gain_rate = float(vec.delta_R_vs_P)
+            elif rec_arm in vec.arm_means and "P" in vec.arm_means:
+                gain_rate = vec.arm_means[rec_arm] - vec.arm_means["P"]
             else:
-                gain_rate = 0.0
+                policy_unmeasured += 1
+                continue
+            req_cost = float(p.get("verification_requests", cost_per_unit_requests))
 
         actual_gain = gain_rate * u.deduction_weight
-        req_cost = 0.0 if rec_arm == "none" else float(cost_per_unit_requests)
         ranked_items.append((priority, actual_gain, req_cost))
 
     ranked_items.sort(key=lambda x: -x[0])
     total_active_requests = sum(c for _, _, c in ranked_items)
-    total_actual_gain = sum(g for _, g, c in ranked_items if c > 0)
+    total_actual_gain = sum(g for _, g, c in ranked_items)
     utility_per_100_req = (total_actual_gain / total_active_requests * 100.0) if total_active_requests > 0 else 0.0
 
     # Cross-fitted diagnostic value ceiling (replaces in-sample max_possible_gain)
-    crossfit = compute_cross_fitted_diagnostic_value_ceiling(adjudicated_e2)
+    crossfit = compute_cross_fitted_diagnostic_value_ceiling(units)
 
     classes = (
         "delivery_responsive",
@@ -1321,6 +1591,8 @@ def evaluate_analysts_v05(
     f1_per_class: dict[str, float] = {}
 
     def _infer_label(p_row: dict[str, Any]) -> str:
+        if p_row.get("abstain", False):
+            return "abstain"
         lbl = p_row.get("predicted_label")
         if lbl:
             return str(lbl)
@@ -1363,7 +1635,10 @@ def evaluate_analysts_v05(
     weighted_acc = (correct_w / total_w) if total_w > 0 else 0.0
 
     non_abstained = [u for u in adjudicated_e2 if not pred_by_id[u.unit_id].get("abstain", False)]
-    coverage = (len(non_abstained) / len(adjudicated_e2)) if adjudicated_e2 else 0.0
+    coverage = (len(non_abstained) / len(units)) if units else 0.0
+    adjudicated_selective_coverage = len(non_abstained) / len(adjudicated_e2) if adjudicated_e2 else 0.0
+    all_non_abstained = [u for u in all_matched_units if not pred_by_id[u.unit_id].get("abstain", False)]
+    full_sample_coverage = (len(all_non_abstained) / len(units)) if units else 0.0
     sel_w = sum(u.deduction_weight for u in non_abstained)
     sel_correct_w = sum(
         u.deduction_weight for u in non_abstained
@@ -1437,14 +1712,29 @@ def evaluate_analysts_v05(
     return {
         "schema_version": V05_SCHEMA_VERSION,
         "proposition_ids": list(V3_PROPOSITIONS),
+        "total_input_unit_count": len(units),
+        "matched_prediction_unit_count": len(all_matched_units),
+        "missing_prediction_unit_count": len(units) - len(all_matched_units),
+        "abstained_unit_count": sum(bool(p.get("abstain")) for p in pred_by_id.values()),
         "adjudicated_e2_unit_count": len(adjudicated_e2),
+        "inconclusive_unit_count": len(inconclusive_units),
+        "plain_recoverable_unit_count": len(plain_recoverable_units),
+        "not_applicable_unit_count": len(not_applicable_units),
         "tier1_utility": {
             "utility_per_100_requests": round(utility_per_100_req, 6),
+            "unmeasured_policy_unit_count": policy_unmeasured,
+            "inadmissible_policy_unit_count": len(inadmissible_policy_units),
+            "inadmissible_policy_unit_ids": inadmissible_policy_units,
+            "measured_policy_unit_count": len(ranked_items),
+            "primary_policy_evaluation_complete": not policy_unmeasured and not inadmissible_policy_units,
+            "aggregate_scope": "observed_admissible_policy_units_only",
             "total_actual_deduction_recovered": round(total_actual_gain, 6),
             "total_verification_requests": round(total_active_requests, 2),
             "cross_fitted_ceiling": {
                 "unweighted_ceiling": crossfit["unweighted_ceiling"],
                 "deduction_weighted_ceiling": crossfit["deduction_weighted_ceiling"],
+                "unweighted_lb95": crossfit.get("unweighted_lb95", 0.0),
+                "deduction_weighted_lb95": crossfit.get("deduction_weighted_lb95", 0.0),
                 "passes_v3_p3_gate": crossfit["passes_v3_p3_gate"],
             },
         },
@@ -1453,7 +1743,15 @@ def evaluate_analysts_v05(
             "weighted_accuracy": round(weighted_acc, 6),
             "f1_by_class": {k: round(v, 6) for k, v in f1_per_class.items()},
             "coverage": round(coverage, 6),
+            "adjudicated_selective_coverage": adjudicated_selective_coverage,
+            "full_sample_coverage": round(full_sample_coverage, 6),
             "selective_weighted_accuracy": round(selective_weighted_acc, 6),
+        },
+        "tier2_attribution": {
+            "adjudicated_unit_count": len(adjudicated_e2),
+            "weighted_accuracy": (sum(u.deduction_weight for u in adjudicated_e2
+                if pred_by_id[u.unit_id].get("predicted_label") == u.operational_label) / total_w) if total_w else None,
+            "scope": "predicted_attribution_labels_including_hidden_rules_independent_of_policy_abstention",
         },
         "tier3_calibration": {
             "brier_score": round(brier_score, 6) if brier_score is not None else None,
@@ -1552,28 +1850,57 @@ def verify_normal_request_zero_diagnostic_leakage(
     request_payload: dict[str, Any],
     *,
     forbidden_phrases: Sequence[str] = (),
+    rubric_items: Sequence[str] = (),
+    task_instruction: str | None = None,
 ) -> dict[str, Any]:
-    """R21 (`V3-G4`): Verify that a normal L1 request or `P` arm continuation request contains
-    ZERO diagnostic leakage (no rule intervention prompts, no requirement lists, no verifier code).
+    """Scan diagnostic markers; a clean lexical scan cannot certify non-leakage.
+
+    Full verification requires the independent input-boundary provenance gate.
     """
-    raw_text = str(request_payload)
+    if not isinstance(request_payload, dict):
+        return {"zero_leakage": False, "zero_leakage_verified": False,
+                "status": "invalid_request", "leaked_markers": ["<invalid_non_dict_request_payload>"]}
+    try:
+        raw_text = json.dumps(request_payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return {"zero_leakage": False, "zero_leakage_verified": False,
+                "status": "invalid_request", "leaked_markers": ["<invalid_json_payload>"]}
     default_leak_markers = (
         DELIVER_INTERVENTION_MESSAGE[:20],
         DEFAULT_SELF_CHECK_DRAFT[:20],
         "请同时逐条核对以下任务明确要求",
         "请进一步逐条核对以下隐含格式与细则要求",
         "请重点核对并满足以下单项要求",
+        "请同时逐条核对以下全部要求",
         "_verifier.py",
         "def verify",
         "dim1_pass",
         "dim2_items",
+        "official_grade.json",
+        "defects.json",
+        "grades.jsonl",
+        "隐藏评分标准",
+        "shape_count",
+        "只允许有0.15cm的误差",
+        "=IFERROR(G",
+        "18cm–21cm",
+        "10.5至11.5磅",
     )
     leaked: list[str] = []
     for m in (*default_leak_markers, *forbidden_phrases):
         if m and m in raw_text:
             leaked.append(m)
+
+    instr_str = (task_instruction or "").strip()
+    for r_item in rubric_items:
+        r_clean = str(r_item).strip()
+        if len(r_clean) >= 8 and r_clean not in instr_str and r_clean in raw_text:
+            leaked.append(f"rubric_leak:{r_clean[:40]}")
+
     return {
-        "zero_leakage": len(leaked) == 0,
+        "zero_leakage": False if leaked else None,
+        "zero_leakage_verified": False,
+        "status": "suspected_leakage" if leaked else "clean_lexical_scan_only",
         "leaked_markers": leaked,
     }
 
@@ -1587,23 +1914,34 @@ def compute_ipw_recoverability_ratio(
 ) -> dict[str, Any]:
     """R11 (V3 §5.2 `V3-P1` & `V3-P2`): Horvitz-Thompson (HT) and Hajek inverse-probability
     weighted (IPW) estimators across the 3D stratified sampling frame with family-clustered bootstrap CIs.
+    Includes Level 0 (`P` plain_recoverable), Level 1 (`D`, `S`, `D ∨ S`, and `level1_net_over_P`),
+    and combined Level 0–1 (`P ∨ D ∨ S`).
     """
     valid = [r for r in sampled_rows if float(r.get("inclusion_prob", 0.0)) > 0.0]
     if not valid:
         return {
+            "input_count": len(sampled_rows),
+            "excluded_invalid_inclusion_count": len(sampled_rows),
             "sampled_count": 0,
+            "interval_status": "no_valid_sample",
+            "interval_estimand": "hajek_ratio",
+            "family_cluster_ci95_level0_1_combined": [0.0, 1.0],
+            "level0_1_combined_share_upper_bound_incl_inconclusive": 1.0,
             "ht_denom_never_deduction": 0.0,
+            "plain_recoverable_share_lower_bound": 0.0,
             "delivery_responsive_share_lower_bound": 0.0,
             "self_check_responsive_share_lower_bound": 0.0,
             "level1_generic_share_lower_bound": 0.0,
-            "delivery_responsive_share_upper_bound_incl_inconclusive": 0.0,
+            "level0_1_combined_share_lower_bound": 0.0,
+            "delivery_responsive_share_upper_bound_incl_inconclusive": 1.0,
             "rule_responsive_share_lower_bound": 0.0,
             "explicit_rule_responsive_share_lower_bound": 0.0,
             "implicit_rule_responsive_share_lower_bound": 0.0,
             "inconclusive_share": 0.0,
             "hajek_shares": {},
             "ht_shares": {},
-            "family_cluster_ci95_delivery": [0.0, 0.0],
+            "family_cluster_ci95_delivery": [0.0, 1.0],
+            "family_cluster_ci95_level1_generic": [0.0, 1.0],
         }
 
     def _calc(rows: Sequence[dict[str, Any]], denom_override: float | None = None) -> dict[str, float]:
@@ -1612,26 +1950,39 @@ def compute_ipw_recoverability_ratio(
         if denom <= 0:
             return {
                 "ht_denom": 0.0,
+                "p_ht": 0.0,
                 "d_ht": 0.0,
                 "s_ht": 0.0,
                 "lvl1_ht": 0.0,
+                "lvl01_ht": 0.0,
                 "d_ub_ht": 0.0,
                 "r_ht": 0.0,
                 "r_exp_ht": 0.0,
                 "r_imp_ht": 0.0,
                 "inc_ht": 0.0,
+                "p_hajek": 0.0,
                 "d_hajek": 0.0,
                 "s_hajek": 0.0,
                 "lvl1_hajek": 0.0,
+                "lvl01_hajek": 0.0,
                 "r_hajek": 0.0,
             }
 
         def _w_sum(pred) -> float:
             return sum(float(r["deduction"]) / float(r["inclusion_prob"]) for r in rows if pred(r))
 
+        p_num = _w_sum(lambda r: bool(r.get("recovered_by_P") or r.get("plain_recoverable")))
         d_num = _w_sum(lambda r: bool(r.get("recovered_by_D")))
         s_num = _w_sum(lambda r: bool(r.get("recovered_by_S")))
         lvl1_num = _w_sum(lambda r: bool(r.get("recovered_by_D") or r.get("recovered_by_S")))
+        lvl01_num = _w_sum(
+            lambda r: bool(
+                r.get("recovered_by_P")
+                or r.get("plain_recoverable")
+                or r.get("recovered_by_D")
+                or r.get("recovered_by_S")
+            )
+        )
         r_exp_num = _w_sum(lambda r: bool(r.get("recovered_by_R_explicit")))
         r_imp_num = _w_sum(lambda r: bool(r.get("recovered_by_R_implicit")))
         r_any_num = _w_sum(
@@ -1645,72 +1996,101 @@ def compute_ipw_recoverability_ratio(
 
         return {
             "ht_denom": ht_denom,
+            "p_ht": p_num / denom,
             "d_ht": d_num / denom,
             "s_ht": s_num / denom,
             "lvl1_ht": lvl1_num / denom,
+            "lvl01_ht": lvl01_num / denom,
             "d_ub_ht": (d_num + inc_num) / denom,
             "r_ht": r_any_num / denom,
             "r_exp_ht": r_exp_num / denom,
             "r_imp_ht": r_imp_num / denom,
             "inc_ht": inc_num / denom,
+            "p_hajek": p_num / ht_denom if ht_denom > 0 else 0.0,
             "d_hajek": d_num / ht_denom if ht_denom > 0 else 0.0,
             "s_hajek": s_num / ht_denom if ht_denom > 0 else 0.0,
             "lvl1_hajek": lvl1_num / ht_denom if ht_denom > 0 else 0.0,
+            "lvl01_hajek": lvl01_num / ht_denom if ht_denom > 0 else 0.0,
             "r_hajek": r_any_num / ht_denom if ht_denom > 0 else 0.0,
         }
 
     metrics = _calc(valid, total_never_deduction)
     ht_denom = metrics["ht_denom"]
     d_lb = metrics["d_ht"]
+    lvl1_lb = metrics["lvl1_ht"]
 
     by_fam: dict[str, list[dict[str, Any]]] = {}
     for r in valid:
-        fid = str(r.get("family_id") or r.get("task_id") or "default")
+        fid = str(r.get("family_id") or "__unknown__")
         by_fam.setdefault(fid, []).append(r)
     fams = sorted(by_fam.keys())
 
     if len(fams) <= 1:
-        ci_d = [round(d_lb, 6), round(d_lb, 6)]
+        ci_d = [0.0, 1.0]
+        ci_lvl1 = [0.0, 1.0]
+        ci_lvl01 = [0.0, 1.0]
     else:
         rng = random.Random(int(digest({"seed": seed, "n": len(valid), "fams": fams})[:16], 16))
-        boot_vals: list[float] = []
+        boot_vals_d: list[float] = []
+        boot_vals_lvl1: list[float] = []
+        boot_vals_lvl01: list[float] = []
         n_boot = 2000
         for _ in range(n_boot):
             sampled_fams = [rng.choice(fams) for _ in range(len(fams))]
             boot_rows = [item for f in sampled_fams for item in by_fam[f]]
             b_m = _calc(boot_rows, None)
-            boot_vals.append(b_m["d_hajek"])
-        boot_vals.sort()
+            boot_vals_d.append(b_m["d_hajek"])
+            boot_vals_lvl1.append(b_m["lvl1_hajek"])
+            boot_vals_lvl01.append(b_m["lvl01_hajek"])
+        boot_vals_d.sort()
+        boot_vals_lvl1.sort()
+        boot_vals_lvl01.sort()
         lo_idx = max(0, int(math.floor((alpha / 2.0) * (n_boot - 1))))
         hi_idx = min(n_boot - 1, int(math.ceil((1.0 - alpha / 2.0) * (n_boot - 1))))
-        ci_d = [round(boot_vals[lo_idx], 6), round(boot_vals[hi_idx], 6)]
+        ci_d = [round(boot_vals_d[lo_idx], 6), round(boot_vals_d[hi_idx], 6)]
+        ci_lvl1 = [round(boot_vals_lvl1[lo_idx], 6), round(boot_vals_lvl1[hi_idx], 6)]
+        ci_lvl01 = [round(boot_vals_lvl01[lo_idx], 6), round(boot_vals_lvl01[hi_idx], 6)]
 
     return {
+        "input_count": len(sampled_rows),
+        "excluded_invalid_inclusion_count": len(sampled_rows) - len(valid),
         "sampled_count": len(valid),
         "family_cluster_count": len(fams),
+        "family_ids_complete": all(r.get("family_id") for r in valid),
         "ht_denom_never_deduction": round(ht_denom, 6),
         "population_never_deduction_used": round(float(total_never_deduction or ht_denom), 6),
+        "plain_recoverable_share_lower_bound": round(metrics["p_ht"], 6),
         "delivery_responsive_share_lower_bound": round(metrics["d_ht"], 6),
         "self_check_responsive_share_lower_bound": round(metrics["s_ht"], 6),
         "level1_generic_share_lower_bound": round(metrics["lvl1_ht"], 6),
+        "level0_1_combined_share_lower_bound": round(metrics["lvl01_ht"], 6),
         "delivery_responsive_share_upper_bound_incl_inconclusive": round(metrics["d_ub_ht"], 6),
         "rule_responsive_share_lower_bound": round(metrics["r_ht"], 6),
         "explicit_rule_responsive_share_lower_bound": round(metrics["r_exp_ht"], 6),
         "implicit_rule_responsive_share_lower_bound": round(metrics["r_imp_ht"], 6),
         "inconclusive_share": round(metrics["inc_ht"], 6),
         "ht_shares": {
+            "P": round(metrics["p_ht"], 6),
             "D": round(metrics["d_ht"], 6),
             "S": round(metrics["s_ht"], 6),
             "level1_D_or_S": round(metrics["lvl1_ht"], 6),
+            "level0_or_1_P_D_S": round(metrics["lvl01_ht"], 6),
             "R_explicit": round(metrics["r_exp_ht"], 6),
             "R_implicit": round(metrics["r_imp_ht"], 6),
             "R_any": round(metrics["r_ht"], 6),
         },
         "hajek_shares": {
+            "P": round(metrics["p_hajek"], 6),
             "D": round(metrics["d_hajek"], 6),
             "S": round(metrics["s_hajek"], 6),
             "level1_D_or_S": round(metrics["lvl1_hajek"], 6),
+            "level0_or_1_P_D_S": round(metrics["lvl01_hajek"], 6),
             "R_any": round(metrics["r_hajek"], 6),
         },
         "family_cluster_ci95_delivery": ci_d,
+        "family_cluster_ci95_level1_generic": ci_lvl1,
+        "family_cluster_ci95_level0_1_combined": ci_lvl01,
+        "interval_estimand": "hajek_ratio_not_ht_population_ratio",
+        "interval_status": "descriptive_family_bootstrap" if len(fams) > 1 else "insufficient_families",
+        "level0_1_combined_share_upper_bound_incl_inconclusive": min(1.0, metrics["lvl01_ht"] + metrics["inc_ht"]),
     }

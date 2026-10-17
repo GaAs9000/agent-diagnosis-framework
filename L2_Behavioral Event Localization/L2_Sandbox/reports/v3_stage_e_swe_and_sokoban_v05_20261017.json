@@ -1,1 +1,154 @@
-{"lhtb_sokoban":{"benchmark":"lhtb_sokoban","broken_count":0,"checkpoint_count":63,"detector_coverage_note":"Static 2x2/corner deadlock detector is sound for corner deadlocks but incomplete for general Sokoban deadlocks.","episode_count":3,"episodes":[{"all_corner_deadlock_turns":[15,20],"broken_count":0,"e1_class":"never_succeeded_on_disk","episode_id":"run_seed42","evidence_status":"e1_pre_split_only_pending_intervention","first_deadlock_turn_post_reset":15,"first_deadlock_turn_pre_reset":15,"independent_state_damage":"corner_deadlock_detected","k_star":0,"max_band":0,"operational_label":null,"reset_turns":[6,10,12,14,16],"terminal_band":0,"terminal_passed":false},{"all_corner_deadlock_turns":[],"broken_count":0,"e1_class":"never_succeeded_on_disk","episode_id":"run_seed101","evidence_status":"e1_pre_split_only_pending_intervention","first_deadlock_turn_post_reset":null,"first_deadlock_turn_pre_reset":null,"independent_state_damage":"no_corner_deadlock_detected (incomplete_detector)","k_star":0,"max_band":0,"operational_label":null,"reset_turns":[10,18,20],"terminal_band":0,"terminal_passed":false},{"all_corner_deadlock_turns":[4,6,8,10,11,12,13],"broken_count":0,"e1_class":"never_succeeded_on_disk","episode_id":"run_seed2026","evidence_status":"e1_pre_split_only_pending_intervention","first_deadlock_turn_post_reset":6,"first_deadlock_turn_pre_reset":4,"independent_state_damage":"corner_deadlock_detected","k_star":0,"max_band":0,"operational_label":null,"reset_turns":[5,7,9,14,18],"terminal_band":0,"terminal_passed":false}],"independent_state_damage_corner_deadlock_count":2,"not_applicable_categories":["undelivered","delivery_responsive","rule_responsive"],"stage_status":"e1_pre_split_completed_pending_intervention_closure","terminal_snapshot_consistency":"3/3 (100%)"},"report_id":"V3_STAGE_E_MULTI_BENCHMARK_E1_PRE_SPLIT_20261017","revision":"R4_fact_grounded_20261017","stage_status":"E1 预拆完成，待补最小干预闭环（部分完成）","swebench_pro":{"benchmark":"swebench_pro","c3_l1_verified":true,"episode_id":"task2_s42_f27","fail_to_pass_passed_in_submitted_patch":["test/units/plugins/lookup/test_password.py::TestParseContent::test","test/units/plugins/lookup/test_password.py::TestParseContent::test_empty_password_file","test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt","test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt_and_ident"],"first_patch_write_turn":11,"in_candidate_regression_count":3,"in_candidate_regressions":["test/units/plugins/lookup/test_password.py::TestLookupModuleWithPasslib::test_encrypt","test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_no_encrypt","test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_only_a"],"pass_to_pass_passed_in_submitted_patch_count":23,"raw_grades_facts":{"cp000011":{"candidate":["submission/patch.diff"],"dim1_gate_deduction":0.9,"dim1_pass":false,"in_submission":true,"score":0.0},"cp000012":{"candidate":["submission/patch.diff"],"dim1_gate_deduction":0.9,"dim1_pass":false,"in_submission":true,"score":0.0},"terminal_submission":{"candidate":["submission/patch.diff"],"dim1_gate_deduction":0.9,"dim1_pass":false,"in_submission":true,"score":0.0}},"stage_status":"e1_pre_split_completed_pending_intervention_closure","submitted_patch_bytes":2038,"submitted_patch_sha256":"167b2c960afd2f6a60c86605eb7fa5d04249bbb56a91293f2a12992d3333f89b","terminal_broken_count":0,"terminal_submitted_dim1_failed_gate":1,"terminal_undelivered_count":0}}
+{
+  "report_id": "V3_STAGE_E_MULTI_BENCHMARK_E1_PRE_SPLIT_20261017",
+  "revision": "R4_fact_grounded_20261017",
+  "stage_status": "E1 预拆完成，待补最小干预闭环（部分完成）",
+  "swebench_pro": {
+    "benchmark": "swebench_pro",
+    "c3_l1_verified": true,
+    "episode_id": "task2_s42_f27",
+    "fail_to_pass_passed_in_submitted_patch": [
+      "test/units/plugins/lookup/test_password.py::TestParseContent::test",
+      "test/units/plugins/lookup/test_password.py::TestParseContent::test_empty_password_file",
+      "test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt",
+      "test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt_and_ident"
+    ],
+    "first_patch_write_turn": 11,
+    "in_candidate_regression_count": 3,
+    "in_candidate_regressions": [
+      "test/units/plugins/lookup/test_password.py::TestLookupModuleWithPasslib::test_encrypt",
+      "test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_no_encrypt",
+      "test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_only_a"
+    ],
+    "pass_to_pass_passed_in_submitted_patch_count": 23,
+    "raw_grades_facts": {
+      "cp000011": {
+        "candidate": [
+          "submission/patch.diff"
+        ],
+        "dim1_gate_deduction": 0.9,
+        "dim1_pass": false,
+        "in_submission": true,
+        "score": 0.0
+      },
+      "cp000012": {
+        "candidate": [
+          "submission/patch.diff"
+        ],
+        "dim1_gate_deduction": 0.9,
+        "dim1_pass": false,
+        "in_submission": true,
+        "score": 0.0
+      },
+      "terminal_submission": {
+        "candidate": [
+          "submission/patch.diff"
+        ],
+        "dim1_gate_deduction": 0.9,
+        "dim1_pass": false,
+        "in_submission": true,
+        "score": 0.0
+      }
+    },
+    "stage_status": "e1_pre_split_completed_pending_intervention_closure",
+    "submitted_patch_bytes": 2038,
+    "submitted_patch_sha256": "167b2c960afd2f6a60c86605eb7fa5d04249bbb56a91293f2a12992d3333f89b",
+    "terminal_broken_count": 0,
+    "terminal_submitted_dim1_failed_gate": 1,
+    "terminal_undelivered_count": 0
+  },
+  "lhtb_sokoban": {
+    "benchmark": "lhtb_sokoban",
+    "stage_status": "e1_pre_split_completed_pending_intervention_closure",
+    "episode_count": 3,
+    "checkpoint_count": 63,
+    "terminal_snapshot_consistency": "3/3 (100.0%)",
+    "not_applicable_categories": [
+      "undelivered",
+      "delivery_responsive",
+      "rule_responsive"
+    ],
+    "broken_count": 0,
+    "independent_state_damage_corner_deadlock_count": 2,
+    "detector_coverage_note": "Static 2x2/corner deadlock detector is sound for corner deadlocks but incomplete for general Sokoban deadlocks.",
+    "episodes": [
+      {
+        "episode_id": "run_seed42",
+        "k_star": 0,
+        "max_band": 0,
+        "terminal_band": 0,
+        "terminal_passed": false,
+        "e1_class": "never_succeeded_on_disk",
+        "broken_count": 0,
+        "independent_state_damage": "corner_deadlock_detected",
+        "first_deadlock_turn_overall": 15,
+        "first_deadlock_turn_pre_reset": null,
+        "first_deadlock_turn_post_reset": 15,
+        "reset_turns": [
+          6,
+          10,
+          12,
+          14,
+          16
+        ],
+        "all_corner_deadlock_turns": [
+          15,
+          20
+        ],
+        "operational_label": null,
+        "evidence_status": "e1_pre_split_only_pending_intervention"
+      },
+      {
+        "episode_id": "run_seed101",
+        "k_star": 0,
+        "max_band": 0,
+        "terminal_band": 0,
+        "terminal_passed": false,
+        "e1_class": "never_succeeded_on_disk",
+        "broken_count": 0,
+        "independent_state_damage": "no_corner_deadlock_detected (incomplete_detector)",
+        "first_deadlock_turn_overall": null,
+        "first_deadlock_turn_pre_reset": null,
+        "first_deadlock_turn_post_reset": null,
+        "reset_turns": [
+          10,
+          18,
+          20
+        ],
+        "all_corner_deadlock_turns": [],
+        "operational_label": null,
+        "evidence_status": "e1_pre_split_only_pending_intervention"
+      },
+      {
+        "episode_id": "run_seed2026",
+        "k_star": 0,
+        "max_band": 0,
+        "terminal_band": 0,
+        "terminal_passed": false,
+        "e1_class": "never_succeeded_on_disk",
+        "broken_count": 0,
+        "independent_state_damage": "corner_deadlock_detected",
+        "first_deadlock_turn_overall": 4,
+        "first_deadlock_turn_pre_reset": 4,
+        "first_deadlock_turn_post_reset": 6,
+        "reset_turns": [
+          5,
+          7,
+          9,
+          14,
+          18
+        ],
+        "all_corner_deadlock_turns": [
+          4,
+          6,
+          8,
+          10,
+          11,
+          12,
+          13
+        ],
+        "operational_label": null,
+        "evidence_status": "e1_pre_split_only_pending_intervention"
+      }
+    ]
+  }
+}

@@ -102,7 +102,7 @@ def test_r7_r8_nested_ladder_messages_whole_task_requirements_and_empty_ineligib
 def test_r10_v05_anchor_selection_budget_tail_and_voluntary_pre_finish():
     # Case 1: k* = 0, budget exhausted (termination="request_budget") -> budget_tail_no_candidate at k=29 (35-29=6)
     cps_no_cand = [
-        {"kind": "checkpoint", "k": k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
+        {"kind": "checkpoint", "k": k, "remaining_requests": 35-k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
         for k in range(36)
     ]
     res0 = select_v05_intervention_anchors(cps_no_cand, max_requests=35, r_b=6, termination="request_budget")
@@ -116,7 +116,7 @@ def test_r10_v05_anchor_selection_budget_tail_and_voluntary_pre_finish():
 
     # Case 2: Voluntary finish ("assistant_finished") after 14 requests with no candidate -> voluntary_pre_finish at k=14
     cps_vol = [
-        {"kind": "checkpoint", "k": k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
+        {"kind": "checkpoint", "k": k, "remaining_requests": 35-k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
         for k in range(15)
     ]
     res_vol = select_v05_intervention_anchors(cps_vol, max_requests=35, r_b=6, termination="assistant_finished")
@@ -126,11 +126,12 @@ def test_r10_v05_anchor_selection_budget_tail_and_voluntary_pre_finish():
     assert res_vol["primary_anchor_type"] == "voluntary_pre_finish"
     assert res_vol["primary_remaining_budget"] == 21
 
-    # Case 3: score-0 candidate written at k=18, voluntary finish at k=20 -> primary=18, voluntary_finish_anchor_k=20
+    # Case 3: score-0 candidate written at k=18, voluntary finish at k=20 -> primary=20 (voluntary_pre_finish), first_candidate_write_k=18
     cps_score0 = [
         {
             "kind": "checkpoint",
             "k": k,
+            "remaining_requests": 35-k,
             "candidate_status": "ok" if k >= 18 else "no_candidate",
             "score": 0.0,
             "cold_resume_eligible": True,
@@ -139,8 +140,9 @@ def test_r10_v05_anchor_selection_budget_tail_and_voluntary_pre_finish():
     ]
     res_s0 = select_v05_intervention_anchors(cps_score0, max_requests=35, r_b=6, termination="assistant_finished")
     assert res_s0["eligible"] is True
-    assert res_s0["primary_anchor_k"] == 18
-    assert res_s0["primary_anchor_type"] == "candidate_first_write"
+    assert res_s0["primary_anchor_k"] == 20
+    assert res_s0["primary_anchor_type"] == "voluntary_pre_finish"
+    assert res_s0["first_candidate_write_k"] == 18
     assert res_s0["voluntary_finish_anchor_k"] == 20
 
     # Case 4: Boundary check: remaining == r_b (eligible) vs remaining == r_b - 1 (ineligible)
@@ -217,11 +219,11 @@ def test_r9_adjudicate_e2_nested_ladder_regimes_and_edge_cases():
     vec_re, lbl_re, status_re = adjudicate_e2_outcomes(
         0.0,
         {
-            "P": [0.0] * 24,
-            "D": [0.0] * 24,
-            "S": [1.0] * 1 + [0.0] * 23,
-            "R_explicit": [1.0] * 19 + [0.0] * 5,
-            "R_implicit": [1.0] * 19 + [0.0] * 5,
+            "P": [0.0] * 96,
+            "D": [0.0] * 96,
+            "S": [1.0] * 4 + [0.0] * 92,
+            "R_explicit": [1.0] * 76 + [0.0] * 20,
+            "R_implicit": [1.0] * 76 + [0.0] * 20,
         },
         anchor_k=20,
         remaining_budget=15,
@@ -234,13 +236,13 @@ def test_r9_adjudicate_e2_nested_ladder_regimes_and_edge_cases():
     vec_ri, lbl_ri, status_ri = adjudicate_e2_outcomes(
         0.0,
         {
-            "P": [0.0] * 24,
-            "D": [0.0] * 24,
-            "S": [0.0] * 24,
-            "R_explicit": [1.0] * 1 + [0.0] * 23,
-            "R_implicit": [1.0] * 19 + [0.0] * 5,
-            "R_single": [1.0] * 1 + [0.0] * 23,
-            "R_all": [1.0] * 1 + [0.0] * 23,
+            "P": [0.0] * 96,
+            "D": [0.0] * 96,
+            "S": [0.0] * 96,
+            "R_explicit": [1.0] * 4 + [0.0] * 92,
+            "R_implicit": [1.0] * 76 + [0.0] * 20,
+            "R_single": [1.0] * 4 + [0.0] * 92,
+            "R_all": [1.0] * 4 + [0.0] * 92,
         },
         anchor_k=20,
         remaining_budget=15,
@@ -253,11 +255,11 @@ def test_r9_adjudicate_e2_nested_ladder_regimes_and_edge_cases():
     vec_u, lbl_u, status_u = adjudicate_e2_outcomes(
         0.0,
         {
-            "P": [0.0] * 24,
-            "D": [0.0] * 24,
-            "S": [0.0] * 24,
-            "R_explicit": [0.0] * 24,
-            "R_implicit": [0.0] * 24,
+            "P": [0.0] * 96,
+            "D": [0.0] * 96,
+            "S": [0.0] * 96,
+            "R_explicit": [0.0] * 96,
+            "R_implicit": [0.0] * 96,
         },
         anchor_k=29,
         remaining_budget=6,
@@ -416,7 +418,9 @@ def test_r13_cross_fitted_diagnostic_value_ceiling_disjoint_halves():
         )
     ceiling = compute_cross_fitted_diagnostic_value_ceiling(hom_units, ceiling_threshold=0.05)
     assert ceiling["folds_disjoint"] is True
-    assert set(ceiling["folds"][0]["train_unit_ids"]).isdisjoint(set(ceiling["folds"][0]["eval_unit_ids"]))
+    for row in ceiling["unit_evaluations"]:
+        for split in row["branch_split_indices"].values():
+            assert set(split["selection"]).isdisjoint(split["evaluation"])
     assert ceiling["unweighted_ceiling"] == pytest.approx(0.0)
     assert ceiling["deduction_weighted_ceiling"] == pytest.approx(0.0)
     assert ceiling["passes_v3_p3_gate"] is False
@@ -454,13 +458,16 @@ def test_r13_cross_fitted_diagnostic_value_ceiling_disjoint_halves():
     het_ceiling = compute_cross_fitted_diagnostic_value_ceiling(het_units, ceiling_threshold=0.05)
     assert het_ceiling["unweighted_ceiling"] == pytest.approx(0.45)
     assert het_ceiling["deduction_weighted_ceiling"] == pytest.approx(0.45)
-    assert het_ceiling["passes_v3_p3_gate"] is True
+    # Eight families cannot establish a strict .05 lower bound under conservative family inference.
+    assert het_ceiling["passes_v3_p3_gate"] is False
 
 
 def test_r21_normal_request_zero_diagnostic_leakage():
     clean_req = {"messages": [{"role": "user", "content": "请根据 workspace 中的数据生成季度报表 docx。"}]}
     res_clean = verify_normal_request_zero_diagnostic_leakage(clean_req)
-    assert res_clean["zero_leakage"] is True
+    assert res_clean["zero_leakage"] is None
+    assert res_clean["zero_leakage_verified"] is False
+    assert res_clean["status"] == "clean_lexical_scan_only"
     assert res_clean["leaked_markers"] == []
 
     leaky_req = {"messages": [{"role": "user", "content": "请同时逐条核对以下任务明确要求：officeval_070_verifier.py"}]}
@@ -485,7 +492,7 @@ def test_v05_analyst_evaluation_four_tier_metrics_without_insample_ceiling():
         anchor_k=24,
     )
     v_u, lbl_u, st_u = adjudicate_e2_outcomes(
-        0.0, {"P": [0.0] * 24, "D": [0.0] * 24, "S": [0.0] * 24, "R_explicit": [0.0] * 24}, anchor_k=29
+        0.0, {"P": [0.0] * 96, "D": [0.0] * 96, "S": [0.0] * 96, "R_explicit": [0.0] * 96}, anchor_k=29
     )
 
     units = [
@@ -635,3 +642,195 @@ def test_v05_sokoban_adaptation_boundary():
     )
     assert u_reg.operational_label == "broken"
     assert u_reg.e1_observation.e1_class == "broken"
+
+
+def test_r14b_reviewer_counterexample_r7_r8_strict_chain_hash_tamper_and_ambiguous_split():
+    # 1. S must start with D, R_explicit must start with S, R_implicit must start with R_explicit, R_single must start with S
+    msgs = build_ladder_intervention_messages(
+        explicit_requirements=["exp_rule_1"],
+        implicit_requirements=["imp_rule_1"],
+        ambiguous_requirements=[{
+            "visible_requirement": "相邻两条横线之间的距离几乎相等",
+            "exact_verifier_specification": "只允许有0.15cm的误差",
+        }],
+        single_rule_requirement="single_rule_1",
+    )
+    d_msg = msgs["D"]["message"]
+    s_msg = msgs["S"]["message"]
+    r_exp = msgs["R_explicit"]["message"]
+    r_imp = msgs["R_implicit"]["message"]
+    r_single = msgs["R_single"]["message"]
+
+    assert s_msg.startswith(d_msg)
+    assert s_msg != d_msg
+    assert r_exp.startswith(s_msg)
+    assert r_imp.startswith(r_exp)
+    assert r_single.startswith(s_msg)
+    assert verify_nested_ladder_messages(msgs)["valid"] is True
+
+    # Ambiguous visible requirement goes into R_explicit (without 0.15cm leak), exact tolerance goes into R_implicit
+    assert "相邻两条横线之间的距离几乎相等" in r_exp
+    assert "0.15cm" not in r_exp
+    assert "0.15cm" in r_imp
+
+    # 2. Tampering with R_implicit leaf message without updating hash MUST be rejected by verify_nested_ladder_messages
+    import copy
+    tampered = copy.deepcopy(msgs)
+    tampered["R_implicit"]["message"] = tampered["R_implicit"]["message"] + "\nTAMPERED"
+    tamper_check = verify_nested_ladder_messages(tampered)
+    assert tamper_check["valid"] is False
+    assert any("message_sha256 mismatch" in err for err in tamper_check["errors"])
+
+    # 3. Spoofing prefix_arm (e.g., setting R_explicit.prefix_arm = "D" when S is eligible, and not prefixing with S) MUST fail
+    spoofed = copy.deepcopy(msgs)
+    spoofed["R_explicit"]["prefix_arm"] = "D"
+    spoofed["R_explicit"]["message"] = f"{d_msg}\n\nspoof"
+    spoofed["R_explicit"]["message_sha256"] = sha256_text(spoofed["R_explicit"]["message"])
+    spoof_check = verify_nested_ladder_messages(spoofed)
+    assert spoof_check["valid"] is False
+    assert any("protocol requires 'S'" in err for err in spoof_check["errors"])
+
+
+def test_r14b_reviewer_counterexample_r9_delta_vs_tau_and_shifted_holm():
+    # Counterexample from review: P = 0/1000, D = 150/1000, delta = 0.10, tau = 0.20
+    # mean(D) - mean(P) = 0.15 > delta (0.10), LB95 = 0.132167 > delta (0.10), p_holm <= 0.05
+    # Must be adjudicated as `delivery_responsive`, NEVER `unrecovered_under_protocol`!
+    p = [0.0] * 1000
+    d = [1.0] * 150 + [0.0] * 850
+    vec, label, status = adjudicate_e2_outcomes(
+        0.0,
+        {"P": p, "D": d},
+        anchor_k=10,
+        delta=0.10,
+        tau=0.20,
+        alpha=0.05,
+    )
+    assert status == "adjudicated"
+    assert label == "delivery_responsive"
+    assert vec.pairwise_deltas["D_vs_P"] == pytest.approx(0.15)
+    assert vec.pairwise_lb95["D_vs_P"] > 0.10
+    assert vec.pairwise_p_holm["D_vs_P"] <= 0.05
+
+
+def test_r14b_reviewer_counterexample_r13_singleton_replicates_and_signed_gains():
+    # Counterexample 1: 2 units with only 1 outcome per arm ([0.0] and [1.0]) MUST be rejected as ineligible
+    # and NEVER reuse selection branch for evaluation to produce ceiling=1.0, gate=True!
+    u1_vec, u1_lbl, u1_st = adjudicate_e2_outcomes(0.0, {"P": [0.0], "D": [1.0], "R_explicit": [0.0]}, anchor_k=10)
+    u2_vec, u2_lbl, u2_st = adjudicate_e2_outcomes(0.0, {"P": [0.0], "D": [0.0], "R_explicit": [1.0]}, anchor_k=10)
+    singleton_units = [
+        DiagnosticUnitV05(
+            unit_id="u1",
+            episode_id="ep1",
+            task_id="t1",
+            benchmark="officeval",
+            unit_level="rubric_item",
+            defect_name="d1",
+            deduction_weight=1.0,
+            rule_source="explicit",
+            e1_observation=E1Observation("never_succeeded_on_disk", "no_candidate", 0, 0.0, 0.0, 1.0),
+            e2_response_vector=u1_vec,
+            operational_label=u1_lbl,
+            evidence_status=u1_st,
+        ),
+        DiagnosticUnitV05(
+            unit_id="u2",
+            episode_id="ep2",
+            task_id="t2",
+            benchmark="officeval",
+            unit_level="rubric_item",
+            defect_name="d2",
+            deduction_weight=1.0,
+            rule_source="explicit",
+            e1_observation=E1Observation("never_succeeded_on_disk", "no_candidate", 0, 0.0, 0.0, 1.0),
+            e2_response_vector=u2_vec,
+            operational_label=u2_lbl,
+            evidence_status=u2_st,
+        ),
+    ]
+    res_single = compute_cross_fitted_diagnostic_value_ceiling(singleton_units)
+    assert res_single["eligible_unit_count"] == 0
+    assert res_single["unweighted_ceiling"] == 0.0
+    assert res_single["deduction_weighted_ceiling"] == 0.0
+    assert res_single["passes_v3_p3_gate"] is False
+
+    # Counterexample 2: Signed evaluation gain when selected arm harms evaluation half (never clamped to 0.0)
+    # Unit where D has +0.5 on selection half [:6] and -0.5 on evaluation half [6:] relative to P=[0.5]*12
+    harm_units: list[DiagnosticUnitV05] = []
+    for i in range(4):
+        vec, lbl, st = adjudicate_e2_outcomes(
+            0.5,
+            {
+                "P": [0.5] * 12,
+                "D": [1.0] * 6 + [0.0] * 6,
+                "S": [0.5] * 12,
+            },
+            anchor_k=10,
+        )
+        harm_units.append(
+            DiagnosticUnitV05(
+                unit_id=f"harm_{i}",
+                episode_id=f"ep_h_{i}",
+                task_id=f"t_{i}",
+                benchmark="officeval",
+                unit_level="rubric_item",
+                defect_name="d",
+                deduction_weight=1.0,
+                rule_source="explicit",
+                e1_observation=E1Observation("never_succeeded_on_disk", "delivered_item_wrong", 10, 0.5, 0.5, 0.5),
+                e2_response_vector=vec,
+                operational_label=lbl,
+                evidence_status=st,
+            )
+        )
+    res_harm = compute_cross_fitted_diagnostic_value_ceiling(harm_units)
+    # D is selected on sel_half (+0.5 > 0.0), and its true eval_half gain is -0.5 (NOT clamped to 0.0!)
+    assert any(row["oracle_eval_gain"] == pytest.approx(-0.5) for row in res_harm["unit_evaluations"])
+    assert res_harm["passes_v3_p3_gate"] is False
+
+
+def test_r14b_analyst_negative_harm_not_clamped_and_full_sample_coverage():
+    v_harm, lbl_harm, st_harm = adjudicate_e2_outcomes(
+        0.5,
+        {"P": [1.0] * 12 + [0.0] * 12, "D": [0.0] * 24},
+        anchor_k=15,
+    )
+    # Force adjudicated label to test Analyst recommending harmful arm D (delta_D_vs_P = -0.5)
+    u_harm = DiagnosticUnitV05(
+        unit_id="u_harm",
+        episode_id="ep_h",
+        task_id="officeval_003",
+        benchmark="officeval",
+        unit_level="rubric_item",
+        defect_name="rule_1",
+        deduction_weight=1.0,
+        rule_source="explicit",
+        e1_observation=E1Observation("never_succeeded_on_disk", "delivered_item_wrong", 10, 0.5, 0.5, 1.0),
+        e2_response_vector=v_harm,
+        operational_label="unrecovered_under_protocol",
+        evidence_status="adjudicated",
+    )
+    u_inc = DiagnosticUnitV05(
+        unit_id="u_inc",
+        episode_id="ep_inc",
+        task_id="officeval_003",
+        benchmark="officeval",
+        unit_level="rubric_item",
+        defect_name="rule_2",
+        deduction_weight=1.0,
+        rule_source="explicit",
+        e1_observation=E1Observation("never_succeeded_on_disk", "delivered_item_wrong", 10, 0.0, 0.0, 1.0),
+        e2_response_vector=E2ResponseVector(evaluated=True),
+        operational_label=None,
+        evidence_status="inconclusive",
+    )
+    preds = [
+        {"unit_id": "u_harm", "recommended_arm": "D", "d_prob": 0.9, "abstain": False},
+        {"unit_id": "u_inc", "recommended_arm": "none", "d_prob": 0.1, "abstain": True},
+    ]
+    ev = evaluate_analysts_v05([u_harm, u_inc], preds)
+    assert ev["tier1_utility"]["total_actual_deduction_recovered"] == pytest.approx(-0.5)
+    assert ev["total_input_unit_count"] == 2
+    assert ev["adjudicated_e2_unit_count"] == 1
+    assert ev["inconclusive_unit_count"] == 1
+    assert ev["tier2_classification"]["coverage"] == pytest.approx(0.5)
+    assert ev["tier2_classification"]["full_sample_coverage"] == pytest.approx(0.5)
