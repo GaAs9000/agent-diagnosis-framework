@@ -323,3 +323,28 @@ def test_v05_sokoban_adaptation_and_r_all_message():
     msg = build_r_all_intervention_message(["文档表格中没有空白行", "所有横线间距误差不超过0.15cm"])
     assert "(1) 文档表格中没有空白行" in msg
     assert "(2) 所有横线间距误差不超过0.15cm" in msg
+
+
+def test_v05_ipw_recoverability_and_rule_non_leakage():
+    from l2_sandbox.v05 import compute_ipw_recoverability_ratio, verify_rule_prompt_non_leakage
+
+    clean_prompt = build_r_all_intervention_message(["文档表格中没有空白行"])
+    assert verify_rule_prompt_non_leakage(clean_prompt, forbidden_tokens=["row_idx", "cell_text"]) is True
+    leaky_prompt = "Check def verify_table in officeval_003_verifier.py and assert row_idx == 0"
+    assert verify_rule_prompt_non_leakage(leaky_prompt, forbidden_tokens=["row_idx"]) is False
+
+    sampled_rows = [
+        {"family_id": "fam1", "deduction": 1.0, "inclusion_prob": 0.5, "recovered_by_D": True, "recovered_by_R": False, "inconclusive": False},
+        {"family_id": "fam2", "deduction": 1.0, "inclusion_prob": 0.5, "recovered_by_D": False, "recovered_by_R": True, "inconclusive": False},
+        {"family_id": "fam3", "deduction": 2.0, "inclusion_prob": 1.0, "recovered_by_D": False, "recovered_by_R": False, "inconclusive": True},
+        {"family_id": "fam4", "deduction": 2.0, "inclusion_prob": 1.0, "recovered_by_D": False, "recovered_by_R": False, "inconclusive": False},
+    ]
+    # Total HT denominator = 1/0.5 + 1/0.5 + 2/1.0 + 2/1.0 = 8.0
+    # D numerator = 2.0 -> lower bound = 2/8 = 0.25, upper bound (incl inconclusive 2.0) = 4/8 = 0.50
+    res = compute_ipw_recoverability_ratio(sampled_rows, total_never_deduction=8.0)
+    assert res["ht_denom_never_deduction"] == pytest.approx(8.0)
+    assert res["delivery_responsive_share_lower_bound"] == pytest.approx(0.25)
+    assert res["delivery_responsive_share_upper_bound_incl_inconclusive"] == pytest.approx(0.50)
+    assert res["rule_responsive_share_lower_bound"] == pytest.approx(0.25)
+    assert res["inconclusive_share"] == pytest.approx(0.25)
+

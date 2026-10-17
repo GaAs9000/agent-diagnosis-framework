@@ -728,3 +728,121 @@ def build_sokoban_v05_unit(
         operational_label=op_label,
         evidence_status=ev_status,
     )
+
+
+def verify_rule_prompt_non_leakage(
+    rule_prompt: str,
+    *,
+    forbidden_tokens: Sequence[str] = (),
+) -> bool:
+    """Verify that a rule intervention prompt (`R` or `R_all`) does not leak internal
+    verifier variable names, function identifiers, or hidden test literals (V3 §3.3).
+    """
+    lower_p = rule_prompt.lower()
+    default_forbidden = (
+        "def verify",
+        "officeval_",
+        "_verifier.py",
+        "assert ",
+        "pytest",
+        "fail_to_pass",
+        "pass_to_pass",
+    )
+    for tok in (*default_forbidden, *forbidden_tokens):
+        if tok and tok.lower() in lower_p:
+            return False
+    return True
+
+
+def compute_ipw_recoverability_ratio(
+    sampled_rows: Sequence[dict[str, Any]],
+    *,
+    total_never_deduction: float | None = None,
+    alpha: float = 0.05,
+    seed: str = "l2-v05-ipw",
+) -> dict[str, Any]:
+    """Horvitz-Thompson / Hajek inverse-probability weighted (IPW) estimator for
+    population recoverability share with family-clustered bootstrap CIs (V3 §5.2).
+
+    Each item in `sampled_rows` should contain:
+      - `family_id`: str (cluster unit for bootstrap)
+      - `deduction`: float (d_{r,i})
+      - `inclusion_prob`: float (pi_{r,i} in (0, 1])
+      - `recovered_by_D`: bool (strict lower-bound confirmed delivery_responsive)
+      - `recovered_by_R`: bool (strict lower-bound confirmed rule_responsive)
+      - `inconclusive`: bool (confidence interval straddles [delta, tau])
+    """
+    valid = [r for r in sampled_rows if float(r.get("inclusion_prob", 0.0)) > 0.0]
+    if not valid:
+        return {
+            "sampled_count": 0,
+            "ht_denom_never_deduction": 0.0,
+            "delivery_responsive_share_lower_bound": 0.0,
+            "delivery_responsive_share_upper_bound_incl_inconclusive": 0.0,
+            "rule_responsive_share_lower_bound": 0.0,
+            "inconclusive_share": 0.0,
+            "family_cluster_ci95_delivery": [0.0, 0.0],
+        }
+
+    def _calc(rows: Sequence[dict[str, Any]], denom_override: float | None = None) -> tuple[float, float, float, float, float]:
+        ht_denom = sum(float(r["deduction"]) / float(r["inclusion_prob"]) for r in rows)
+        denom = float(denom_override) if (denom_override is not None and denom_override > 0) else ht_denom
+        if denom <= 0:
+            return 0.0, 0.0, 0.0, 0.0, 0.0
+        d_num = sum(
+            float(r["deduction"]) / float(r["inclusion_prob"])
+            for r in rows if bool(r.get("recovered_by_D"))
+        )
+        r_num = sum(
+            float(r["deduction"]) / float(r["inclusion_prob"])
+            for r in rows if bool(r.get("recovered_by_R"))
+        )
+        inc_num = sum(
+            float(r["deduction"]) / float(r["inclusion_prob"])
+            for r in rows if bool(r.get("inconclusive"))
+        )
+        return (
+            ht_denom,
+            d_num / denom,
+            (d_num + inc_num) / denom,
+            r_num / denom,
+            inc_num / denom,
+        )
+
+    ht_denom, d_lb, d_ub, r_lb, inc_sh = _calc(valid, total_never_deduction)
+
+    # Family-clustered bootstrap (using Hajek ratio within each bootstrap resample)
+    by_fam: dict[str, list[dict[str, Any]]] = {}
+    for r in valid:
+        fid = str(r.get("family_id") or r.get("task_id") or "default")
+        by_fam.setdefault(fid, []).append(r)
+    fams = sorted(by_fam.keys())
+
+    if len(fams) <= 1:
+        ci_d = [round(d_lb, 6), round(d_lb, 6)]
+    else:
+        rng = random.Random(int(digest({"seed": seed, "n": len(valid), "fams": fams})[:16], 16))
+        boot_vals: list[float] = []
+        n_boot = 2000
+        for _ in range(n_boot):
+            sampled_fams = [rng.choice(fams) for _ in range(len(fams))]
+            boot_rows = [item for f in sampled_fams for item in by_fam[f]]
+            _, b_d_lb, _, _, _ = _calc(boot_rows, None)
+            boot_vals.append(b_d_lb)
+        boot_vals.sort()
+        lo_idx = max(0, int(math.floor((alpha / 2.0) * (n_boot - 1))))
+        hi_idx = min(n_boot - 1, int(math.ceil((1.0 - alpha / 2.0) * (n_boot - 1))))
+        ci_d = [round(boot_vals[lo_idx], 6), round(boot_vals[hi_idx], 6)]
+
+    return {
+        "sampled_count": len(valid),
+        "family_cluster_count": len(fams),
+        "ht_denom_never_deduction": round(ht_denom, 6),
+        "population_never_deduction_used": round(float(total_never_deduction or ht_denom), 6),
+        "delivery_responsive_share_lower_bound": round(d_lb, 6),
+        "delivery_responsive_share_upper_bound_incl_inconclusive": round(d_ub, 6),
+        "rule_responsive_share_lower_bound": round(r_lb, 6),
+        "inconclusive_share": round(inc_sh, 6),
+        "family_cluster_ci95_delivery": ci_d,
+    }
+
