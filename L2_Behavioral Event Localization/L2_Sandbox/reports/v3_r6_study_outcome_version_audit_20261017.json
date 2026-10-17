@@ -1,0 +1,248 @@
+{
+  "generated_at": "2026-10-17T14:25:27.435827+00:00",
+  "default_rule_version": "v1.1",
+  "supported_rule_versions": [
+    "v1.0",
+    "v1.1"
+  ],
+  "added_in_v1_1": [
+    "AttributeError: 'NoneType' object has no attribute 'val'"
+  ],
+  "raw_official_grade_files_modified": false,
+  "total_affected_packages_across_cohorts": 1,
+  "cohorts": [
+    {
+      "cohort_id": "qwen36_pi_p1_pilot_20261017/episodes",
+      "exists": true,
+      "total_packages": 9,
+      "v1_0": {
+        "valid_count": 8,
+        "valid_zero_count": 2,
+        "invalid_count": 1,
+        "mean_score": 0.411364
+      },
+      "v1_1": {
+        "valid_count": 9,
+        "valid_zero_count": 3,
+        "invalid_count": 0,
+        "mean_score": 0.365657
+      },
+      "affected_count": 1,
+      "affected_episodes": [
+        {
+          "episode_id": "officeval_070.r02",
+          "path": "L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_070.r02",
+          "native_error": "AttributeError: 'NoneType' object has no attribute 'val'",
+          "v1_0": {
+            "study_valid": false,
+            "study_outcome_y": null,
+            "zero_reason": null,
+            "study_classification": "unhealthy_or_ambiguous_official_error",
+            "endpoint_version": "study-outcome-v1",
+            "rule_version": "v1.0",
+            "native_evaluation_validity": "invalid",
+            "native_projection_evaluation_validity": "invalid",
+            "native_status": "error",
+            "native_error": "AttributeError: 'NoneType' object has no attribute 'val'"
+          },
+          "v1_1": {
+            "study_valid": true,
+            "study_outcome_y": 0.0,
+            "zero_reason": "missing_or_damaged_delivery",
+            "study_classification": "valid_zero",
+            "endpoint_version": "study-outcome-v1",
+            "rule_version": "v1.1",
+            "native_evaluation_validity": "invalid",
+            "native_projection_evaluation_validity": "invalid",
+            "native_status": "error",
+            "native_error": "AttributeError: 'NoneType' object has no attribute 'val'"
+          }
+        }
+      ]
+    },
+    {
+      "cohort_id": "qwen36_pi_p1_pilot_20261017/v3_g1_cold_resume",
+      "exists": true,
+      "total_packages": 7,
+      "v1_0": {
+        "valid_count": 7,
+        "valid_zero_count": 5,
+        "invalid_count": 0,
+        "mean_score": 0.135065
+      },
+      "v1_1": {
+        "valid_count": 7,
+        "valid_zero_count": 5,
+        "invalid_count": 0,
+        "mean_score": 0.135065
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "v3_qwen36_pi_dev45_20261017/episodes",
+      "exists": true,
+      "total_packages": 31,
+      "v1_0": {
+        "valid_count": 29,
+        "valid_zero_count": 13,
+        "invalid_count": 2,
+        "mean_score": 0.210391
+      },
+      "v1_1": {
+        "valid_count": 29,
+        "valid_zero_count": 13,
+        "invalid_count": 2,
+        "mean_score": 0.210391
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "v3_qwen36_pi_dev45_20261017/failed_attempts",
+      "exists": true,
+      "total_packages": 10,
+      "v1_0": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 10,
+        "mean_score": null
+      },
+      "v1_1": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 10,
+        "mean_score": null
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "v3_qwen36_pi_dev45_20261017/v3_g2_c0_resumes",
+      "exists": false,
+      "total_packages": 0,
+      "v1_0": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "v1_1": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "deepseek_dev45_20261015/runs",
+      "exists": true,
+      "total_packages": 0,
+      "v1_0": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "v1_1": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "deepseek_holdout45_20261017/runs",
+      "exists": true,
+      "total_packages": 0,
+      "v1_0": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "v1_1": {
+        "valid_count": 0,
+        "valid_zero_count": 0,
+        "invalid_count": 0,
+        "mean_score": null
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "swebench_pro_f27_live_20261017",
+      "exists": true,
+      "total_packages": 1,
+      "v1_0": {
+        "valid_count": 1,
+        "valid_zero_count": 1,
+        "invalid_count": 0,
+        "mean_score": 0.0
+      },
+      "v1_1": {
+        "valid_count": 1,
+        "valid_zero_count": 1,
+        "invalid_count": 0,
+        "mean_score": 0.0
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    },
+    {
+      "cohort_id": "lhtb_sokoban_qwen36_cohort",
+      "exists": true,
+      "total_packages": 3,
+      "v1_0": {
+        "valid_count": 3,
+        "valid_zero_count": 3,
+        "invalid_count": 0,
+        "mean_score": 0.0
+      },
+      "v1_1": {
+        "valid_count": 3,
+        "valid_zero_count": 3,
+        "invalid_count": 0,
+        "mean_score": 0.0
+      },
+      "affected_count": 0,
+      "affected_episodes": []
+    }
+  ],
+  "affected_packages": [
+    {
+      "cohort_id": "qwen36_pi_p1_pilot_20261017/episodes",
+      "episode_id": "officeval_070.r02",
+      "path": "L1_sandbox/C3_Experimental_Sandbox/runs/qwen36_pi_p1_pilot_20261017/episodes/officeval_070.r02",
+      "native_error": "AttributeError: 'NoneType' object has no attribute 'val'",
+      "v1_0": {
+        "study_valid": false,
+        "study_outcome_y": null,
+        "zero_reason": null,
+        "study_classification": "unhealthy_or_ambiguous_official_error",
+        "endpoint_version": "study-outcome-v1",
+        "rule_version": "v1.0",
+        "native_evaluation_validity": "invalid",
+        "native_projection_evaluation_validity": "invalid",
+        "native_status": "error",
+        "native_error": "AttributeError: 'NoneType' object has no attribute 'val'"
+      },
+      "v1_1": {
+        "study_valid": true,
+        "study_outcome_y": 0.0,
+        "zero_reason": "missing_or_damaged_delivery",
+        "study_classification": "valid_zero",
+        "endpoint_version": "study-outcome-v1",
+        "rule_version": "v1.1",
+        "native_evaluation_validity": "invalid",
+        "native_projection_evaluation_validity": "invalid",
+        "native_status": "error",
+        "native_error": "AttributeError: 'NoneType' object has no attribute 'val'"
+      }
+    }
+  ]
+}

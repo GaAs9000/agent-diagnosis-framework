@@ -1,0 +1,52 @@
+{
+  "schema_version": "l2-0.5.1-v3-ladder",
+  "generated_at": "2026-10-17T14:25:32.256046+00:00",
+  "V3_G2_R19": {
+    "gate_id": "V3-G2",
+    "work_item": "R19",
+    "cp000000_pre_first_request_verified_count": 29,
+    "cp000000_all_pre_first_request_valid": true,
+    "target_pairs": 20,
+    "completed_valid_pairs": 0,
+    "mean_diff_resume_minus_fresh": null,
+    "ci95_diff_resume_minus_fresh": null,
+    "equivalence_margin": 0.05,
+    "ci95_completely_inside_pm_005": false,
+    "status": "undecided_pending_pairs_or_ci",
+    "pairs": []
+  },
+  "V3_G3_R20": {
+    "gate_id": "V3-G3",
+    "work_item": "R20",
+    "auto_terminal_consistency": {
+      "p1_pilot_matched": "9/9",
+      "new_dev45_graded_episodes": 5,
+      "new_dev45_matched_episodes": 5,
+      "match_rate": 1.0
+    },
+    "manual_inspection_sheet_path": "L2_Behavioral Event Localization/L2_Sandbox/docs/V3_G3_NEW_DEV45_MANUAL_AUDIT_SHEET_20261017.md",
+    "checkpoint_pool_size": 516,
+    "sampled_checkpoint_count": 20,
+    "human_review_completed_count": 0,
+    "status": "pending_human_review"
+  },
+  "V3_G4_R21": {
+    "gate_id": "V3-G4",
+    "work_item": "R21",
+    "episodes_scanned": 47,
+    "normal_and_p_requests_scanned": 657,
+    "leaked_request_count": 0,
+    "zero_diagnostic_leakage_verified_on_scanned": true,
+    "leaked_requests": [],
+    "snapshot_grading_cache_stats": {
+      "total_checkpoints_graded_in_diag_dirs": 170,
+      "no_candidate_instant_zero_checkpoints": 170,
+      "unique_candidate_verifier_invocations": 0,
+      "sha256_dedup_cache_hits": 0,
+      "effective_verifier_skip_rate": 1.0,
+      "p1_grade_cache_entries": 0,
+      "dev45_grade_cache_entries": 0
+    },
+    "status": "verified_on_completed_normal_requests_pending_d1_p_arm"
+  }
+}

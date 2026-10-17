@@ -1,0 +1,1151 @@
+{
+  "schema_version": "l2-0.5.1-v3-ladder",
+  "stage": "D1",
+  "mode": "plan_only",
+  "generated_at": "2026-10-17T14:26:29.110611+00:00",
+  "note": "Development-set descriptive planning artifact (R15, R18). Does NOT initiate any Actor or Analyst requests until D0 is frozen and user confirms --execute --d0-confirmed.",
+  "source_dataset": {
+    "dataset_id": "v3_qwen36_pi_dev45_20261017",
+    "runs_dir": "/Users/jiashen/Desktop/问题诊断/L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_20261017/episodes",
+    "scanned_valid_episodes": 29,
+    "episode_ids": [
+      "officeval_003.r00",
+      "officeval_003.r01",
+      "officeval_003.r02",
+      "officeval_003.r03",
+      "officeval_004.r00",
+      "officeval_004.r01",
+      "officeval_004.r03",
+      "officeval_010.r01",
+      "officeval_010.r02",
+      "officeval_033.r00",
+      "officeval_033.r01",
+      "officeval_033.r02",
+      "officeval_033.r03",
+      "officeval_050.r00",
+      "officeval_050.r01",
+      "officeval_050.r02",
+      "officeval_060.r00",
+      "officeval_060.r01",
+      "officeval_060.r02",
+      "officeval_060.r03",
+      "officeval_070.r00",
+      "officeval_070.r01",
+      "officeval_070.r02",
+      "officeval_085.r00",
+      "officeval_085.r01",
+      "officeval_085.r02",
+      "officeval_090.r00",
+      "officeval_090.r01",
+      "officeval_090.r02"
+    ]
+  },
+  "d0_candidate_parameters": {
+    "n_per_arm": 12,
+    "r_b": 6,
+    "delta": 0.1,
+    "tau": 0.2,
+    "alpha": 0.05,
+    "self_check_S_draft": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+    "self_check_S_status": "D0_CANDIDATE_PENDING_USER_CONFIRMATION"
+  },
+  "stratified_sampling_frame": {
+    "schema_version": "l2-0.5.1-v3-ladder",
+    "dataset_id": "v3_qwen36_pi_dev45_20261017",
+    "actor_model": "Qwen/Qwen3.6-27B",
+    "stratification_axes": [
+      "exhausted_budget",
+      "valid_delivery",
+      "rule_source"
+    ],
+    "total_eligible_never_units": 308,
+    "total_sampled_units": 9,
+    "strata": {
+      "exhausted__valid_delivery__ambiguous": {
+        "population_count": 36,
+        "sampled_count": 3,
+        "inclusion_prob": 0.083333,
+        "population_deduction": 1.705883,
+        "sampled_unit_ids": [
+          "officeval_010.r02::ITEM::21",
+          "officeval_033.r00::ITEM::1",
+          "officeval_033.r00::ITEM::4"
+        ]
+      },
+      "voluntary__no_valid_delivery__gate_or_no_artifact": {
+        "population_count": 3,
+        "sampled_count": 3,
+        "inclusion_prob": 1.0,
+        "population_deduction": 3.0,
+        "sampled_unit_ids": [
+          "officeval_085.r00::GATE_NO_VALID_DELIVERY",
+          "officeval_085.r01::GATE_NO_VALID_DELIVERY",
+          "officeval_085.r02::GATE_NO_VALID_DELIVERY"
+        ]
+      },
+      "voluntary__valid_delivery__ambiguous": {
+        "population_count": 269,
+        "sampled_count": 3,
+        "inclusion_prob": 0.011152,
+        "population_deduction": 18.192785,
+        "sampled_unit_ids": [
+          "officeval_010.r01::ITEM::2",
+          "officeval_050.r00::ITEM::1",
+          "officeval_050.r00::ITEM::43"
+        ]
+      }
+    },
+    "sampled_units": [
+      {
+        "unit_id": "officeval_010.r02::ITEM::21",
+        "episode_id": "officeval_010.r02",
+        "task_id": "officeval_010",
+        "stratum_id": "exhausted__valid_delivery__ambiguous",
+        "exhausted_budget": true,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.033333,
+        "stratum_population_size": 36,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.083333,
+        "anchor_k": 29
+      },
+      {
+        "unit_id": "officeval_033.r00::ITEM::1",
+        "episode_id": "officeval_033.r00",
+        "task_id": "officeval_033",
+        "stratum_id": "exhausted__valid_delivery__ambiguous",
+        "exhausted_budget": true,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.294118,
+        "stratum_population_size": 36,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.083333,
+        "anchor_k": 9
+      },
+      {
+        "unit_id": "officeval_033.r00::ITEM::4",
+        "episode_id": "officeval_033.r00",
+        "task_id": "officeval_033",
+        "stratum_id": "exhausted__valid_delivery__ambiguous",
+        "exhausted_budget": true,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.058824,
+        "stratum_population_size": 36,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.083333,
+        "anchor_k": 9
+      },
+      {
+        "unit_id": "officeval_085.r00::GATE_NO_VALID_DELIVERY",
+        "episode_id": "officeval_085.r00",
+        "task_id": "officeval_085",
+        "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+        "exhausted_budget": false,
+        "valid_delivery": false,
+        "rule_source": "gate_or_no_artifact",
+        "deduction_weight": 1.0,
+        "stratum_population_size": 3,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 1.0,
+        "anchor_k": 18
+      },
+      {
+        "unit_id": "officeval_085.r01::GATE_NO_VALID_DELIVERY",
+        "episode_id": "officeval_085.r01",
+        "task_id": "officeval_085",
+        "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+        "exhausted_budget": false,
+        "valid_delivery": false,
+        "rule_source": "gate_or_no_artifact",
+        "deduction_weight": 1.0,
+        "stratum_population_size": 3,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 1.0,
+        "anchor_k": 15
+      },
+      {
+        "unit_id": "officeval_085.r02::GATE_NO_VALID_DELIVERY",
+        "episode_id": "officeval_085.r02",
+        "task_id": "officeval_085",
+        "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+        "exhausted_budget": false,
+        "valid_delivery": false,
+        "rule_source": "gate_or_no_artifact",
+        "deduction_weight": 1.0,
+        "stratum_population_size": 3,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 1.0,
+        "anchor_k": 12
+      },
+      {
+        "unit_id": "officeval_010.r01::ITEM::2",
+        "episode_id": "officeval_010.r01",
+        "task_id": "officeval_010",
+        "stratum_id": "voluntary__valid_delivery__ambiguous",
+        "exhausted_budget": false,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.011111,
+        "stratum_population_size": 269,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.011152,
+        "anchor_k": 22
+      },
+      {
+        "unit_id": "officeval_050.r00::ITEM::1",
+        "episode_id": "officeval_050.r00",
+        "task_id": "officeval_050",
+        "stratum_id": "voluntary__valid_delivery__ambiguous",
+        "exhausted_budget": false,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.01,
+        "stratum_population_size": 269,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.011152,
+        "anchor_k": 17
+      },
+      {
+        "unit_id": "officeval_050.r00::ITEM::43",
+        "episode_id": "officeval_050.r00",
+        "task_id": "officeval_050",
+        "stratum_id": "voluntary__valid_delivery__ambiguous",
+        "exhausted_budget": false,
+        "valid_delivery": true,
+        "rule_source": "ambiguous",
+        "deduction_weight": 0.03,
+        "stratum_population_size": 269,
+        "stratum_sample_size": 3,
+        "inclusion_prob": 0.011152,
+        "anchor_k": 17
+      }
+    ]
+  },
+  "r12_passing_harm_check_plan": {
+    "candidate_pool_size": 17,
+    "sampled_passing_unit_count": 4,
+    "sampled_passing_units": [
+      {
+        "unit_id": "officeval_004.r00::PASSING_ITEM::0",
+        "episode_id": "officeval_004.r00",
+        "task_id": "officeval_004",
+        "rule": "实习报告文档第1页“实习报告”采用宋体、二号、加粗",
+        "terminal_score_y": 1.0,
+        "anchor_k": 13,
+        "remaining_budget": 22,
+        "arms": [
+          "P",
+          "D",
+          "S"
+        ]
+      },
+      {
+        "unit_id": "officeval_004.r00::PASSING_ITEM::1",
+        "episode_id": "officeval_004.r00",
+        "task_id": "officeval_004",
+        "rule": "实习报告文档第1页“实习单位：合润童悦幼儿园”、“实习日期：2025年10月20日至2025年12月26日”文本字体为宋体四号，数字用Times New Roman，四号；居中对齐",
+        "terminal_score_y": 1.0,
+        "anchor_k": 13,
+        "remaining_budget": 22,
+        "arms": [
+          "P",
+          "D",
+          "S"
+        ]
+      },
+      {
+        "unit_id": "officeval_004.r00::PASSING_ITEM::2",
+        "episode_id": "officeval_004.r00",
+        "task_id": "officeval_004",
+        "rule": "实习报告文档第1页“关于在合润童悦幼儿园开展学前教育实践的报告”文本字体为黑体三号、加粗",
+        "terminal_score_y": 1.0,
+        "anchor_k": 13,
+        "remaining_budget": 22,
+        "arms": [
+          "P",
+          "D",
+          "S"
+        ]
+      },
+      {
+        "unit_id": "officeval_004.r00::PASSING_ITEM::4",
+        "episode_id": "officeval_004.r00",
+        "task_id": "officeval_004",
+        "rule": "实习报告文档中序号格式“一、”、“二、”等标题，字体采用黑体小三、加粗",
+        "terminal_score_y": 1.0,
+        "anchor_k": 13,
+        "remaining_budget": 22,
+        "arms": [
+          "P",
+          "D",
+          "S"
+        ]
+      }
+    ],
+    "planned_branches": 144,
+    "max_requests_cap": 3168
+  },
+  "task_ladder_message_specs": {
+    "officeval_003": {
+      "task_id": "officeval_003",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_004": {
+      "task_id": "officeval_004",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_010": {
+      "task_id": "officeval_010",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_033": {
+      "task_id": "officeval_033",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_050": {
+      "task_id": "officeval_050",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_060": {
+      "task_id": "officeval_060",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_070": {
+      "task_id": "officeval_070",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_085": {
+      "task_id": "officeval_085",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    },
+    "officeval_090": {
+      "task_id": "officeval_090",
+      "explicit_count": 0,
+      "implicit_count": 0,
+      "ambiguous_count": 0,
+      "ladder_messages": {
+        "P": {
+          "arm": "P",
+          "level": 0,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": null
+        },
+        "D": {
+          "arm": "D",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "请现在就把目前最好的成果按任务要求保存为最终交付物，之后再决定是否继续改进。",
+          "message_sha256": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "prefix_arm": "P"
+        },
+        "S": {
+          "arm": "S",
+          "level": 1,
+          "eligible": true,
+          "evidence_status": "eligible",
+          "message": "在结束任务前，请先对照原始任务要求和输入材料完整自查一遍当前工作区与 /workspace/submission 中的结果，确认所有要求的内容、格式与文件均已正确完成并保存；如有遗漏或问题请先修正后再结束。",
+          "message_sha256": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "prefix_arm": "P"
+        },
+        "R_explicit": {
+          "arm": "R_explicit",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        },
+        "R_implicit": {
+          "arm": "R_implicit",
+          "level": 3,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "R_explicit"
+        },
+        "R_single": {
+          "arm": "R_single",
+          "level": 2,
+          "eligible": false,
+          "evidence_status": "ineligible",
+          "message": null,
+          "message_sha256": null,
+          "prefix_arm": "D"
+        }
+      },
+      "nesting_check": {
+        "valid": true,
+        "errors": [],
+        "hashes": {
+          "P": null,
+          "D": "c4283db690fcf8ede33f394692457da4245211fe79e64e38683de8b6a2a362fd",
+          "S": "89dc10cfa7e6955fc03d78890d07657f2540d1aef0d56c9d9362c6ec98e235a1",
+          "R_explicit": null,
+          "R_implicit": null,
+          "R_single": null
+        }
+      }
+    }
+  },
+  "unit_schedules": [
+    {
+      "unit_id": "officeval_010.r02::ITEM::21",
+      "task_id": "officeval_010",
+      "stratum_id": "exhausted__valid_delivery__ambiguous",
+      "inclusion_prob": 0.083333,
+      "anchor_k": 29,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    },
+    {
+      "unit_id": "officeval_033.r00::ITEM::1",
+      "task_id": "officeval_033",
+      "stratum_id": "exhausted__valid_delivery__ambiguous",
+      "inclusion_prob": 0.083333,
+      "anchor_k": 9,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    },
+    {
+      "unit_id": "officeval_033.r00::ITEM::4",
+      "task_id": "officeval_033",
+      "stratum_id": "exhausted__valid_delivery__ambiguous",
+      "inclusion_prob": 0.083333,
+      "anchor_k": 9,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    },
+    {
+      "unit_id": "officeval_085.r00::GATE_NO_VALID_DELIVERY",
+      "task_id": "officeval_085",
+      "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+      "inclusion_prob": 1.0,
+      "anchor_k": 18,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 36,
+      "max_requests_cap": 216
+    },
+    {
+      "unit_id": "officeval_085.r01::GATE_NO_VALID_DELIVERY",
+      "task_id": "officeval_085",
+      "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+      "inclusion_prob": 1.0,
+      "anchor_k": 15,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 36,
+      "max_requests_cap": 216
+    },
+    {
+      "unit_id": "officeval_085.r02::GATE_NO_VALID_DELIVERY",
+      "task_id": "officeval_085",
+      "stratum_id": "voluntary__no_valid_delivery__gate_or_no_artifact",
+      "inclusion_prob": 1.0,
+      "anchor_k": 12,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 36,
+      "max_requests_cap": 216
+    },
+    {
+      "unit_id": "officeval_010.r01::ITEM::2",
+      "task_id": "officeval_010",
+      "stratum_id": "voluntary__valid_delivery__ambiguous",
+      "inclusion_prob": 0.011152,
+      "anchor_k": 22,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    },
+    {
+      "unit_id": "officeval_050.r00::ITEM::1",
+      "task_id": "officeval_050",
+      "stratum_id": "voluntary__valid_delivery__ambiguous",
+      "inclusion_prob": 0.011152,
+      "anchor_k": 17,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    },
+    {
+      "unit_id": "officeval_050.r00::ITEM::43",
+      "task_id": "officeval_050",
+      "stratum_id": "voluntary__valid_delivery__ambiguous",
+      "inclusion_prob": 0.011152,
+      "anchor_k": 17,
+      "remaining_budget": 6,
+      "eligible_arms": [
+        "P",
+        "D",
+        "S",
+        "R_single"
+      ],
+      "ineligible_arms": [
+        "R_explicit",
+        "R_implicit"
+      ],
+      "planned_branches": 48,
+      "max_requests_cap": 288
+    }
+  ],
+  "budget_and_stop_conditions": {
+    "total_planned_branches": 540,
+    "max_actor_requests_cap": 5544,
+    "analyst_requests": 0,
+    "measured_throughput_req_per_hour_3_concurrency": 352.3,
+    "estimated_wall_clock_hours_upper_bound": 15.74,
+    "estimated_api_cost_usd": 0.0,
+    "stop_conditions": [
+      "Abort immediately if invalid_attempt_rate (transport/protocol error) exceeds 15% over any 20 consecutive branches.",
+      "Abort immediately if any continuation branch violates same-checkpoint or same-remaining-budget invariant.",
+      "Abort if V3-G2 or V3-G3 gate fails or if user revokes execution authorization."
+    ]
+  }
+}

@@ -1,5 +1,9 @@
 # L2 v0.4 第一篇论文全量实验收口报告（Stages 1–5，`Y1–Y15` 全量核验）
 
+> **归档声明（2026-10-17，对应修订前提交 `0058bde`，执行项 `R5`）**：
+> **本文档为 v0.4（DeepSeek + native-tool-agent）归档记录；其中 Y7、Y12–Y15 的主线结论已被 V3 修订，不再作为第一篇主结论。**
+> 具体而言，V3 不再采纳旧版围绕 $H_{\text{没留住}}$ 的主线推论（包括以快照标签当 Analyst 唯一真值的 `Y14`、以自然续跑分组偏斜检验为主的 `Y15`，以及 $\sum g$ 仅占 `4.3%` 下的 `Y12/Y13`），原正文与历史证据原件完整保留备查，不做篡改。
+
 - **日期**：`2026-10-17`
 - **基准与被测配置**：OfficeVal（Word / PowerPoint / Excel，开发集 9 族 $\times 5 = 45$ 条 + 冻结留出集 9 族 $\times 5 = 45$ 条），被测 Actor 模型为 `opencode-go / deepseek-v4.1-flash`（`https://opencode.ai/inference/go/v1/chat/completions`，`temperature = 1.0`，`thinking = disabled`，`max_model_requests = 35`），原生四工具 `native-tool-agent`（`run, read, write, edit`）。
 - **分析师对照配置**：

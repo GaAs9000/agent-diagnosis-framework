@@ -8,6 +8,19 @@ from .lhtb import interpret_lhtb, _official_failure
 from .swebench_pro import interpret_swebench_pro
 
 ENDPOINT_VERSION = 'study-outcome-v1'
+RULE_VERSION = 'v1.1'
+SUPPORTED_RULE_VERSIONS = ('v1.0', 'v1.1')
+
+DELIVERY_ERRORS_V1_0 = (
+    'FileNotFoundError', 'BadZipFile', 'PackageNotFoundError',
+    'InvalidFileException', 'XMLSyntaxError', 'ParseError',
+    '未找到', '不存在', '无法打开', '不是 .docx', '损坏', 'corrupt', 'not a zip file',
+)
+
+DELIVERY_ERRORS_V1_1 = (
+    *DELIVERY_ERRORS_V1_0,
+    "AttributeError: 'NoneType' object has no attribute 'val'",
+)
 
 
 def _read(path):
@@ -22,16 +35,24 @@ def _finite(value):
 
 
 def study_outcome(package: Path, *, verify_evidence: bool = False,
-                  allow_test_fixture: bool = False) -> dict:
+                  allow_test_fixture: bool = False,
+                  rule_version: str = RULE_VERSION) -> dict:
     """Require actual grader health before counting any score or agent zero.
 
     Verification establishes self-consistency only; runners must separately bind
     the evidence index to their sealed expected trial identity. Synthetic L2 unit
     fixtures require explicit opt-in; production baseline callers must not opt in.
+
+    `rule_version`:
+      - 'v1.0': original delivery error whitelist
+      - 'v1.1': adds OpenXML malformed attribute error (`AttributeError: 'NoneType' object has no attribute 'val'`)
     """
+    if rule_version not in SUPPORTED_RULE_VERSIONS:
+        raise ValueError(f'Unsupported study_outcome rule_version: {rule_version!r}')
     package = Path(package)
     out = dict(study_valid=False, study_outcome_y=None, zero_reason=None,
                study_classification='missing_or_malformed_evidence', endpoint_version=ENDPOINT_VERSION,
+               rule_version=rule_version,
                native_evaluation_validity=None, native_projection_evaluation_validity=None,
                native_status=None, native_error=None)
     def invalid(reason):
@@ -109,10 +130,7 @@ def study_outcome(package: Path, *, verify_evidence: bool = False,
                         or any(marker in error for marker in markers)):
                     return invalid('unhealthy_or_ambiguous_official_error')
                 # Accept only determinate missing/damaged delivery errors, never an arbitrary exception.
-                delivery_errors = ('FileNotFoundError', 'BadZipFile', 'PackageNotFoundError',
-                                   'InvalidFileException', 'XMLSyntaxError', 'ParseError',
-                                   "AttributeError: 'NoneType' object has no attribute 'val'",
-                                   '未找到', '不存在', '无法打开', '不是 .docx', '损坏', 'corrupt', 'not a zip file')
+                delivery_errors = DELIVERY_ERRORS_V1_0 if rule_version == 'v1.0' else DELIVERY_ERRORS_V1_1
                 if not any(marker in error for marker in delivery_errors):
                     return invalid('unhealthy_or_ambiguous_official_error')
                 y, zero_reason = 0.0, 'missing_or_damaged_delivery'
@@ -159,3 +177,23 @@ def study_outcome(package: Path, *, verify_evidence: bool = False,
         return out
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return out
+
+
+def study_outcome_by_version(package: Path, *, verify_evidence: bool = False,
+                             allow_test_fixture: bool = False) -> dict:
+    """Return side-by-side study outcomes under rule_version 'v1.0' and 'v1.1'."""
+    v1_0 = study_outcome(package, verify_evidence=verify_evidence,
+                         allow_test_fixture=allow_test_fixture, rule_version='v1.0')
+    v1_1 = study_outcome(package, verify_evidence=verify_evidence,
+                         allow_test_fixture=allow_test_fixture, rule_version='v1.1')
+    changed = (
+        v1_0.get('study_valid') != v1_1.get('study_valid')
+        or v1_0.get('study_outcome_y') != v1_1.get('study_outcome_y')
+        or v1_0.get('study_classification') != v1_1.get('study_classification')
+    )
+    return {
+        'v1.0': v1_0,
+        'v1.1': v1_1,
+        'changed': changed,
+    }
+

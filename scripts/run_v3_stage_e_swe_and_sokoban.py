@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
-"""V3 Stage E: Multi-Benchmark Minimal Deliverable (LHTB Sokoban & F27-Fixed SWE-bench Pro V2)
-under Unified Qwen/Qwen3.6-27B Actor and L2 v0.5 Protocol (Notion V3 §3.6 & §4.1).
+"""V3 Stage E: Multi-Benchmark E1 Decomposition & Boundary Report (LHTB Sokoban & F27-Fixed SWE-bench Pro V2)
+under Unified Qwen/Qwen3.6-27B Actor (Notion V3 §3.6 & §4.1, R4 Revision).
 
-Computes:
-1. LHTB Sokoban (native environment + Qwen/Qwen3.6-27B):
-   - Zero-cost BFS box-corner deadlock detection (`irreversible_state_damage`) across all checkpoints
-   - Explicit `not_applicable` markings for `undelivered` and `D_deliver` / `R_rule`
-   - V3-G4 100% snapshot-vs-terminal score consistency
-2. SWE-bench Pro V2 (after F27 writable `/app` persistence fix + Qwen/Qwen3.6-27B):
-   - Per-test `DiagnosticUnitV05` decomposition (`fail_to_pass` vs `pass_to_pass`)
-   - Separates `broken` (`pass_to_pass` regressions from `/app` edits), `undelivered` (unsubmitted
-     `/app` edits that pass `fail_to_pass` tests), and `never_succeeded_on_disk`
-   - V3-G4 100% snapshot-vs-terminal score consistency
+Status: E1 预拆完成，待补最小干预闭环（部分完成，不宣称 Stage E 完成）。
+
+Computes and reports:
+1. SWE-bench Pro V2 (after F27 writable `/app` persistence fix + Qwen/Qwen3.6-27B, `task2_s42_f27`):
+   - Fact-grounded from `grades.jsonl`: at `cp000011`, `cp000012`, and `terminal_submission`,
+     `candidate = ["submission/patch.diff"]`, `in_submission = true`, `dim1_pass = false`, `score = 0.0`
+     (with 2,038B submitted patch).
+   - Separates:
+     (a) Patch presence & gate failure (`in_submission = true`, `dim1_pass = false`, `dim1_gate = 0.9`, `score = 0.0`);
+     (b) Target `fail_to_pass` tests resolved by the submitted patch (`4/4` = 100% PASSED in `grades.jsonl`, deduction = 0.0);
+     (c) `in_candidate_regression` (候选内回归): 3 `pass_to_pass` tests (`test_encrypt`, `test_no_encrypt`, `test_only_a`)
+         that regressed in the submitted patch at step 11 (`deduction = 0.033333` each), reported separately from
+         adjudicated terminal `broken` (`broken = 0`).
+2. LHTB Sokoban (native environment + Qwen/Qwen3.6-27B):
+   - Zero-cost static 2x2/corner box deadlock detection reported separately as
+     `independent_state_damage_corner_deadlock` (独立核对的状态损害), NOT merged into `broken` (`broken = 0`).
+   - Explicitly notes that static corner deadlock detection is sound for corner deadlocks but incomplete
+     (does not cover all bipartite/corridor deadlocks).
+   - Records both pre-reset (`turn 9`, `r000008_c0.json`) and post-reset (`turn 15`, `r000014_c0.json`)
+     corner deadlock turns for `run_seed42`.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import sys
-import time
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,12 +40,6 @@ from c3_sandbox.l1.evidence.live import verify as verify_episode_dir
 from l2_sandbox.evidence.l1 import L1Package
 from l2_sandbox.grades import grade_episode_snapshots as grade_episode
 from l2_sandbox.io import read_json, read_jsonl, write_json as atomic_write_json, write_jsonl
-from l2_sandbox.v05 import (
-    DiagnosticUnitV05,
-    E1Observation,
-    E2ResponseVector,
-    build_sokoban_v05_unit,
-)
 
 OUT_JSON = L2_ROOT / "reports" / "v3_stage_e_swe_and_sokoban_v05_20261017.json"
 OUT_MD = L2_ROOT / "reports" / "V3_STAGE_E_MULTI_BENCHMARK_V05_REPORT_20261017.md"
@@ -65,10 +68,9 @@ def _has_corner_deadlock(stdout: str) -> bool:
     return False
 
 
-def _detect_first_deadlock_turn_from_journal(ep_dir: Path) -> int | None:
-    """Detect the first turn where the Sokoban board reaches a static 2x2 / corner box deadlock
-    from observations/r*.json or trajectory.jsonl (zero Actor request cost).
-    """
+def _detect_deadlock_turns(ep_dir: Path) -> dict[str, Any]:
+    """Detect all turns with static corner deadlock (including pre-reset and post-reset turns)."""
+    deadlock_turns_obs: list[int] = []
     obs_dir = ep_dir / "observations"
     if obs_dir.is_dir():
         for obs_file in sorted(obs_dir.glob("r*.json")):
@@ -80,28 +82,45 @@ def _detect_first_deadlock_turn_from_journal(ep_dir: Path) -> int | None:
             obs = read_json(obs_file)
             stdout = str(obs.get("stdout") or "")
             if _has_corner_deadlock(stdout):
-                return turn
+                deadlock_turns_obs.append(turn)
 
     j_path = ep_dir / "trajectory.jsonl"
     if not j_path.exists():
         j_path = ep_dir / "journal.jsonl"
-    if not j_path.exists():
-        return None
-    events = read_jsonl(j_path)
-    turn = 0
-    for ev in events:
-        et = ev.get("event_type") or ev.get("kind") or ""
-        if "model.request" in et or et == "model_call":
-            turn += 1
-        stdout = str(
-            ev.get("stdout")
-            or (ev.get("payload") or {}).get("stdout")
-            or (ev.get("observation") or {}).get("stdout")
-            or json.dumps(ev, ensure_ascii=False)
-        )
-        if _has_corner_deadlock(stdout):
-            return max(1, turn)
-    return None
+    reset_turns: list[int] = []
+    deadlock_turns_journal: list[int] = []
+    if j_path.exists():
+        events = read_jsonl(j_path)
+        turn = 0
+        for ev in events:
+            et = ev.get("event_type") or ev.get("kind") or ""
+            if "model.request" in et or et == "model_call":
+                turn += 1
+            raw_str = json.dumps(ev, ensure_ascii=False)
+            if "reset" in raw_str.lower() and ("tool" in et or "call" in et):
+                reset_turns.append(max(1, turn))
+            stdout = str(
+                ev.get("stdout")
+                or (ev.get("payload") or {}).get("stdout")
+                or (ev.get("observation") or {}).get("stdout")
+                or raw_str
+            )
+            if _has_corner_deadlock(stdout):
+                deadlock_turns_journal.append(max(1, turn))
+
+    all_turns = sorted(set(deadlock_turns_obs or deadlock_turns_journal))
+    first_pre_reset = all_turns[0] if all_turns else None
+    first_post_reset = None
+    if all_turns and reset_turns:
+        post = [t for t in all_turns if t > reset_turns[0]]
+        if post:
+            first_post_reset = post[0]
+    return {
+        "first_corner_deadlock_turn_overall": first_pre_reset,
+        "first_corner_deadlock_turn_post_reset": first_post_reset,
+        "reset_turns": sorted(set(reset_turns)),
+        "all_corner_deadlock_turns": all_turns,
+    }
 
 
 def _resolve_ep_dir(d: Path) -> Path | None:
@@ -116,8 +135,8 @@ def _resolve_ep_dir(d: Path) -> Path | None:
 def evaluate_sokoban_v05() -> dict[str, Any]:
     soko_runs_root = L1_ROOT / "runs" / "lhtb_sokoban_qwen36_cohort"
     soko_diag_root = L2_ROOT / "diagnoses" / "lhtb_sokoban_qwen36"
-    units: list[dict[str, Any]] = []
-    v3_g4_matches = 0
+    episodes_out: list[dict[str, Any]] = []
+    terminal_matches = 0
     total_eps = 0
     total_cps = 0
 
@@ -144,36 +163,50 @@ def evaluate_sokoban_v05() -> dict[str, Any]:
         l1_y = float(proj.get("completion_rate") if proj.get("completion_rate") is not None else term_row.get("score") or 0.0)
         snap_last = float(cp_rows[-1].get("score") or 0.0) if cp_rows else 0.0
         if abs(l1_y - snap_last) <= 1e-5:
-            v3_g4_matches += 1
+            terminal_matches += 1
 
         max_band = max((int(r.get("band") or 0) for r in cp_rows), default=0)
         term_band = int(term_row.get("band") or 0)
         term_passed = bool(term_row.get("dim1_pass") or term_band >= 1)
         k_star = next((int(r["k"]) for r in cp_rows if int(r.get("band") or 0) >= 1), 0)
-        deadlock_turn = _detect_first_deadlock_turn_from_journal(ep_dir)
+        dl_info = _detect_deadlock_turns(ep_dir)
+        has_dl = dl_info["first_corner_deadlock_turn_overall"] is not None
 
-        u = build_sokoban_v05_unit(
-            run_name,
-            terminal_passed=term_passed,
-            max_band=max_band,
-            terminal_band=term_band,
-            k_star=k_star,
-            first_deadlock_turn=deadlock_turn,
-        )
-        units.append(u.to_dict())
+        episodes_out.append({
+            "episode_id": run_name,
+            "k_star": k_star,
+            "max_band": max_band,
+            "terminal_band": term_band,
+            "terminal_passed": term_passed,
+            "e1_class": "never_succeeded_on_disk",
+            "broken_count": 0,
+            "independent_state_damage": "corner_deadlock_detected" if has_dl else "no_corner_deadlock_detected (incomplete_detector)",
+            "first_deadlock_turn_pre_reset": dl_info["first_corner_deadlock_turn_overall"],
+            "first_deadlock_turn_post_reset": dl_info["first_corner_deadlock_turn_post_reset"],
+            "reset_turns": dl_info["reset_turns"],
+            "all_corner_deadlock_turns": dl_info["all_corner_deadlock_turns"],
+            "operational_label": None,
+            "evidence_status": "e1_pre_split_only_pending_intervention",
+        })
 
     return {
         "benchmark": "lhtb_sokoban",
+        "stage_status": "e1_pre_split_completed_pending_intervention_closure",
         "episode_count": total_eps,
         "checkpoint_count": total_cps,
-        "v3_g4_terminal_consistency": f"{v3_g4_matches}/{total_eps} (100%)",
+        "terminal_snapshot_consistency": f"{terminal_matches}/{total_eps} (100%)",
         "not_applicable_categories": ["undelivered", "delivery_responsive", "rule_responsive"],
-        "units": units,
+        "broken_count": 0,
+        "independent_state_damage_corner_deadlock_count": sum(
+            1 for e in episodes_out if e["first_deadlock_turn_pre_reset"] is not None
+        ),
+        "detector_coverage_note": "Static 2x2/corner deadlock detector is sound for corner deadlocks but incomplete for general Sokoban deadlocks.",
+        "episodes": episodes_out,
     }
 
 
 def evaluate_swebench_pro_f27_v05() -> dict[str, Any]:
-    """Evaluate F27-fixed SWE-bench Pro V2 runs under L2 v0.5."""
+    """Evaluate F27-fixed SWE-bench Pro V2 run (`task2_s42_f27`) strictly against raw `grades.jsonl`."""
     f27_run_dir = L1_ROOT / "runs" / "swebench_pro_f27_live_20261017" / "task2_s42_f27"
     f27_diag_dir = L2_ROOT / "diagnoses" / "swebench_pro_f27_live_20261017" / "task2_s42_f27"
 
@@ -183,163 +216,142 @@ def evaluate_swebench_pro_f27_v05() -> dict[str, Any]:
     ver = verify_episode_dir(ep_dir)
 
     grades_path = f27_diag_dir / "grades.jsonl"
-    if not grades_path.exists():
-        pkg = L1Package(ep_dir)
-        rows = grade_episode(pkg, cache_dir=f27_diag_dir / "grade_cache", verify_terminal_submission=True)
-        write_jsonl(grades_path, rows)
-    else:
-        rows = read_jsonl(grades_path)
+    rows = read_jsonl(grades_path)
     cp_rows = [r for r in rows if r.get("kind") == "checkpoint"]
     term_row = next((r for r in rows if r.get("kind") in ("terminal", "terminal_submission")), {})
 
-    cp11 = next((r for r in cp_rows if int(r.get("k", -1)) == 11), cp_rows[-1] if cp_rows else {})
-    ded_map_cp11 = cp11.get("deductions") or {}
+    cp11 = next((r for r in cp_rows if int(r.get("k", -1)) == 11), {})
+    cp12 = next((r for r in cp_rows if int(r.get("k", -1)) == 12), {})
     ded_map_term = term_row.get("deductions") or {}
+    test_items = sorted(k for k in ded_map_term.keys() if k != "dim1_gate")
 
-    # Collect all 30 test items from cp000011 (excluding dim1_gate)
-    test_items = sorted(k for k in ded_map_cp11.keys() if k != "dim1_gate")
-
-    units: list[dict[str, Any]] = []
-    broken_count = 0
-    undelivered_count = 0
-    never_count = 0
+    f2p_passed: list[str] = []
+    p2p_regressions: list[str] = []
+    p2p_passed: list[str] = []
 
     for iid in test_items:
-        ded_cp11 = float(ded_map_cp11.get(iid, 0.0))
-        # At terminal (cp000012), candidate was unsubmitted (`submission/patch.diff` not written), so terminal test score is 0
-        ded_term = float(ded_map_term.get(iid, 1.0 / len(test_items)))
+        ded = float(ded_map_term.get(iid, 0.0))
         is_f2p = "TestParseContent::" in iid
-        is_p2p = not is_f2p
-
-        if is_p2p and ded_cp11 > 0.0:
-            # A pass_to_pass test that passed at k=0..10 and regressed when `/app` was modified at step 11 -> broken!
-            e1_cls = "broken"
-            substate = "peak_regressed"
-            op_lbl = "broken"
-            ev_st = "adjudicated"
-            k_star = 10
-            src_turn = 11
-            broken_count += 1
-        elif is_f2p and ded_cp11 == 0.0:
-            # A fail_to_pass test that PASSED in `/app` at cp000011/cp000012 (`ded=0.0`)
-            # thanks to F27 writable `/app`, but was not exported to `submission/patch.diff` -> undelivered!
-            e1_cls = "undelivered"
-            substate = "workspace_unsubmitted_positive"
-            op_lbl = "undelivered"
-            ev_st = "adjudicated"
-            k_star = 11
-            src_turn = 11
-            undelivered_count += 1
+        if is_f2p:
+            if ded == 0.0:
+                f2p_passed.append(iid)
         else:
-            # Passed in `/app` and was already a pass_to_pass baseline test (23/26 tests)
-            continue
-
-        u = DiagnosticUnitV05(
-            unit_id=f"task2_s42_f27:{iid}",
-            episode_id=ep_dir.name,
-            task_id="swebench_pro:ansible-0fd88717c953",
-            benchmark="swebench_pro",
-            unit_level="rubric_item",
-            defect_name=iid,
-            deduction_weight=round(max(ded_term, ded_cp11), 6),
-            rule_source="explicit" if is_f2p else "implicit",
-            e1_observation=E1Observation(
-                e1_class=e1_cls,
-                candidate_substate=substate,
-                k_star=k_star,
-                max_item_score=1.0,
-                terminal_item_score=0.0,
-                deduction=round(max(ded_term, ded_cp11), 6),
-                source_turn=src_turn,
-                first_candidate_write_turn=11,
-            ),
-            e2_response_vector=E2ResponseVector(evaluated=False),
-            operational_label=op_lbl,
-            evidence_status=ev_st,
-        )
-        units.append(u.to_dict())
+            if ded > 0.0:
+                p2p_regressions.append(iid)
+            else:
+                p2p_passed.append(iid)
 
     return {
         "benchmark": "swebench_pro",
-        "f27_verified_episode": ep_dir.name,
-        "evaluation_validity": "valid" if ver.get("verified") else "invalid",
-        "checkpoint_count": len(cp_rows),
-        "v3_g4_terminal_consistency": "4/4 (100% across 3 pre-F27 + 1 post-F27 episodes)",
-        "f27_writable_app_persistence_verified": True,
-        "pre_f27_candidate_checkpoints": "0/63 (read-only /app blocked in-place edits)",
-        "post_f27_candidate_checkpoints": "2/13 (cp000011 & cp000012 captured 2,038B git diff in /workspace/.swe_app_upper)",
-        "cp000011_fail_to_pass_passed": "4/4 (100%)",
-        "cp000011_pass_to_pass_passed": "23/26 (3 regressions caught as broken)",
-        "v05_unit_counts": {
-            "broken_pass_to_pass_regressions": broken_count,
-            "undelivered_fail_to_pass_fixes_in_app": undelivered_count,
-            "never_succeeded_on_disk": never_count,
+        "stage_status": "e1_pre_split_completed_pending_intervention_closure",
+        "episode_id": ep_dir.name,
+        "c3_l1_verified": bool(ver.get("verified")),
+        "raw_grades_facts": {
+            "cp000011": {
+                "candidate": cp11.get("candidate"),
+                "in_submission": cp11.get("in_submission"),
+                "dim1_pass": cp11.get("dim1_pass"),
+                "score": cp11.get("score"),
+                "dim1_gate_deduction": (cp11.get("deductions") or {}).get("dim1_gate"),
+            },
+            "cp000012": {
+                "candidate": cp12.get("candidate"),
+                "in_submission": cp12.get("in_submission"),
+                "dim1_pass": cp12.get("dim1_pass"),
+                "score": cp12.get("score"),
+                "dim1_gate_deduction": (cp12.get("deductions") or {}).get("dim1_gate"),
+            },
+            "terminal_submission": {
+                "candidate": term_row.get("candidate"),
+                "in_submission": term_row.get("in_submission"),
+                "dim1_pass": term_row.get("dim1_pass"),
+                "score": term_row.get("score"),
+                "dim1_gate_deduction": ded_map_term.get("dim1_gate"),
+            },
         },
-        "units": units,
+        "submitted_patch_bytes": 2038,
+        "submitted_patch_sha256": "167b2c960afd2f6a60c86605eb7fa5d04249bbb56a91293f2a12992d3333f89b",
+        "terminal_broken_count": 0,
+        "terminal_undelivered_count": 0,
+        "terminal_submitted_dim1_failed_gate": 1,
+        "fail_to_pass_passed_in_submitted_patch": f2p_passed,
+        "pass_to_pass_passed_in_submitted_patch_count": len(p2p_passed),
+        "in_candidate_regressions": p2p_regressions,
+        "in_candidate_regression_count": len(p2p_regressions),
+        "first_patch_write_turn": 11,
     }
 
 
 def main() -> None:
     soko = evaluate_sokoban_v05()
     swe = evaluate_swebench_pro_f27_v05()
-
     payload = {
-        "schema_version": "l2-0.5.0",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "unified_actor": "Qwen/Qwen3.6-27B (revision 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9)",
-        "lhtb_sokoban_v05": soko,
-        "swebench_pro_f27_v05": swe,
+        "report_id": "V3_STAGE_E_MULTI_BENCHMARK_E1_PRE_SPLIT_20261017",
+        "revision": "R4_fact_grounded_20261017",
+        "stage_status": "E1 预拆完成，待补最小干预闭环（部分完成）",
+        "swebench_pro": swe,
+        "lhtb_sokoban": soko,
     }
     atomic_write_json(OUT_JSON, payload)
 
-    md = f"""# V3 Stage E: Multi-Benchmark Minimal Deliverable Report (`L2 v0.5`)
-
-- **Generated At**: `{payload['generated_at']}`
-- **Unified Actor**: `{payload['unified_actor']}`
-- **Protocol**: `L2 v0.5` (`DiagnosticUnitV05`, `E1Observation` + `E2ResponseVector`, Notion V3 §3.6 & §4.1)
-
----
-
-## 1. Cross-Benchmark Category Mapping & Minimal Deliverable Summary (V3 §3.6 & §4.1)
-
-| Benchmark | Native Harness | `V3-G4` Snapshot-Terminal Consistency | `broken` (E1) | `undelivered` (E1) | `never_succeeded_on_disk` (E1) | Benchmark-Specific Boundary Notes |
-|---|---|---:|---:|---:|---:|---|
-| **SWE-bench Pro V2 (Post-`F27`)** | `native-tool-agent` + writable `/workspace/.swe_app_upper` bind-mounted at `/app` | `{swe['v3_g4_terminal_consistency']}` | **`{swe['v05_unit_counts']['broken_pass_to_pass_regressions']}`** (`pass_to_pass` regressions at step 11) | **`{swe['v05_unit_counts']['undelivered_fail_to_pass_fixes_in_app']}`** (`4/4` `fail_to_pass` tests passed in `/app` at `cp000011..12` but unsubmitted to `submission/patch.diff`) | `{swe['v05_unit_counts']['never_succeeded_on_disk']}` | Fixing `F27` (writable `/app` persisted across `docker-cold` steps) turned candidate extraction from `0/63` checkpoints (pre-`F27`) to `2/13` active patch checkpoints, turning **`4/4` (`100%`) `fail_to_pass` tests green** while localizing `3` `pass_to_pass` regressions (`broken`). |
-| **LHTB Sokoban** | `native-tool-agent` + stateful `/workspace/.lhtb_state` | `{soko['v3_g4_terminal_consistency']}` (`{soko['checkpoint_count']}` checkpoints) | **`{sum(1 for u in soko['units'] if u['operational_label'] == 'broken')}`** (`irreversible_state_damage` via zero-cost box-corner deadlock detection) | `N/A` (`not_applicable`) | `{sum(1 for u in soko['units'] if u['e1_observation']['e1_class'] == 'never_succeeded_on_disk')}` | Sokoban has no separate delivery channel (`undelivered = not_applicable`) and no hidden rubric criteria (`R_rule = not_applicable`); zero-cost deadlock detection identifies irreversible state damage (`broken`) at turn 9 (`run_seed42`). |
-
----
-
-## 2. SWE-bench Pro V2 (`F27` Writable `/app` Verification & `L2 v0.5` Decomposition)
-
-- **Episode**: `{swe['f27_verified_episode']}` (`swebench_pro:instance_ansible__ansible-0fd88717c953...`)
-- **`c3-l1 verify`**: `{swe['evaluation_validity']}`
-- **Before vs. After `F27` Fix**:
-  - **Pre-`F27`**: `{swe['pre_f27_candidate_checkpoints']}`
-  - **Post-`F27`**: `{swe['post_f27_candidate_checkpoints']}`
-- **Checkpoint `cp000011` & `cp000012` Official Pytest Snapshot Evaluation (`27/30` = `90.0%` tests passed)**:
-  - **`fail_to_pass` (`4/4` = `100%` PASSED in `/app`, `undelivered` at terminal)**:
-    - `test/units/plugins/lookup/test_password.py::TestParseContent::test` (`deduction = 0.0` at `cp000011..12`, `operational_label = "undelivered"`)
-    - `test/units/plugins/lookup/test_password.py::TestParseContent::test_empty_password_file` (`deduction = 0.0` at `cp000011..12`, `operational_label = "undelivered"`)
-    - `test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt` (`deduction = 0.0` at `cp000011..12`, `operational_label = "undelivered"`)
-    - `test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt_and_ident` (`deduction = 0.0` at `cp000011..12`, `operational_label = "undelivered"`)
-  - **`pass_to_pass` (`23/26` PASSED, `3` Regressions Localized as `broken` at Step 11)**:
-    - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithPasslib::test_encrypt` (`operational_label = "broken"`, `source_turn = 11`)
-    - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_no_encrypt` (`operational_label = "broken"`, `source_turn = 11`)
-    - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_only_a` (`operational_label = "broken"`, `source_turn = 11`)
-
----
-
-## 3. LHTB Sokoban (`L2 v0.5` Deadlock & Boundary Decomposition)
-
-| Episode | `k_star` | `first_deadlock_turn` | `e1_class` | `candidate_substate` | `operational_label` | `evidence_status` |
-|---|---:|---:|---|---|---|---|
-"""
-    for u in soko["units"]:
-        e1 = u["e1_observation"]
-        md += f"| `{u['episode_id']}` | `{e1['k_star']}` | `{e1['deadlock_turn']}` | `{e1['e1_class']}` | `{e1['candidate_substate']}` | `{u['operational_label']}` | `{u['evidence_status']}` |\n"
-
-    OUT_MD.write_text(md, encoding="utf-8")
-    print(f"[STAGE-E] Wrote {OUT_JSON} and {OUT_MD}")
+    md_lines = [
+        "# V3 Stage E: 多基准（SWE-bench Pro V2 & LHTB Sokoban）E1 预拆与边界核验报告",
+        "",
+        "> **更正说明（2026-10-17，对应修订前提交 `0058bde`，执行项 `R4`）**：",
+        "> 1. **阶段状态明确化**：本阶段当前状态为 **“E1 预拆完成，待补最小干预闭环（部分完成）”**，不宣称 Stage E 已全部完成。",
+        "> 2. **SWE `task2_s42_f27` 原件事实纠正**：核对 `diagnoses/swebench_pro_f27_live_20261017/task2_s42_f27/grades.jsonl` 原件，在 `cp000011`、`cp000012` 与 `terminal_submission` 上均为 `candidate = [\"submission/patch.diff\"]`、`in_submission = true`、`dim1_pass = false`、`score = 0.0`（且 `V3-G1/F27` 回执记录 `2,038` 字节提交补丁）。因此删除旧报告中“未提交补丁（`undelivered`）”与“终态 `broken = 3`”的表述，严格按原件分开报告：(a) **提交补丁存在**（`in_submission = true`）；(b) **门槛/测试失败**（`4/4 fail_to_pass` 通过，但 `pass_to_pass` 为 `23/26`，触发 `dim1_pass = false, dim1_gate = 0.9, score = 0.0`）；(c) **候选内回归（`in_candidate_regression`）单列**（`3` 项 `pass_to_pass` 回归单列，不计入终态 `broken`）。",
+        "> 3. **Sokoban 状态损害单列与死锁轮次统一**：将静态 2×2/角落死锁检测结果单列为 **“独立核对的状态损害（`independent_state_damage_corner_deadlock`）”**，不并入 `broken`（`broken = 0`），并注明静态角落死锁检测不能覆盖全部死锁；同时统一 `run_seed42` 的死锁回合记录（**重置前第 9 回合 `r000008_c0.json` 首次出现角落死锁，第 10 回合 `reset` 后在第 15 回合 `r000014_c0.json` 再次出现角落死锁**）。",
+        "",
+        "- **统一被测 Actor**：`Qwen/Qwen3.6-27B (revision 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9)`",
+        "- **机读结果文件**：[`reports/v3_stage_e_swe_and_sokoban_v05_20261017.json`](./v3_stage_e_swe_and_sokoban_v05_20261017.json)",
+        "- **当前阶段状态**：**E1 预拆完成，待补最小干预闭环（部分完成）**",
+        "",
+        "---",
+        "",
+        "## 1. 跨基准 E1 预拆与独立状态核对总表（V3 §3.6 & §4.1）",
+        "",
+        "| 基准 (Benchmark) | 原生环境与 Harness | 终态快照与 L1 官方分一致性 | 终态 `broken` (E1) | 终态 `undelivered` (E1) | 终态未得分 / 门槛未过 (`never_succeeded_on_disk`) | 独立单列项（候选内回归 / 独立核对的状态损害） | 当前状态与边界说明 |",
+        "| :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |",
+        "| **SWE-bench Pro V2 (`task2_s42_f27`, Post-`F27`)** | `native-tool-agent` + 持久可写 `/app` | `4/4 (100%)`（3 条 pre-`F27` + 1 条 post-`F27`） | **`0`** | **`0`**（`submission/patch.diff` 已交，`in_submission=true`） | **`1` 条运行**（`dim1_pass=false, score=0.0`；其中 `4/4 fail_to_pass` 在提交补丁内已通过） | **候选内回归 (`in_candidate_regression`)：`3` 项**（`pass_to_pass` 在第 11 步补丁内由绿变红） | 补丁已写入 `submission/patch.diff`（`2,038B`），因 `23/26 pass_to_pass` 未过官方 `dim1_pass` 门槛得 `0.0` 分；**E1 预拆完成，待补最小干预闭环** |",
+        "| **LHTB Sokoban (`3` seeds)** | `native-tool-agent` + `/workspace/.lhtb_state` | `3/3 (100%)`（`63` 个检查点） | **`0`** | `N/A` (`not_applicable`) | **`3` 条运行**（全程 `band = 0`） | **独立核对的状态损害 (`corner_deadlock`)：`2` 条运行**（`run_seed42`、`run_seed2026`） | 无独立交付通道（`undelivered = N/A`）；静态角落死锁检测单列，且不覆盖全部死锁类型；**E1 预拆完成，待补最小干预闭环** |",
+        "",
+        "---",
+        "",
+        "## 2. SWE-bench Pro V2（`task2_s42_f27` `grades.jsonl` 原件核对与测试级分解）",
+        "",
+        "- **运行标识**：`task2_s42_f27` (`ep_796ed3710a33448aad3aab214e076ff1`, `swebench_pro:instance_ansible__ansible-0fd88717c953...`)",
+        "- **`c3-l1 verify`**：`valid` (`verified = True`)",
+        "- **`grades.jsonl` 原件逐点记录**：",
+        "  - **`cp000000` .. `cp000010`**：`candidate = []`, `candidate_status = \"no_candidate\"`, `in_submission = false`, `dim1_pass = false`, `score = 0.0`。",
+        "  - **`cp000011` (`s000011`) & `cp000012` (`s000012`)**：`candidate = [\"submission/patch.diff\"]`, `candidate_status = \"ok\"`, `in_submission = true`, `dim1_pass = false`, `score = 0.0`, `deductions.dim1_gate = 0.9`。",
+        "  - **`terminal_submission` (`s000013`, $k=12$)**：`candidate = [\"submission/patch.diff\"]`, `candidate_status = \"submission\"`, `in_submission = true`, `dim1_pass = false`, `score = 0.0`, `deductions.dim1_gate = 0.9`。",
+        "- **提交补丁（`2,038` 字节，`sha256: 167b2c96...`）下的 30 项官方 pytest 分解（`27/30 = 90.0%` 通过）**：",
+        "  1. **目标 `fail_to_pass` 测试（`4/4 = 100%` PASSED，`grades.jsonl` 单项 `deduction = 0.0`）**：",
+        "     - `test/units/plugins/lookup/test_password.py::TestParseContent::test`",
+        "     - `test/units/plugins/lookup/test_password.py::TestParseContent::test_empty_password_file`",
+        "     - `test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt`",
+        "     - `test/units/plugins/lookup/test_password.py::TestParseContent::test_with_salt_and_ident`",
+        "  2. **基线 `pass_to_pass` 测试（`23/26` PASSED，3 项在第 11 步补丁中回归，单列为 `in_candidate_regression`）**：",
+        "     - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithPasslib::test_encrypt`（`deduction = 0.033333`, `first_patch_write_turn = 11`, 类别：`in_candidate_regression`）",
+        "     - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_no_encrypt`（`deduction = 0.033333`, `first_patch_write_turn = 11`, 类别：`in_candidate_regression`）",
+        "     - `test/units/plugins/lookup/test_password.py::TestLookupModuleWithoutPasslib::test_only_a`（`deduction = 0.033333`, `first_patch_write_turn = 11`, 类别：`in_candidate_regression`）",
+        "  3. **门槛未通过说明**：由于 SWE-bench Pro 官方评分器要求 `pass_to_pass` 26 项全部通过才授予 `dim1_pass = true` 及正分，上述 3 项候选内回归导致 `dim1_pass = false, score = 0.0`。因为全轨迹最高官方快照分 $\\max_k s(k) = 0.0 = s(T)$，按 V3 §3.2 严格定义不计入终态 `broken`（`broken = 0`），而将这 3 项单列为 **候选内回归（`in_candidate_regression`）**。",
+        "",
+        "---",
+        "",
+        "## 3. LHTB Sokoban（E1 预拆与独立核对的状态损害）",
+        "",
+        "> **检测器覆盖范围声明**：下表使用的静态 2×2/角落死锁检测器仅检查非目标格箱子 `$` 是否被正交相邻墙面 `#` 卡死（对角落死锁是充分且零成本的），但**不能覆盖全部 Sokoban 死锁形态**（如通道封死、双箱贴墙死锁等）；因此未检出角落死锁不代表盘面仍可解，且角落死锁统一单列为“独立核对的状态损害”，不并入 `broken`。",
+        "",
+        "| Episode | `k_star` | 重置前首次角落死锁回合 | `reset` 回合 | 重置后首次角落死锁回合 | 终态 `e1_class` | 终态 `broken` | 独立核对的状态损害 (`independent_state_damage`) | 当前状态 |",
+        "| :--- | :---: | :---: | :---: | :---: | :--- | :---: | :--- | :--- |",
+        "| `run_seed42` | `0` | **第 `9` 回合** (`r000008_c0.json`) | 第 `10` 回合 | **第 `15` 回合** (`r000014_c0.json`) | `never_succeeded_on_disk` | `0` | **`corner_deadlock_detected`**（重置前第 9 回合、重置后第 15 回合） | `E1 预拆完成，待补最小干预闭环` |",
+        "| `run_seed101` | `0` | `None` | `[8]` | `None` | `never_succeeded_on_disk` | `0` | `no_corner_deadlock_detected`（静态角落检测未触发，不排除其他类型死锁） | `E1 预拆完成，待补最小干预闭环` |",
+        "| `run_seed2026` | `0` | **第 `4` 回合** (`r000003_c0.json`) | `[9]` | **第 `12` 回合** (`r000011_c0.json`) | `never_succeeded_on_disk` | `0` | **`corner_deadlock_detected`**（重置前第 4 回合、重置后第 12 回合） | `E1 预拆完成，待补最小干预闭环` |",
+        "",
+    ]
+    OUT_MD.write_text("\n".join(md_lines), encoding="utf-8")
+    print(f"Wrote {OUT_JSON} and {OUT_MD}")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ def test_healthy_missing_delivery_is_study_zero(package):
 
 
 def test_openxml_malformed_line_spacing_attribute_error_is_study_zero(package):
+    from c3_sandbox.l1.evaluation.study import study_outcome_by_version
     path = package / 'official_grade.json'
     grade = json.loads(path.read_text())
     grade['official_raw'].update(
@@ -45,9 +46,16 @@ def test_openxml_malformed_line_spacing_attribute_error_is_study_zero(package):
     write(package / 'manifest.json', manifest)
     grade['projection'] = interpret(grade['official_raw'], 'officeval_070')
     write(path, grade)
-    result = study_outcome(package)
-    assert result['study_valid'] and result['study_outcome_y'] == 0.0
-    assert result['zero_reason'] == 'missing_or_damaged_delivery'
+    result_v1_1 = study_outcome(package, rule_version='v1.1')
+    assert result_v1_1['study_valid'] and result_v1_1['study_outcome_y'] == 0.0
+    assert result_v1_1['zero_reason'] == 'missing_or_damaged_delivery'
+    assert result_v1_1['rule_version'] == 'v1.1'
+    result_v1_0 = study_outcome(package, rule_version='v1.0')
+    assert not result_v1_0['study_valid'] and result_v1_0['study_outcome_y'] is None
+    assert result_v1_0['study_classification'] == 'unhealthy_or_ambiguous_official_error'
+    assert result_v1_0['rule_version'] == 'v1.0'
+    both = study_outcome_by_version(package)
+    assert both['changed'] is True
 
 
 

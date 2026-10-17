@@ -1,0 +1,25 @@
+{
+  "schema_version": "l2-0.5.1-v3-ladder",
+  "stage": "D2",
+  "generated_at": "2026-10-17T14:25:32.427227+00:00",
+  "actor_requests_issued": 0,
+  "analyst_requests_issued": 0,
+  "status": "pending_d1_execution",
+  "d0_parameters": {
+    "ceiling_threshold": 0.05,
+    "delta": 0.1,
+    "tau": 0.2,
+    "alpha": 0.05
+  },
+  "cross_fitted_ceiling": {
+    "schema_version": "l2-0.5.1-v3-ladder",
+    "proposition_id": "V3-P3",
+    "eligible_unit_count": 0,
+    "folds_disjoint": true,
+    "unweighted_ceiling": 0.0,
+    "deduction_weighted_ceiling": 0.0,
+    "ceiling_threshold": 0.05,
+    "passes_v3_p3_gate": false
+  },
+  "d3_prerequisite_gate_open": false
+}

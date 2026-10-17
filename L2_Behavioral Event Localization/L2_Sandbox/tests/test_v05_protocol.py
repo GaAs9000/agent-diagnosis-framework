@@ -1,42 +1,132 @@
-"""Unit tests for L2 v0.5 Intervention-Verifiable Failure Diagnosis Protocol (Notion V3 §3.1–3.7)."""
+"""Unit tests for L2 v0.5 Intervention-Verifiable Failure Diagnosis Protocol (Notion V3 §3.1–3.7, R7–R14b, R21)."""
 from __future__ import annotations
 
 import pytest
 
+from l2_sandbox.io import L2Error
 from l2_sandbox.v05 import (
+    DEFAULT_SELF_CHECK_DRAFT,
     DiagnosticUnitV05,
     E1Observation,
     E2ResponseVector,
     EVIDENCE_STATUSES,
+    LADDER_ARM_LEVELS,
     OPERATIONAL_LABELS,
     RULE_SOURCES,
     V05_SCHEMA_VERSION,
+    V3_PROPOSITIONS,
     adjudicate_e2_outcomes,
     build_interleaved_arm_schedule,
+    build_ladder_intervention_messages,
     build_r_all_intervention_message,
     build_sokoban_v05_unit,
+    build_task_requirement_lists,
+    build_v3_stratified_sampling_frame,
+    compute_cross_fitted_diagnostic_value_ceiling,
+    compute_ipw_recoverability_ratio,
     evaluate_analysts_v05,
+    evaluate_harm_on_passing_units,
     predict_majority_baseline_m,
     predict_rule_analyst_a_v05,
     select_v05_intervention_anchors,
+    sha256_text,
+    verify_nested_ladder_messages,
+    verify_normal_request_zero_diagnostic_leakage,
+    verify_rule_prompt_non_leakage,
 )
 
 
-def test_v05_anchor_selection_includes_k_star_0_and_early_budget_anchor():
-    # Case 1: k* = 0 (no candidate ever written across 35 steps)
+def test_r14a_v3_propositions_and_ladder_levels():
+    assert V3_PROPOSITIONS == ("V3-P1", "V3-P2", "V3-P3", "V3-P4", "V3-P5")
+    assert LADDER_ARM_LEVELS["P"] == 0
+    assert LADDER_ARM_LEVELS["D"] == 1
+    assert LADDER_ARM_LEVELS["S"] == 1
+    assert LADDER_ARM_LEVELS["R_explicit"] == 2
+    assert LADDER_ARM_LEVELS["R_implicit"] == 3
+    assert len(DEFAULT_SELF_CHECK_DRAFT) > 20
+
+
+def test_r7_r8_nested_ladder_messages_whole_task_requirements_and_empty_ineligible():
+    # R8: Whole-task requirement list built from task catalog regardless of which item failed in a specific run
+    catalog = {
+        "officeval:officeval_070": {
+            "标题居中加粗": {"source_category": "explicit"},
+            "页边距上下2.54cm": {"source_category": "explicit"},
+            "表格不得跨页断行": {"source_category": "implicit"},
+        },
+        "officeval:officeval_090": {
+            "所有公式使用IFERROR包裹": {"source_category": "implicit"},
+        },
+    }
+    req_070 = build_task_requirement_lists(catalog, "officeval_070")
+    assert req_070["task_id"] == "officeval_070"
+    assert len(req_070["explicit"]) == 2
+    assert len(req_070["implicit"]) == 1
+
+    # R7: Nested prefix verification when both explicit and implicit lists are non-empty
+    msgs_070 = build_ladder_intervention_messages(
+        explicit_requirements=req_070["explicit"],
+        implicit_requirements=req_070["implicit"],
+        single_rule_requirement="表格不得跨页断行",
+    )
+    nest_check = verify_nested_ladder_messages(msgs_070)
+    assert nest_check["valid"] is True
+    assert msgs_070["P"]["message"] is None
+    assert len(msgs_070["D"]["message_sha256"]) == 64
+    assert len(msgs_070["S"]["message_sha256"]) == 64
+    assert msgs_070["R_explicit"]["message"].startswith(msgs_070["D"]["message"])
+    assert msgs_070["R_implicit"]["message"].startswith(msgs_070["R_explicit"]["message"])
+    assert msgs_070["R_single"]["message"].startswith(msgs_070["D"]["message"])
+
+    # R8: When explicit requirement list is empty (e.g. officeval_090 has 0 explicit, 1 implicit),
+    # R_explicit MUST be marked ineligible (message=None) and MUST NOT fall back to D's text!
+    req_090 = build_task_requirement_lists(catalog, "officeval_090")
+    assert len(req_090["explicit"]) == 0
+    assert len(req_090["implicit"]) == 1
+    msgs_090 = build_ladder_intervention_messages(
+        explicit_requirements=req_090["explicit"],
+        implicit_requirements=req_090["implicit"],
+    )
+    assert msgs_090["R_explicit"]["eligible"] is False
+    assert msgs_090["R_explicit"]["evidence_status"] == "ineligible"
+    assert msgs_090["R_explicit"]["message"] is None
+    assert msgs_090["R_explicit"]["message"] != msgs_090["D"]["message"]
+    assert msgs_090["R_implicit"]["eligible"] is True
+    assert msgs_090["R_implicit"]["message"].startswith(msgs_090["D"]["message"])
+    assert verify_nested_ladder_messages(msgs_090)["valid"] is True
+
+    # Empty R_all also returns None (ineligible) instead of falling back to D
+    assert build_r_all_intervention_message([]) is None
+
+
+def test_r10_v05_anchor_selection_budget_tail_and_voluntary_pre_finish():
+    # Case 1: k* = 0, budget exhausted (termination="request_budget") -> budget_tail_no_candidate at k=29 (35-29=6)
     cps_no_cand = [
         {"kind": "checkpoint", "k": k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
         for k in range(36)
     ]
-    res0 = select_v05_intervention_anchors(cps_no_cand, max_requests=35, r_b=6)
+    res0 = select_v05_intervention_anchors(cps_no_cand, max_requests=35, r_b=6, termination="request_budget")
     assert res0["eligible"] is True
-    assert res0["primary_anchor_k"] == 29  # 35 - 29 = 6 remaining requests
+    assert res0["primary_anchor_k"] == 29
     assert res0["primary_anchor_type"] == "budget_tail_no_candidate"
     assert res0["primary_remaining_budget"] == 6
-    assert res0["early_anchor_k"] == 23  # 35 - 23 = 12 >= 2 * r_b remaining requests
-    assert res0["early_remaining_budget"] == 12
+    assert res0["budget_tail_anchor_k"] == 29
+    assert res0["voluntary_finish_anchor_k"] is None
+    assert res0["early_anchor_k"] == 23  # 35 - 23 = 12 >= 2 * r_b
 
-    # Case 2: score-0 candidate written at k=18
+    # Case 2: Voluntary finish ("assistant_finished") after 14 requests with no candidate -> voluntary_pre_finish at k=14
+    cps_vol = [
+        {"kind": "checkpoint", "k": k, "candidate_status": "no_candidate", "score": 0.0, "cold_resume_eligible": True}
+        for k in range(15)
+    ]
+    res_vol = select_v05_intervention_anchors(cps_vol, max_requests=35, r_b=6, termination="assistant_finished")
+    assert res_vol["eligible"] is True
+    assert res_vol["voluntary_finish_anchor_k"] == 14
+    assert res_vol["primary_anchor_k"] == 14
+    assert res_vol["primary_anchor_type"] == "voluntary_pre_finish"
+    assert res_vol["primary_remaining_budget"] == 21
+
+    # Case 3: score-0 candidate written at k=18, voluntary finish at k=20 -> primary=18, voluntary_finish_anchor_k=20
     cps_score0 = [
         {
             "kind": "checkpoint",
@@ -45,58 +135,34 @@ def test_v05_anchor_selection_includes_k_star_0_and_early_budget_anchor():
             "score": 0.0,
             "cold_resume_eligible": True,
         }
-        for k in range(36)
+        for k in range(21)
     ]
-    res_s0 = select_v05_intervention_anchors(cps_score0, max_requests=35, r_b=6)
+    res_s0 = select_v05_intervention_anchors(cps_score0, max_requests=35, r_b=6, termination="assistant_finished")
     assert res_s0["eligible"] is True
     assert res_s0["primary_anchor_k"] == 18
     assert res_s0["primary_anchor_type"] == "candidate_first_write"
-    assert res_s0["primary_remaining_budget"] == 17
+    assert res_s0["voluntary_finish_anchor_k"] == 20
 
-    # Case 3: positive candidate peak at k=22
-    cps_peak = [
-        {
-            "kind": "checkpoint",
-            "k": k,
-            "candidate_status": "ok" if k >= 15 else "no_candidate",
-            "score": 0.8 if k >= 22 else (0.4 if k >= 15 else 0.0),
-            "cold_resume_eligible": True,
-        }
-        for k in range(36)
+    # Case 4: Boundary check: remaining == r_b (eligible) vs remaining == r_b - 1 (ineligible)
+    cps_exact = [
+        {"kind": "checkpoint", "k": 29, "remaining_requests": 6, "candidate_status": "no_candidate", "cold_resume_eligible": True}
     ]
-    res_peak = select_v05_intervention_anchors(cps_peak, max_requests=35, r_b=6)
-    assert res_peak["eligible"] is True
-    assert res_peak["primary_anchor_k"] == 22
-    assert res_peak["primary_anchor_type"] == "candidate_peak"
-
-    # Case 4: Ineligible when no checkpoint has >= r_b remaining requests
+    assert select_v05_intervention_anchors(cps_exact, max_requests=35, r_b=6)["eligible"] is True
     cps_short = [
-        {"kind": "checkpoint", "k": 31, "remaining_requests": 4, "candidate_status": "no_candidate", "cold_resume_eligible": True}
+        {"kind": "checkpoint", "k": 30, "remaining_requests": 5, "candidate_status": "no_candidate", "cold_resume_eligible": True}
     ]
-    res_inel = select_v05_intervention_anchors(cps_short, max_requests=35, r_b=6)
-    assert res_inel["eligible"] is False
-    assert res_inel["primary_anchor_k"] is None
+    assert select_v05_intervention_anchors(cps_short, max_requests=35, r_b=6)["eligible"] is False
 
 
-def test_v05_interleaved_schedule_preserves_same_checkpoint_and_budget():
-    sched = build_interleaved_arm_schedule(["P", "D", "R", "R_all"], 6, anchor_k=29, remaining_budget=6)
-    assert len(sched) == 24
-    assert {item["checkpoint_k"] for item in sched} == {29}
-    assert {item["at_request"] for item in sched} == {30}
-    assert {item["remaining_budget"] for item in sched} == {6}
-    for rep in range(6):
-        block = sched[rep * 4 : (rep + 1) * 4]
-        assert {b["arm"] for b in block} == {"P", "D", "R", "R_all"}
-
-
-def test_v05_adjudicate_e2_all_five_regimes_with_delta_010_tau_020():
-    # 1. Plain recoverable: P alone jumps from Y=0.0 to mean_P=0.75 (24 branches)
+def test_r9_adjudicate_e2_nested_ladder_regimes_and_edge_cases():
+    # 1. Plain recoverable: P alone jumps from Y=0.0 to mean_P=0.75 (24 branches), D=0.75, S=0.75
     vec_p, lbl_p, status_p = adjudicate_e2_outcomes(
         0.0,
         {
             "P": [1.0] * 18 + [0.0] * 6,
-            "D": [1.0] * 19 + [0.0] * 5,
-            "R": [1.0] * 19 + [0.0] * 5,
+            "D": [1.0] * 18 + [0.0] * 6,
+            "S": [1.0] * 18 + [0.0] * 6,
+            "R_explicit": [1.0] * 18 + [0.0] * 6,
         },
         anchor_k=28,
         remaining_budget=7,
@@ -105,13 +171,23 @@ def test_v05_adjudicate_e2_all_five_regimes_with_delta_010_tau_020():
     assert lbl_p is None
     assert vec_p.delta_P_vs_Y == 0.75
 
-    # 2. Delivery-responsive: P=0.05, D=0.80, R=0.80
+    # 2. Edge case: All-1 in P, D, S -> plain_recoverable
+    vec_all1, lbl_all1, status_all1 = adjudicate_e2_outcomes(
+        0.0,
+        {"P": [1.0] * 24, "D": [1.0] * 24, "S": [1.0] * 24},
+        anchor_k=28,
+        remaining_budget=7,
+    )
+    assert status_all1 == "plain_recoverable"
+    assert lbl_all1 is None
+
+    # 3. Delivery-responsive (level 1 D): P=0.04, D=0.83, S=0.83
     vec_d, lbl_d, status_d = adjudicate_e2_outcomes(
         0.0,
         {
             "P": [1.0] * 1 + [0.0] * 23,
             "D": [1.0] * 20 + [0.0] * 4,
-            "R": [1.0] * 20 + [0.0] * 4,
+            "S": [1.0] * 20 + [0.0] * 4,
         },
         anchor_k=29,
         remaining_budget=6,
@@ -121,65 +197,295 @@ def test_v05_adjudicate_e2_all_five_regimes_with_delta_010_tau_020():
     assert vec_d.lb95_D_vs_P > 0.10
     assert vec_d.p_holm_D_vs_P <= 0.05
 
-    # 3. Rule-responsive: P=0.0, D=0.04, R=0.75, R_all=0.71
-    vec_r, lbl_r, status_r = adjudicate_e2_outcomes(
+    # 4. Self-check-responsive (level 1 S): P=0.0, D=0.04, S=0.79, R_explicit=0.79
+    vec_s, lbl_s, status_s = adjudicate_e2_outcomes(
         0.0,
         {
             "P": [0.0] * 24,
             "D": [1.0] * 1 + [0.0] * 23,
-            "R": [1.0] * 18 + [0.0] * 6,
-            "R_all": [1.0] * 17 + [0.0] * 7,
+            "S": [1.0] * 19 + [0.0] * 5,
+            "R_explicit": [1.0] * 19 + [0.0] * 5,
         },
-        anchor_k=22,
-        remaining_budget=13,
+        anchor_k=14,
+        remaining_budget=21,
     )
-    assert status_r == "adjudicated"
-    assert lbl_r == "rule_responsive"
-    assert vec_r.lb95_R_vs_D > 0.10
-    assert vec_r.p_holm_R_vs_D <= 0.05
-    assert vec_r.delta_R_single_vs_R_all is not None
+    assert status_s == "adjudicated"
+    assert lbl_s == "self_check_responsive"
+    assert vec_s.pairwise_lb95["S_vs_P"] > 0.10
 
-    # 4. Unrecovered under protocol: P=0.0, D=0.0, R=0.0 across 24 branches
+    # 5. Explicit-rule-responsive (level 2 R_explicit): must beat P, D, AND S
+    vec_re, lbl_re, status_re = adjudicate_e2_outcomes(
+        0.0,
+        {
+            "P": [0.0] * 24,
+            "D": [0.0] * 24,
+            "S": [1.0] * 1 + [0.0] * 23,
+            "R_explicit": [1.0] * 19 + [0.0] * 5,
+            "R_implicit": [1.0] * 19 + [0.0] * 5,
+        },
+        anchor_k=20,
+        remaining_budget=15,
+    )
+    assert status_re == "adjudicated"
+    assert lbl_re == "explicit_rule_responsive"
+    assert vec_re.pairwise_lb95["R_explicit_vs_S"] > 0.10
+
+    # 6. Implicit-rule-responsive (level 3 R_implicit): must beat P, D, S, AND R_explicit
+    vec_ri, lbl_ri, status_ri = adjudicate_e2_outcomes(
+        0.0,
+        {
+            "P": [0.0] * 24,
+            "D": [0.0] * 24,
+            "S": [0.0] * 24,
+            "R_explicit": [1.0] * 1 + [0.0] * 23,
+            "R_implicit": [1.0] * 19 + [0.0] * 5,
+            "R_single": [1.0] * 1 + [0.0] * 23,
+            "R_all": [1.0] * 1 + [0.0] * 23,
+        },
+        anchor_k=20,
+        remaining_budget=15,
+    )
+    assert status_ri == "adjudicated"
+    assert lbl_ri == "implicit_rule_responsive"
+    assert vec_ri.pairwise_lb95["R_implicit_vs_R_explicit"] > 0.10
+
+    # 7. Edge case: All-0 across P, D, S, R_explicit, R_implicit -> unrecovered_under_protocol
     vec_u, lbl_u, status_u = adjudicate_e2_outcomes(
         0.0,
         {
             "P": [0.0] * 24,
             "D": [0.0] * 24,
-            "R": [0.0] * 24,
+            "S": [0.0] * 24,
+            "R_explicit": [0.0] * 24,
+            "R_implicit": [0.0] * 24,
         },
         anchor_k=29,
         remaining_budget=6,
     )
     assert status_u == "adjudicated"
     assert lbl_u == "unrecovered_under_protocol"
-    assert vec_u.ub95_D_vs_P < 0.20
-    assert vec_u.ub95_R_vs_P < 0.20
+    assert vec_u.arm_ub95_abs["P"] < 0.20
 
-    # 5. Inconclusive: small sample (n=6) with 1/6 success in D -> CI straddles [0.10, 0.20]
-    vec_inc, lbl_inc, status_inc = adjudicate_e2_outcomes(
+    # 8. Critical guard: If P has moderate success (e.g. 3/24 = 0.125, UB95(P)=0.289 > tau=0.20)
+    # and D, S also have 3/24, it MUST be inconclusive, NOT unrecovered_under_protocol!
+    vec_mod, lbl_mod, status_mod = adjudicate_e2_outcomes(
         0.0,
         {
-            "P": [0.0] * 6,
-            "D": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            "R": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "P": [1.0] * 3 + [0.0] * 21,
+            "D": [1.0] * 3 + [0.0] * 21,
+            "S": [1.0] * 3 + [0.0] * 21,
         },
         anchor_k=29,
         remaining_budget=6,
+        delta=0.10,
+        tau=0.20,
     )
-    assert status_inc == "inconclusive"
-    assert lbl_inc is None
+    assert status_mod == "inconclusive"
+    assert lbl_mod is None
 
 
-def test_v05_analyst_evaluation_four_tier_metrics():
-    # Build 3 adjudicated E2 units + 1 E1 broken unit
+def test_r11_3d_stratified_sampling_frame_and_ht_hajek_ipw():
+    # Rejects legacy deepseek datasets
+    with pytest.raises(L2Error, match="R11 violation"):
+        build_v3_stratified_sampling_frame([], dataset_id="deepseek_dev45_20261015")
+
+    units: list[DiagnosticUnitV05] = []
+    for i in range(10):
+        units.append(
+            DiagnosticUnitV05(
+                unit_id=f"u_ex_{i}",
+                episode_id=f"ep_{i}",
+                task_id=f"officeval_{i:03d}",
+                benchmark="officeval",
+                unit_level="rubric_item",
+                defect_name="rule_ex",
+                deduction_weight=1.0,
+                rule_source="explicit",
+                e1_observation=E1Observation("never_succeeded_on_disk", "no_candidate", 0, 0.0, 0.0, 1.0),
+                e2_response_vector=E2ResponseVector(evaluated=False, anchor_k=29),
+                operational_label=None,
+                evidence_status="inconclusive",
+                exhausted_budget=True,
+                valid_delivery=False,
+            )
+        )
+    for i in range(4):
+        units.append(
+            DiagnosticUnitV05(
+                unit_id=f"u_im_{i}",
+                episode_id=f"ep_im_{i}",
+                task_id=f"officeval_1{i:02d}",
+                benchmark="officeval",
+                unit_level="rubric_item",
+                defect_name="rule_im",
+                deduction_weight=0.5,
+                rule_source="implicit",
+                e1_observation=E1Observation("never_succeeded_on_disk", "delivered_item_wrong", 10, 0.0, 0.0, 0.5),
+                e2_response_vector=E2ResponseVector(evaluated=False, anchor_k=14),
+                operational_label=None,
+                evidence_status="inconclusive",
+                exhausted_budget=False,
+                valid_delivery=True,
+            )
+        )
+
+    frame = build_v3_stratified_sampling_frame(
+        units,
+        dataset_id="v3_qwen36_pi_dev45_20261017",
+        actor_model="Qwen/Qwen3.6-27B",
+        target_sample_per_stratum=5,
+    )
+    assert frame["stratification_axes"] == ["exhausted_budget", "valid_delivery", "rule_source"]
+    assert frame["total_eligible_never_units"] == 14
+    assert frame["total_sampled_units"] == 9  # 5 from first stratum (pi=0.5), 4 from second (pi=1.0)
+
+    sampled_rows = []
+    for idx, row in enumerate(frame["sampled_units"]):
+        r = dict(row)
+        r["deduction"] = r["deduction_weight"]
+        r["recovered_by_D"] = idx < 3
+        r["recovered_by_S"] = idx == 3
+        r["recovered_by_R_explicit"] = idx == 4
+        r["recovered_by_R_implicit"] = False
+        r["inconclusive"] = False
+        sampled_rows.append(r)
+
+    ipw = compute_ipw_recoverability_ratio(sampled_rows, total_never_deduction=12.0)
+    assert ipw["ht_denom_never_deduction"] == pytest.approx(12.0)
+    assert "ht_shares" in ipw and "hajek_shares" in ipw
+    assert ipw["ht_shares"]["level1_D_or_S"] == pytest.approx(ipw["hajek_shares"]["level1_D_or_S"])
+
+
+def test_r12_harm_evaluation_on_passing_units():
+    passing_rows = [
+        {
+            "unit_id": "pass_1",
+            "arm_outcomes": {
+                "P": [1.0] * 24,
+                "D": [1.0] * 24,
+                "S": [1.0] * 24,
+                "R_explicit": [1.0] * 23 + [0.0] * 1,
+            },
+        },
+        {
+            "unit_id": "pass_2",
+            "arm_outcomes": {
+                "P": [1.0] * 24,
+                "D": [1.0] * 24,
+                "S": [1.0] * 24,
+                "R_explicit": [0.0] * 20 + [1.0] * 4,  # severe harm
+            },
+        },
+    ]
+    res = evaluate_harm_on_passing_units(passing_rows)
+    assert res["evaluated_unit_count"] == 2
+    assert res["summary_by_arm"]["D"]["significant_harm_count"] == 0
+    assert res["summary_by_arm"]["S"]["significant_harm_count"] == 0
+    assert res["summary_by_arm"]["R_explicit"]["significant_harm_count"] == 1
+
+
+def test_r13_cross_fitted_diagnostic_value_ceiling_disjoint_halves():
+    # Homogeneous units: D, S, R_explicit all have identical gain +0.8 over P -> ceiling = 0.0
+    hom_units: list[DiagnosticUnitV05] = []
+    for i in range(6):
+        vec, lbl, st = adjudicate_e2_outcomes(
+            0.0,
+            {
+                "P": [0.0] * 12,
+                "D": [0.8] * 12,
+                "S": [0.8] * 12,
+                "R_explicit": [0.8] * 12,
+            },
+            anchor_k=20,
+        )
+        hom_units.append(
+            DiagnosticUnitV05(
+                unit_id=f"u_{i}",
+                episode_id=f"ep_{i}",
+                task_id=f"officeval_{i:03d}",
+                benchmark="officeval",
+                unit_level="rubric_item",
+                defect_name="d",
+                deduction_weight=1.0 if i % 2 == 0 else 0.5,
+                rule_source="explicit",
+                e1_observation=E1Observation("never_succeeded_on_disk", "no_candidate", 0, 0.0, 0.0, 1.0),
+                e2_response_vector=vec,
+                operational_label=lbl,
+                evidence_status=st,
+            )
+        )
+    ceiling = compute_cross_fitted_diagnostic_value_ceiling(hom_units, ceiling_threshold=0.05)
+    assert ceiling["folds_disjoint"] is True
+    assert set(ceiling["folds"][0]["train_unit_ids"]).isdisjoint(set(ceiling["folds"][0]["eval_unit_ids"]))
+    assert ceiling["unweighted_ceiling"] == pytest.approx(0.0)
+    assert ceiling["deduction_weighted_ceiling"] == pytest.approx(0.0)
+    assert ceiling["passes_v3_p3_gate"] is False
+
+    # Heterogeneous units: half respond ONLY to D, half respond ONLY to R_explicit -> ceiling = +0.45 >= 0.05
+    het_units: list[DiagnosticUnitV05] = []
+    for i in range(8):
+        is_d_unit = i % 2 == 0
+        vec, lbl, st = adjudicate_e2_outcomes(
+            0.0,
+            {
+                "P": [0.0] * 12,
+                "D": [0.9] * 12 if is_d_unit else [0.0] * 12,
+                "S": [0.0] * 12,
+                "R_explicit": [0.0] * 12 if is_d_unit else [0.9] * 12,
+            },
+            anchor_k=20,
+        )
+        het_units.append(
+            DiagnosticUnitV05(
+                unit_id=f"het_{i}",
+                episode_id=f"ep_{i}",
+                task_id=f"officeval_{i:03d}",
+                benchmark="officeval",
+                unit_level="rubric_item",
+                defect_name="d",
+                deduction_weight=1.0,
+                rule_source="explicit",
+                e1_observation=E1Observation("never_succeeded_on_disk", "no_candidate", 0, 0.0, 0.0, 1.0),
+                e2_response_vector=vec,
+                operational_label=lbl,
+                evidence_status=st,
+            )
+        )
+    het_ceiling = compute_cross_fitted_diagnostic_value_ceiling(het_units, ceiling_threshold=0.05)
+    assert het_ceiling["unweighted_ceiling"] == pytest.approx(0.45)
+    assert het_ceiling["deduction_weighted_ceiling"] == pytest.approx(0.45)
+    assert het_ceiling["passes_v3_p3_gate"] is True
+
+
+def test_r21_normal_request_zero_diagnostic_leakage():
+    clean_req = {"messages": [{"role": "user", "content": "请根据 workspace 中的数据生成季度报表 docx。"}]}
+    res_clean = verify_normal_request_zero_diagnostic_leakage(clean_req)
+    assert res_clean["zero_leakage"] is True
+    assert res_clean["leaked_markers"] == []
+
+    leaky_req = {"messages": [{"role": "user", "content": "请同时逐条核对以下任务明确要求：officeval_070_verifier.py"}]}
+    res_leaky = verify_normal_request_zero_diagnostic_leakage(leaky_req)
+    assert res_leaky["zero_leakage"] is False
+    assert len(res_leaky["leaked_markers"]) >= 1
+
+    clean_prompt = build_r_all_intervention_message(["文档表格中没有空白行"])
+    assert clean_prompt is not None
+    assert verify_rule_prompt_non_leakage(clean_prompt, forbidden_tokens=["row_idx", "cell_text"]) is True
+    leaky_prompt = "Check def verify_table in officeval_003_verifier.py and assert row_idx == 0"
+    assert verify_rule_prompt_non_leakage(leaky_prompt, forbidden_tokens=["row_idx"]) is False
+
+
+def test_v05_analyst_evaluation_four_tier_metrics_without_insample_ceiling():
     v_d, lbl_d, st_d = adjudicate_e2_outcomes(
-        0.0, {"P": [0.0] * 24, "D": [1.0] * 20 + [0.0] * 4, "R": [1.0] * 20 + [0.0] * 4}, anchor_k=29
+        0.0, {"P": [0.0] * 24, "D": [1.0] * 20 + [0.0] * 4, "S": [1.0] * 20 + [0.0] * 4}, anchor_k=29
     )
     v_r, lbl_r, st_r = adjudicate_e2_outcomes(
-        0.0, {"P": [0.0] * 24, "D": [0.0] * 24, "R": [1.0] * 19 + [0.0] * 5}, anchor_k=24
+        0.0,
+        {"P": [0.0] * 24, "D": [0.0] * 24, "S": [0.0] * 24, "R_explicit": [1.0] * 19 + [0.0] * 5},
+        anchor_k=24,
     )
     v_u, lbl_u, st_u = adjudicate_e2_outcomes(
-        0.0, {"P": [0.0] * 24, "D": [0.0] * 24, "R": [0.0] * 24}, anchor_k=29
+        0.0, {"P": [0.0] * 24, "D": [0.0] * 24, "S": [0.0] * 24, "R_explicit": [0.0] * 24}, anchor_k=29
     )
 
     units = [
@@ -205,7 +511,7 @@ def test_v05_analyst_evaluation_four_tier_metrics():
             unit_level="rubric_item",
             defect_name="IFERROR formula",
             deduction_weight=0.5,
-            rule_source="implicit",
+            rule_source="explicit",
             e1_observation=E1Observation("never_succeeded_on_disk", "delivered_item_wrong", 10, 0.0, 0.0, 0.5),
             e2_response_vector=v_r,
             operational_label=lbl_r,
@@ -241,11 +547,11 @@ def test_v05_analyst_evaluation_four_tier_metrics():
         ),
     ]
 
-    # Baseline M vs an informed Analyst C
     m_preds = predict_majority_baseline_m(units)
     m_eval = evaluate_analysts_v05(units, m_preds)
     assert m_eval["tier1_utility"]["utility_per_100_requests"] == 0.0
-    assert m_eval["tier2_classification"]["weighted_accuracy"] == pytest.approx(0.5 / 2.0)
+    assert "max_possible_gain" not in m_eval["tier1_utility"]
+    assert "cross_fitted_ceiling" in m_eval["tier1_utility"]
 
     c_preds = [
         {
@@ -253,6 +559,8 @@ def test_v05_analyst_evaluation_four_tier_metrics():
             "analyst_group": "C",
             "p_prob": 0.02,
             "d_prob": 0.82,
+            "s_prob": 0.82,
+            "r_explicit_prob": 0.82,
             "r_prob": 0.82,
             "recommended_arm": "D",
             "predicted_label": "delivery_responsive",
@@ -265,9 +573,11 @@ def test_v05_analyst_evaluation_four_tier_metrics():
             "analyst_group": "C",
             "p_prob": 0.01,
             "d_prob": 0.02,
+            "s_prob": 0.02,
+            "r_explicit_prob": 0.78,
             "r_prob": 0.78,
-            "recommended_arm": "R",
-            "predicted_label": "rule_responsive",
+            "recommended_arm": "R_explicit",
+            "predicted_label": "explicit_rule_responsive",
             "confidence": 0.85,
             "abstain": False,
             "evidence_steps": [10],
@@ -277,18 +587,22 @@ def test_v05_analyst_evaluation_four_tier_metrics():
             "analyst_group": "C",
             "p_prob": 0.01,
             "d_prob": 0.02,
+            "s_prob": 0.02,
+            "r_explicit_prob": 0.03,
             "r_prob": 0.03,
             "recommended_arm": "none",
             "predicted_label": "unrecovered_under_protocol",
             "confidence": 0.80,
             "abstain": False,
-            "evidence_steps": [],  # Does not fabricate a step on unrecovered!
+            "evidence_steps": [],
         },
         {
             "unit_id": "u_broken",
             "analyst_group": "C",
             "p_prob": 0.50,
             "d_prob": 0.50,
+            "s_prob": 0.50,
+            "r_explicit_prob": 0.50,
             "r_prob": 0.50,
             "recommended_arm": "D",
             "predicted_label": "broken",
@@ -306,45 +620,18 @@ def test_v05_analyst_evaluation_four_tier_metrics():
     assert c_eval["tier4_localization_and_hallucination"]["false_localization_rate_on_unrecovered"] == 0.0
 
 
-def test_v05_sokoban_adaptation_and_r_all_message():
+def test_v05_sokoban_adaptation_boundary():
     u_dead = build_sokoban_v05_unit(
         "sokoban.r01", terminal_passed=False, max_band=0, terminal_band=0, k_star=0, first_deadlock_turn=14
     )
-    assert u_dead.operational_label == "broken"
-    assert u_dead.e1_observation.candidate_substate == "irreversible_state_damage"
+    # R4: Static corner deadlock without band regression is reported as independent_state_damage, NOT broken!
+    assert u_dead.operational_label is None
+    assert u_dead.e1_observation.e1_class == "never_succeeded_on_disk"
+    assert u_dead.e1_observation.independent_state_damage == "corner_deadlock_detected"
     assert u_dead.e1_observation.deadlock_turn == 14
 
-    u_never = build_sokoban_v05_unit(
-        "sokoban.r02", terminal_passed=False, max_band=0, terminal_band=0, k_star=5, first_deadlock_turn=None
+    u_reg = build_sokoban_v05_unit(
+        "sokoban.r02", terminal_passed=False, max_band=1, terminal_band=0, k_star=5, first_deadlock_turn=8
     )
-    assert u_never.operational_label is None
-    assert u_never.evidence_status == "not_applicable"
-
-    msg = build_r_all_intervention_message(["文档表格中没有空白行", "所有横线间距误差不超过0.15cm"])
-    assert "(1) 文档表格中没有空白行" in msg
-    assert "(2) 所有横线间距误差不超过0.15cm" in msg
-
-
-def test_v05_ipw_recoverability_and_rule_non_leakage():
-    from l2_sandbox.v05 import compute_ipw_recoverability_ratio, verify_rule_prompt_non_leakage
-
-    clean_prompt = build_r_all_intervention_message(["文档表格中没有空白行"])
-    assert verify_rule_prompt_non_leakage(clean_prompt, forbidden_tokens=["row_idx", "cell_text"]) is True
-    leaky_prompt = "Check def verify_table in officeval_003_verifier.py and assert row_idx == 0"
-    assert verify_rule_prompt_non_leakage(leaky_prompt, forbidden_tokens=["row_idx"]) is False
-
-    sampled_rows = [
-        {"family_id": "fam1", "deduction": 1.0, "inclusion_prob": 0.5, "recovered_by_D": True, "recovered_by_R": False, "inconclusive": False},
-        {"family_id": "fam2", "deduction": 1.0, "inclusion_prob": 0.5, "recovered_by_D": False, "recovered_by_R": True, "inconclusive": False},
-        {"family_id": "fam3", "deduction": 2.0, "inclusion_prob": 1.0, "recovered_by_D": False, "recovered_by_R": False, "inconclusive": True},
-        {"family_id": "fam4", "deduction": 2.0, "inclusion_prob": 1.0, "recovered_by_D": False, "recovered_by_R": False, "inconclusive": False},
-    ]
-    # Total HT denominator = 1/0.5 + 1/0.5 + 2/1.0 + 2/1.0 = 8.0
-    # D numerator = 2.0 -> lower bound = 2/8 = 0.25, upper bound (incl inconclusive 2.0) = 4/8 = 0.50
-    res = compute_ipw_recoverability_ratio(sampled_rows, total_never_deduction=8.0)
-    assert res["ht_denom_never_deduction"] == pytest.approx(8.0)
-    assert res["delivery_responsive_share_lower_bound"] == pytest.approx(0.25)
-    assert res["delivery_responsive_share_upper_bound_incl_inconclusive"] == pytest.approx(0.50)
-    assert res["rule_responsive_share_lower_bound"] == pytest.approx(0.25)
-    assert res["inconclusive_share"] == pytest.approx(0.25)
-
+    assert u_reg.operational_label == "broken"
+    assert u_reg.e1_observation.e1_class == "broken"
