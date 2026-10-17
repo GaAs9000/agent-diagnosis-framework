@@ -31,6 +31,26 @@ def test_healthy_missing_delivery_is_study_zero(package):
     assert result['zero_reason'] == 'missing_or_damaged_delivery'
 
 
+def test_openxml_malformed_line_spacing_attribute_error_is_study_zero(package):
+    path = package / 'official_grade.json'
+    grade = json.loads(path.read_text())
+    grade['official_raw'].update(
+        id='070',
+        file_name='技术路线图.pptx',
+        status='error',
+        error="AttributeError: 'NoneType' object has no attribute 'val'",
+    )
+    manifest = json.loads((package / 'manifest.json').read_text())
+    manifest['task']['task_id'] = 'officeval_070'
+    write(package / 'manifest.json', manifest)
+    grade['projection'] = interpret(grade['official_raw'], 'officeval_070')
+    write(path, grade)
+    result = study_outcome(package)
+    assert result['study_valid'] and result['study_outcome_y'] == 0.0
+    assert result['zero_reason'] == 'missing_or_damaged_delivery'
+
+
+
 @pytest.mark.parametrize('mutation', ['missing_grade', 'wrong_id', 'process_failure', 'worker_failure', 'infra',
                                      'nan', 'inf', 'bool', 'out_of_range', 'projection_mismatch', 'arbitrary_exception'])
 def test_fail_closed(package, mutation):

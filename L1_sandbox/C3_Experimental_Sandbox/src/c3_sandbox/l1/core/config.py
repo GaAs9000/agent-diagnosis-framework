@@ -29,8 +29,8 @@ DEFAULTS = {
 }
 ALLOWED = {k:set(v) if isinstance(v,dict) else None for k,v in DEFAULTS.items()}
 ALLOWED['benchmark'] |= {'source_dir','data_dir','assets_dir','bundle_dir','data_lock', 'allow_unlocked_data'}
-ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest','retry'}
-ALLOWED['agent'] |= {'system_prompt', 'harness', 'intervention'}
+ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest','weight_digest','retry'}
+ALLOWED['agent'] |= {'system_prompt', 'harness', 'intervention', 'compaction'}
 for section in ('benchmark','model','runtime','evaluation'): ALLOWED[section].add('options')
 
 
@@ -68,6 +68,15 @@ def validate(config: dict) -> dict:
     if 'harness' in config['agent'] and config['agent']['harness'] is not None:
         if config['agent']['harness'] not in ('minimal', 'pi'):
             raise ConfigurationError('agent.harness must be minimal or pi')
+    if 'compaction' in config['agent'] and config['agent']['compaction'] is not None:
+        comp = config['agent']['compaction']
+        if not isinstance(comp, dict) or not set(comp) <= {'enabled', 'context_window_tokens', 'reserve_tokens', 'keep_recent_tokens'}:
+            raise ConfigurationError('agent.compaction must be object with enabled, context_window_tokens, reserve_tokens, keep_recent_tokens')
+        if 'enabled' in comp and type(comp['enabled']) is not bool:
+            raise ConfigurationError('agent.compaction.enabled must be boolean')
+        for ck in ('context_window_tokens', 'reserve_tokens', 'keep_recent_tokens'):
+            if ck in comp and (type(comp[ck]) is not int or comp[ck] < 64):
+                raise ConfigurationError(f'agent.compaction.{ck} must be integer >= 64')
     if 'intervention' in config['agent'] and config['agent']['intervention'] is not None:
         iv = config['agent']['intervention']
         if not isinstance(iv, dict) or not set(iv) <= {'at_request', 'message', 'type'}:

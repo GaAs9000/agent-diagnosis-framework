@@ -313,3 +313,143 @@ def test_f22_treatment_arm_cold_resume_from_plain_parent_and_at_request_28(tmp_p
     assert b'INTERVENTION_AT_28' not in (fresh28_dir / 'raw/model/r000026/request.json').read_bytes()
     assert b'INTERVENTION_AT_28' in (fresh28_dir / 'raw/model/r000027/request.json').read_bytes()
 
+
+def test_pi_context_compaction_and_post_compaction_cold_resume(tmp_path, config, components):
+    import json
+    from c3_sandbox.l1.core.contracts import HTTPResult
+    from c3_sandbox.l1.evidence.live import scan
+    from c3_sandbox.l1.models.native import OpenAICompatibleBackend
+    from c3_sandbox.l1.storage import canonical, utc_now
+
+    def openai_call(name, args, native_id):
+        return {
+            'id': f'chatcmpl-{native_id}',
+            'object': 'chat.completion',
+            'model': 'Qwen/Qwen3.6-27B',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {
+                        'role': 'assistant',
+                        'content': 'Executing step ' + ('X' * 1200),
+                        'tool_calls': [
+                            {
+                                'id': native_id,
+                                'type': 'function',
+                                'function': {'name': name, 'arguments': json.dumps(args)},
+                            }
+                        ],
+                    },
+                    'finish_reason': 'tool_calls',
+                }
+            ],
+            'usage': {'prompt_tokens': 500, 'completion_tokens': 300, 'total_tokens': 800},
+        }
+
+    def openai_done():
+        return {
+            'id': 'chatcmpl-done',
+            'object': 'chat.completion',
+            'model': 'Qwen/Qwen3.6-27B',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Task complete.'},
+                    'finish_reason': 'stop',
+                }
+            ],
+            'usage': {'prompt_tokens': 400, 'completion_tokens': 10, 'total_tokens': 410},
+        }
+
+    class ScriptedOpenAI(OpenAICompatibleBackend):
+        def __init__(self, cfg, responses):
+            super().__init__(cfg)
+            self.responses = list(responses)
+
+        def send(self, body, timeout):
+            val = self.responses.pop(0)
+            return HTTPResult(
+                200,
+                canonical(val),
+                {
+                    'fixture': True,
+                    'started_at': utc_now(),
+                    'finished_at': utc_now(),
+                    'transport_error': None,
+                    'body_truncated': False,
+                },
+            )
+
+    pi_cfg = copy.deepcopy(config)
+    pi_cfg['model'].update(
+        adapter='openai-compatible',
+        kind='local',
+        provider='vllm-local-aml-b',
+        model='Qwen/Qwen3.6-27B',
+        base_url='http://127.0.0.1:8001/v1',
+        weight_digest='sha256:' + 'a' * 64,
+        tokenizer_digest='sha256:' + 'b' * 64,
+    )
+    pi_cfg['agent'] = {
+        'name': 'pi-coding-agent',
+        'version': '0.73.1',
+        'harness': 'pi',
+        'compaction': {
+            'enabled': True,
+            'context_window_tokens': 2400,
+            'reserve_tokens': 600,
+            'keep_recent_tokens': 500,
+        },
+    }
+    pi_cfg['budget'].update(max_model_requests=6, max_tool_calls=6)
+    pi_cfg['recording']['observation_limit_chars'] = 20000
+
+    responses = [
+        openai_call('write', {'path': 'step1.txt', 'content': 'A' * 1500}, 'call-1'),
+        openai_call('write', {'path': 'step2.txt', 'content': 'B' * 1500}, 'call-2'),
+        openai_call('write', {'path': 'step3.txt', 'content': 'C' * 1500}, 'call-3'),
+        openai_call('bash', {'command': 'echo done'}, 'call-4'),
+        openai_done(),
+    ]
+    parent_dir = tmp_path / 'compact_parent'
+    comp = {
+        **components,
+        'model': ScriptedOpenAI(pi_cfg['model'], responses),
+        'runtime': PiFixtureRuntime(),
+        'evaluation': FixtureEvaluator('success'),
+    }
+    res_parent = run(pi_cfg, parent_dir, injected=comp)
+    assert res_parent['verification']['verified'], res_parent
+
+    events = scan(parent_dir / 'trajectory.jsonl')['events']
+    compacted_events = [e for e in events if e['kind'] == 'session.compacted']
+    assert len(compacted_events) >= 1
+    first_compact_step = compacted_events[0]['data']['at_request']
+    cp_id = f'cp{first_compact_step:06d}'
+    cp_doc = read_json(parent_dir / f'checkpoints/{cp_id}.json')
+    assert '_pi_compaction' in cp_doc['conversation']
+    assert any(
+        '[PI CONTEXT COMPACTION SUMMARY' in str(m.get('content', ''))
+        for m in cp_doc['conversation']['messages']
+    )
+
+    # Cold-resume from the post-compaction checkpoint and verify byte-identical first model request (V3-G1)
+    remaining_steps = 5 - first_compact_step
+    child_responses = [
+        openai_call('bash', {'command': 'echo done'}, f'child-call-{i}')
+        for i in range(max(0, remaining_steps - 1))
+    ] + [openai_done()]
+    child_dir = tmp_path / 'compact_child'
+    child_comp = {
+        **components,
+        'model': ScriptedOpenAI(pi_cfg['model'], child_responses),
+        'runtime': PiFixtureRuntime(),
+        'evaluation': FixtureEvaluator('success'),
+    }
+    res_child = run(pi_cfg, child_dir, injected=child_comp, parent=parent_dir, checkpoint_id=cp_id)
+    assert res_child['verification']['verified'], res_child
+    req_rel = f'raw/model/r{first_compact_step:06d}/request.json'
+    assert (parent_dir / req_rel).read_bytes() == (child_dir / req_rel).read_bytes()
+    assert b'[PI CONTEXT COMPACTION SUMMARY' in (child_dir / req_rel).read_bytes()
+
+

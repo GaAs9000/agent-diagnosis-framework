@@ -57,6 +57,155 @@ def _inject_user_intervention(conversation: dict, message: str) -> dict:
     return new
 
 
+def _estimate_message_tokens(msg: dict) -> int:
+    """Conservative chars/4 token estimator matching pi-coding-agent@0.73.1 compaction.js."""
+    chars = 0
+    content = msg.get('content')
+    if isinstance(content, str):
+        chars += len(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get('type') == 'text' and isinstance(block.get('text'), str):
+                    chars += len(block['text'])
+                elif block.get('type') in ('image', 'image_url'):
+                    chars += 4800
+    for tc in msg.get('tool_calls') or []:
+        if isinstance(tc, dict):
+            fn = tc.get('function') or {}
+            chars += len(str(fn.get('name') or '')) + len(str(fn.get('arguments') or ''))
+    return max(1, (chars + 3) // 4)
+
+
+def _maybe_compact_pi_conversation(
+    conversation: dict,
+    comp_cfg: dict | None,
+    last_usage_tokens: int | None,
+    request_count: int,
+) -> tuple[dict, dict | None]:
+    """Deterministic Pi context compaction preserving system prompt, initial task prompt,
+    file operation tracking (readFiles/modifiedFiles), and recent turn boundaries.
+    """
+    if not isinstance(comp_cfg, dict) or not comp_cfg.get('enabled', False):
+        return conversation, None
+    messages = conversation.get('messages')
+    if not isinstance(messages, list) or len(messages) <= 4:
+        return conversation, None
+
+    context_window = int(comp_cfg.get('context_window_tokens', 131072))
+    reserve_tokens = int(comp_cfg.get('reserve_tokens', 16384))
+    keep_recent_tokens = int(comp_cfg.get('keep_recent_tokens', 20000))
+
+    est_total = sum(_estimate_message_tokens(m) for m in messages)
+    already_compacted = bool(conversation.get('_pi_compaction'))
+    reported = int(last_usage_tokens) if (isinstance(last_usage_tokens, int) and last_usage_tokens > 0) else 0
+    context_tokens = est_total if already_compacted else max(est_total, reported)
+    if context_tokens <= context_window - reserve_tokens:
+        return conversation, None
+
+    # Find last assistant message index so we never cut inside the final observation turn
+    last_assistant_idx = -1
+    for idx in range(len(messages) - 1, 1, -1):
+        if messages[idx].get('role') == 'assistant':
+            last_assistant_idx = idx
+            break
+    if last_assistant_idx <= 2:
+        return conversation, None
+
+    # Walk backwards from end to find cut point keeping ~keep_recent_tokens
+    # Never cut at a 'tool' message (must keep assistant + its tool results together)
+    valid_cuts = [
+        idx for idx in range(2, last_assistant_idx + 1)
+        if messages[idx].get('role') in ('user', 'assistant')
+        and not (
+            messages[idx].get('role') == 'user'
+            and isinstance(messages[idx].get('content'), str)
+            and messages[idx]['content'].startswith('[PI CONTEXT COMPACTION SUMMARY')
+        )
+    ]
+    if not valid_cuts:
+        return conversation, None
+
+    accumulated = 0
+    cut_idx = last_assistant_idx
+    for idx in range(len(messages) - 1, 1, -1):
+        accumulated += _estimate_message_tokens(messages[idx])
+        if accumulated >= keep_recent_tokens:
+            candidates = [c for c in valid_cuts if c <= idx]
+            cut_idx = candidates[-1] if candidates else valid_cuts[-1]
+            break
+
+    if cut_idx <= 2:
+        return conversation, None
+
+    to_summarize = messages[2:cut_idx]
+    if len(to_summarize) == 1 and isinstance(to_summarize[0].get('content'), str) and to_summarize[0]['content'].startswith('[PI CONTEXT COMPACTION SUMMARY'):
+        return conversation, None
+
+    prev_records = list(conversation.get('_pi_compaction') or [])
+    read_files: set[str] = set()
+    modified_files: set[str] = set()
+    for rec in prev_records:
+        read_files.update(rec.get('read_files') or [])
+        modified_files.update(rec.get('modified_files') or [])
+
+    digest_lines: list[str] = []
+    for m in to_summarize:
+        role = m.get('role')
+        if role == 'assistant':
+            for tc in m.get('tool_calls') or []:
+                fn = (tc.get('function') or {}) if isinstance(tc, dict) else {}
+                name = str(fn.get('name') or '')
+                raw_args = fn.get('arguments') or '{}'
+                try:
+                    parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args if isinstance(raw_args, dict) else {})
+                except Exception:
+                    parsed_args = {}
+                path_arg = parsed_args.get('path')
+                if name == 'read' and isinstance(path_arg, str):
+                    read_files.add(path_arg)
+                    digest_lines.append(f"- tool `read`: {path_arg}")
+                elif name in ('write', 'edit') and isinstance(path_arg, str):
+                    modified_files.add(path_arg)
+                    digest_lines.append(f"- tool `{name}`: {path_arg}")
+                elif name in ('bash', 'run'):
+                    cmd_str = str(parsed_args.get('command') or '').strip().splitlines()[0][:120]
+                    digest_lines.append(f"- tool `{name}`: {cmd_str}")
+
+    comp_index = len(prev_records) + 1
+    summary_text = (
+        f"[PI CONTEXT COMPACTION SUMMARY #{comp_index} at request {request_count}]\n"
+        f"Context tokens before compaction: {context_tokens} (threshold: {context_window - reserve_tokens}).\n"
+        f"Read files ({len(read_files)}): {', '.join(sorted(read_files)) if read_files else '(none)'}\n"
+        f"Modified files ({len(modified_files)}): {', '.join(sorted(modified_files)) if modified_files else '(none)'}\n"
+        f"Compacted actions ({len(digest_lines)}):\n"
+        + ("\n".join(digest_lines[-20:]) if digest_lines else "- (no tool actions in compacted prefix)")
+    )
+    summary_msg = {'role': 'user', 'content': summary_text}
+    new_messages = messages[:2] + [summary_msg] + messages[cut_idx:]
+    tokens_after_est = sum(_estimate_message_tokens(m) for m in new_messages)
+
+    receipt = {
+        'compaction_index': comp_index,
+        'at_request': request_count,
+        'tokens_before': context_tokens,
+        'tokens_after_estimate': tokens_after_est,
+        'context_window_tokens': context_window,
+        'reserve_tokens': reserve_tokens,
+        'keep_recent_tokens': keep_recent_tokens,
+        'compacted_message_count': len(to_summarize),
+        'kept_message_count': len(new_messages),
+        'cut_index': cut_idx,
+        'read_files': sorted(read_files),
+        'modified_files': sorted(modified_files),
+        'summary_sha256': digest(summary_msg),
+    }
+    new_conv = copy.deepcopy(conversation)
+    new_conv['messages'] = new_messages
+    new_conv['_pi_compaction'] = prev_records + [receipt]
+    return new_conv, receipt
+
+
 def build_execution_contract_prompt(config: dict) -> str:
     agent_cfg = config.get('agent', {})
     is_pi = active_harness(config) == 'pi'
@@ -510,6 +659,14 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 results.append((call,Result(delivered,actual.stdout,actual.stderr,actual.image,actual.image_mime,actual.provenance)))
             if interrupted_batch: break
             conversation=model.accept(conversation,reply,results)
+            conversation, comp_receipt = _maybe_compact_pi_conversation(
+                conversation,
+                config['agent'].get('compaction'),
+                current_tokens if type(current_tokens) is int else None,
+                request_count,
+            )
+            if comp_receipt is not None:
+                journal.emit('session.compacted', comp_receipt)
             if iv_cfg and request_count == iv_cfg['at_request'] - 1:
                 conversation = _inject_user_intervention(conversation, iv_cfg['message'])
             checkpoint()

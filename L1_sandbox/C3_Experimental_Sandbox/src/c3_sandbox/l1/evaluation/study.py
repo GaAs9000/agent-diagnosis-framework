@@ -111,6 +111,7 @@ def study_outcome(package: Path, *, verify_evidence: bool = False,
                 # Accept only determinate missing/damaged delivery errors, never an arbitrary exception.
                 delivery_errors = ('FileNotFoundError', 'BadZipFile', 'PackageNotFoundError',
                                    'InvalidFileException', 'XMLSyntaxError', 'ParseError',
+                                   "AttributeError: 'NoneType' object has no attribute 'val'",
                                    '未找到', '不存在', '无法打开', '不是 .docx', '损坏', 'corrupt', 'not a zip file')
                 if not any(marker in error for marker in delivery_errors):
                     return invalid('unhealthy_or_ambiguous_official_error')

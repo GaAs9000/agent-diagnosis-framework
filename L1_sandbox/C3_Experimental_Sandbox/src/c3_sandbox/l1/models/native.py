@@ -34,7 +34,7 @@ class GeminiBackend:
         return {'adapter':'gemini','kind':self.config['kind'],'provider':'google',
                 'requested_model':self.config['model'],'reported_revision':self.config.get('reported_revision'),
                 'tokenizer_digest':self.config.get('tokenizer_digest'),'native_protocol':'generateContent',
-                'weight_digest':None}
+                'weight_digest':self.config.get('weight_digest')}
     def initial(self,system,prompt):
         return {'systemInstruction':{'parts':[{'text':system}]},
                 'contents':[{'role':'user','parts':[{'text':prompt}]}]}
@@ -99,7 +99,7 @@ class OpenAICompatibleBackend:
                 'provider':self.config.get('provider','openai-compatible'),
                 'requested_model':self.config['model'],'reported_revision':self.config.get('reported_revision'),
                 'tokenizer_digest':self.config.get('tokenizer_digest'),'native_protocol':'chat-completions',
-                'weight_digest':None}
+                'weight_digest':self.config.get('weight_digest')}
     def initial(self,system,prompt):
         return {'messages':[{'role':'system','content':system},{'role':'user','content':prompt}]}
     def request(self,conversation,tools):

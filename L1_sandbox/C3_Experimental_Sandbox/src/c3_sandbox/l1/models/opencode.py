@@ -69,7 +69,7 @@ class OpenCodeChatBackend:
             'reported_revision': self.config.get('reported_revision'),
             'tokenizer_digest': self.config.get('tokenizer_digest'),
             'native_protocol': 'chat-completions',
-            'weight_digest': None,
+            'weight_digest': self.config.get('weight_digest'),
         }
 
     def initial(self, system, prompt):
@@ -193,7 +193,7 @@ class OpenAIResponsesBackend:
             'reported_revision': self.config.get('reported_revision'),
             'tokenizer_digest': self.config.get('tokenizer_digest'),
             'native_protocol': 'responses',
-            'weight_digest': None,
+            'weight_digest': self.config.get('weight_digest'),
         }
 
     def initial(self, system, prompt):
@@ -312,7 +312,7 @@ class AnthropicMessagesBackend:
             'reported_revision': self.config.get('reported_revision'),
             'tokenizer_digest': self.config.get('tokenizer_digest'),
             'native_protocol': 'anthropic-messages',
-            'weight_digest': None,
+            'weight_digest': self.config.get('weight_digest'),
         }
 
     def initial(self, system, prompt):
