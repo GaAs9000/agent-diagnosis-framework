@@ -1,0 +1,142 @@
+{
+  "schema": "prospective-dev45-launch-1",
+  "status": "running_at_snapshot",
+  "snapshot": {
+    "checked_at_hkt": "2026-10-19T00:19:23.158035+08:00",
+    "status": "running",
+    "source_commit": "8d32bdb8b1c4e5a93d053dd41566ec47dee42af9",
+    "plan_sha256": "a95a02eecdbcac28b1fac1b0474d507aefb697b1659ec193154ec144d94e8f9b",
+    "prospective_freeze_sha256": "77a63041dff3f327ef3d32d89c71f1b4476312d2ddc6dbebe748affa314e84fc",
+    "config_sha256": "09b6c6d83b779c06c7b15a34fe1b0893019af0fd75f6f4dce4de4f32fcfbf3c8",
+    "admitted_http_attempts": 27,
+    "invalid_attempts": 0,
+    "slots": [
+      {
+        "slot": "officeval_003.r00",
+        "episode_id": "ep_947ef872015c4e6d8f561172384c1b81",
+        "model_requests": 5,
+        "model_responses": 5,
+        "inspected_container_count": 5,
+        "first_request": "ep_947ef872015c4e6d8f561172384c1b81:r000000",
+        "root_lineage": null,
+        "terminal_manifest_present": true
+      },
+      {
+        "slot": "officeval_004.r00",
+        "episode_id": "ep_d4f78379b3ec4601bb87b06666f314fb",
+        "model_requests": 10,
+        "model_responses": 9,
+        "inspected_container_count": 10,
+        "first_request": "ep_d4f78379b3ec4601bb87b06666f314fb:r000000",
+        "root_lineage": null,
+        "terminal_manifest_present": false
+      },
+      {
+        "slot": "officeval_010.r00",
+        "episode_id": "ep_87aad721d1b7466faf0ad1ebd5544665",
+        "model_requests": 9,
+        "model_responses": 8,
+        "inspected_container_count": 7,
+        "first_request": "ep_87aad721d1b7466faf0ad1ebd5544665:r000000",
+        "root_lineage": null,
+        "terminal_manifest_present": false
+      },
+      {
+        "slot": "officeval_033.r00",
+        "episode_id": "ep_8b289c7bf77342a69b0ee101ba0b2be1",
+        "model_requests": 3,
+        "model_responses": 2,
+        "inspected_container_count": 3,
+        "first_request": "ep_8b289c7bf77342a69b0ee101ba0b2be1:r000000",
+        "root_lineage": null,
+        "terminal_manifest_present": false
+      }
+    ],
+    "completed_receipts": [
+      {
+        "label": "officeval_003.r00",
+        "status": "completed",
+        "study_valid": true,
+        "outcome": {
+          "study_valid": true,
+          "study_outcome_y": 0.0,
+          "zero_reason": "official_zero",
+          "study_classification": "valid_zero",
+          "endpoint_version": "study-outcome-v1",
+          "rule_version": "v1.1",
+          "native_evaluation_validity": "valid",
+          "native_projection_evaluation_validity": "valid",
+          "native_status": "ok",
+          "native_error": null
+        }
+      }
+    ],
+    "limits": {
+      "slots": 45,
+      "logical": 1575,
+      "http": 6300,
+      "lease_seconds": 21600
+    },
+    "gpu_owner": "a95a02eecdbcac28b1fac1b0474d507aefb697b1659ec193154ec144d94e8f9b",
+    "e1_status": "NOT_RUN",
+    "g2_mechanism_post_audit": "NOT_RUN",
+    "d0_frozen": false,
+    "d1_execution": false
+  },
+  "mechanism_mini": {
+    "recorded_tool_attempts": 5,
+    "restore_and_request_exact": 5,
+    "full_tool_exact": 3,
+    "declared_runtime_variance": [
+      "docx_zip_member_timestamps",
+      "ls_filesystem_metadata"
+    ],
+    "unexplained_differences": 0,
+    "actor_requests": 0,
+    "policy": "bounded-mechanism-contract-v1",
+    "user_authorized": true
+  },
+  "preparation": {
+    "preparation_links_validated": true,
+    "future_g4_verified": false,
+    "image_inventory_entries": 17207,
+    "known_private_fingerprint_matches": 0,
+    "public_task_count": 9,
+    "public_asset_count": 16,
+    "public_downloads_verified": 25,
+    "model_files": 29,
+    "full_weight_shards_hashed": 15,
+    "vllm_python_files_hashed": 5103,
+    "vllm_version": "0.30.0",
+    "model_runtime_identity_sha256": "25630fdbecb08f005a10d1173080003c6ddaad521cf52144fd122cc4b3043d68",
+    "actual_observer_preflight": "passed; two containers; cleaned",
+    "tests": {
+      "passed": 1348,
+      "skipped": 32,
+      "execution": "aml-b CPU4"
+    }
+  },
+  "lease_hkt": {
+    "started_epoch": "2026-10-19T00:12:38.455564+08:00",
+    "hard_stop_epoch": "2026-10-19T06:12:38.455564+08:00",
+    "service_stop_epoch": "2026-10-19T06:02:38.455564+08:00"
+  },
+  "e1_status": "NOT_RUN",
+  "g2_post_collection_audit": "NOT_RUN",
+  "d0_frozen": false,
+  "d1_execution": false,
+  "evidence": {
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/plan.json": "298bcd4f98fdde206021ad94bd50c690f360665bc7e429beb48f4113606861f9",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/freeze.json": "c6ba12ca7b31c7773783b43b83820dd280edf4ebdbc60592d03e632321aa3789",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/service.json": "fd29d37d275366d476fd7512ba2a1f79a661bb47bb8e6c6f1413046332de8d6c",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/live_launch_proof.json": "de4bfb413636c5b8508fd14be31d62c5bc7e7cfa7145a3e8656a00ad4ec0a7e8",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/supervisor_launch.json": "06d9c6142e9ac0dbe902fa5a2902993e14d4ef2454ff6357c7e0105a9969a27f",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/prospective_freeze.json": "77a63041dff3f327ef3d32d89c71f1b4476312d2ddc6dbebe748affa314e84fc",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/verified_artifacts.json": "dfbf082e25d447c1adb9de1382412e94262d5cc7c0f6e0b7bce7afb42b9f849b",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p0_actual/result.json": "0bba2384212d7dd7221f14ae83f4ffa05c38eaedf0f60117c0b1266289b0ed5e",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p1_verification_image_pin/verification.json": "f5efa33651b1980ee4c747126f5a77291c7090fbe2c2bf740a88f91f38a063a1",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p1_live_preflight/result.json": "8c2f332db164fd8055a573ad5875bbb325729be355122d9df9c7df4fb61938e3",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/mini_contract_authorization.json": "f99d1bfa2cfbeaa5fbd48ca2ac7372de41795581155cf9458520c8a839da56e4",
+    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_prospective_dev45_20261018/episodes/officeval_003.r00/raw/model/r000000/http.json": "449833a72912d75fe2888d53b8efffb27dc025cfe945d5984130c48c11d041d4"
+  }
+}
