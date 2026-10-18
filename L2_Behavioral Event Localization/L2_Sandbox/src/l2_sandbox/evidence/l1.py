@@ -53,8 +53,8 @@ class L1Package:
                     s = self.json(snap_ref)
                     self.snapshots[s['snapshot_id']] = s
 
-        # Turn offset: root runs start at 0 (so first model turn is 1);
-        # branches resumed from cp{k:06d} start at k (so first resampled turn is k + 1).
+        # Checkpoint ordinals are local to each segment; spent request budgets
+        # retain the cumulative turn offset across nested continuations.
         self.start_turn: int = self._resolve_start_turn()
         self.local_turns: int = sum(1 for e in self.events if e.get('kind') == 'model.request')
         self.turns: int = self.start_turn + self.local_turns
@@ -73,6 +73,13 @@ class L1Package:
             raise IntegrityError('L1 evidence index episode mismatch')
 
     def _resolve_start_turn(self) -> int:
+        initial = self.checkpoints().get(0)
+        if initial is not None:
+            spent = initial['budget_used'].get('model_requests')
+            if 'model_requests' in initial['budget_used']:
+                if type(spent) is not int or spent < 0:
+                    raise IntegrityError('Initial checkpoint has invalid cumulative model request budget')
+                return spent
         lineage = self.manifest.get('lineage') or {}
         cp_id = lineage.get('parent_checkpoint_id')
         if isinstance(cp_id, str):
@@ -214,7 +221,11 @@ class L1Package:
                 }
         if actual_cfg != expected_cfg:
             raise IntegrityError(f'Branch actor config mismatch: {self.root}')
-        if self.start_turn != k or self.family_id != parent.family_id:
+        spent = cp['budget_used'].get('model_requests')
+        if 'model_requests' in cp['budget_used'] and (type(spent) is not int or spent < 0):
+            raise IntegrityError('Parent checkpoint has invalid cumulative model request budget')
+        expected_start = spent if 'model_requests' in cp['budget_used'] else k
+        if self.start_turn != expected_start or self.family_id != parent.family_id:
             raise IntegrityError(f'Branch checkpoint/task mismatch: {self.root}')
 
     def model_version(self) -> str | None:

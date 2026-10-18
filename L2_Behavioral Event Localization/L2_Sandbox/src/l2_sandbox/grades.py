@@ -679,11 +679,12 @@ def grade_episode_snapshots(
     extra_runs: list[L1Package] | None = None,
     verify_terminal_submission: bool = True,
 ) -> list[dict[str, Any]]:
-    """Evaluate all checkpoints c_0 .. c_T (and terminal submission/) for an L1Package.
+    """Evaluate recorded checkpoints and the terminal snapshot for an L1Package.
 
     Returns the rows for `grades.jsonl`:
       - Row 0: `kind == "terminal_submission"` (official terminal submission/ grade Y)
-      - Rows 1..T+1: `kind == "checkpoint"` for k = 0 .. T (snapshot grade s(k) and d_i(k))
+      - Other rows: `kind == "checkpoint"`, with cumulative request boundary k,
+        actual local checkpoint ID, or an explicitly synthetic terminal snapshot.
     """
     t0 = time.monotonic()
     resolved_cfg = pkg.json('raw/resolved_config.json')
@@ -712,7 +713,7 @@ def grade_episode_snapshots(
     s0 = pkg.snapshots.get('s000000') or pkg.json('states/snapshots/s000000.json')
     initial_input_hashes = {f['sha256'] for f in s0.get('files', []) if f['path'].startswith('input/')}
 
-    # Build ordered list of (k, checkpoint_id, snapshot_id) for k = 0 .. T
+    # Preserve local checkpoint IDs while labelling snapshots by spent global turns.
     cps = pkg.checkpoints()
     T = pkg.turns
     all_snapshots = sorted(
@@ -720,12 +721,17 @@ def grade_episode_snapshots(
         key=lambda s: int(s[1:]),
     )
     final_snap_id = all_snapshots[-1]
-    checkpoint_steps: list[tuple[int, str, str]] = []
-    for k in range(T + 1):
-        if k in cps:
-            checkpoint_steps.append((k, cps[k]['checkpoint_id'], cps[k]['snapshot_id']))
-        elif k == T:
-            checkpoint_steps.append((T, f'cp{T:06d}', final_snap_id))
+    checkpoint_steps: list[tuple[int, str | None, str]] = []
+    for local_k, cp in sorted(cps.items()):
+        spent = cp['budget_used'].get('model_requests')
+        if 'model_requests' in cp['budget_used'] and (type(spent) is not int or spent < 0):
+            raise L2Error(f"Checkpoint {cp['checkpoint_id']} has invalid cumulative request budget")
+        k = spent if 'model_requests' in cp['budget_used'] else pkg.start_turn + local_k
+        if not pkg.start_turn <= k <= T or (checkpoint_steps and k <= checkpoint_steps[-1][0]):
+            raise L2Error('Checkpoint cumulative request boundaries are outside the segment or not increasing')
+        checkpoint_steps.append((k, cp['checkpoint_id'], cp['snapshot_id']))
+    if not any(k == T for k, _, _ in checkpoint_steps):
+        checkpoint_steps.append((T, None, final_snap_id))
 
     # Track last_written_turn_by_k[k][path] incrementally across k = 0 .. T
     running_last_written: dict[str, int] = {}
@@ -836,6 +842,7 @@ def grade_episode_snapshots(
                 'task_id': pkg.family_id,
                 'k': k,
                 'checkpoint_id': cp_id,
+                'synthetic_terminal_checkpoint': cp_id is None,
                 'snapshot_id': snap_id,
                 'candidate_status': 'no_candidate',
                 'candidate': [],
@@ -900,6 +907,7 @@ def grade_episode_snapshots(
                         'task_id': pkg.family_id,
                         'k': k,
                         'checkpoint_id': cp_id,
+                        'synthetic_terminal_checkpoint': cp_id is None,
                         'snapshot_id': snap_id,
                         'candidate_status': 'ok',
                         'candidate': cand['paths'],
