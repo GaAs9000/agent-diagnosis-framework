@@ -1,0 +1,88 @@
+{
+  "schema_version": "t2-execution-closeout-1",
+  "d0_frozen": false,
+  "scientific_efficacy": "not_tested",
+  "code_commits": [
+    "ac88969",
+    "410dd43"
+  ],
+  "original_dev_study_valid": 44,
+  "expected_dev": 45,
+  "new_t2_parent_study_valid": false,
+  "termination": "protocol_error",
+  "new_http_attempts": 10,
+  "aggregate_prerequisite_http_attempts_including_probe": 144,
+  "native_http_200_count": 10,
+  "native_http_max_duration_seconds": 287.5188727499917,
+  "native_transport_errors": [],
+  "rejected_call": {
+    "tool": "edit",
+    "argument_keys": [
+      "edits"
+    ],
+    "has_top_level_path": false,
+    "has_nested_edit_path": true,
+    "schema_required": [
+      "path",
+      "edits"
+    ],
+    "edit_item_additional_properties": false
+  },
+  "g2_attempts": 0,
+  "g2_status": "incomplete",
+  "e1": {
+    "status": "not_run_study_invalid",
+    "scope": "new050only"
+  },
+  "postprocess_status": "terminal_snapshot",
+  "postprocess_remote_audits": {
+    "status": "scoped_new_package_audits_completed",
+    "remote_data": "/home/jiasheren2/projects/d0_timeout600_postprocess/1a6347e9a92ebeabcb7e0313e4832cb3d9b31dfb93e55d73cd10b86e40cc2215",
+    "transfers": {
+      "episodes/officeval_050.r04": "56ad4eb362ceab6581f0d9832261d61335976791a89bb24a3c93b418127ffe43"
+    },
+    "scope": [
+      "episodes/officeval_050.r04"
+    ],
+    "per_audit_scopes": {
+      "sealed_verification": [
+        "episodes/officeval_050.r04"
+      ],
+      "g1": [
+        "episodes/officeval_050.r04"
+      ],
+      "g4": []
+    }
+  },
+  "test_suites": {
+    "initial_cpu_tests": 84,
+    "postprocess_cpu_tests": 15,
+    "host": "aml-b CPU4",
+    "actor_requests_during_tests": 0,
+    "docker_cleanup_tests": "simulated; E1 not executed in this invalid-parent phase"
+  },
+  "evidence_sha256": {
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout600_t2/result.json": "304e034fa1cdc399ca24d6db8daebfdd7bcf63e2c9280904344f993d1d173853",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout600_t2/supervisor_result.json": "ff6edcade93e1f655db02ca9f4b049d874ed2ad72483e60db948a8b380b1dd4b",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout600_t2/postprocess/manifest.json": "53deb796ade08ab1ce159a43ed8a9c7abebf3eac04bd1ed03962b40f799238c7",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout600_t2/postprocess_supervisor_result.json": "7f70e9567388840c03c39680b13df27740c1b505d74cfddf38d8de1e46784791",
+    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_t2_20261018/episodes/officeval_050.r04/evidence_index.json": "56ad4eb362ceab6581f0d9832261d61335976791a89bb24a3c93b418127ffe43",
+    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_t2_20261018/episodes/officeval_050.r04/trajectory.jsonl": "4e029ca1fcd374375ff2d357d3ea4ec6a27b1fde465d4ad6b3aa1ae4a73aed58",
+    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_dev45_t2_20261018/episodes/officeval_050.r04/raw/model/r000009/request.json": "25692b73dd144140a180f85c046915adb43f0be1b2bb5b824ad327c3057aafc8"
+  },
+  "service_release": {
+    "host": "aml-b",
+    "service_group": 3851573,
+    "signal": "SIGTERM",
+    "idle_before_stop": true,
+    "service_pids_absent": [
+      3851573,
+      3851575,
+      3865221
+    ],
+    "gpu_index": 4,
+    "gpu_memory_used_mib_after": 3,
+    "gpu_utilization_percent_after": 0,
+    "gpu_renewal": false
+  }
+}
