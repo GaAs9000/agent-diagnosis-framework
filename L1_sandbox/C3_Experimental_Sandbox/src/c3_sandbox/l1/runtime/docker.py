@@ -112,8 +112,11 @@ exit $ec
 class DockerRuntime:
     def __init__(self,config):
         self.config=config; self.provenance=None; self.is_quiescent=True; self.event_sink=None
+        self.execution_observer=None
     def set_event_sink(self,sink):
         self.event_sink=sink
+    def set_execution_observer(self,observer):
+        self.execution_observer=observer
     def _has_app_git(self)->bool:
         opts=self.config.get('options') or {}
         if 'persist_app_repo' in opts:
@@ -200,6 +203,8 @@ class DockerRuntime:
             if self.event_sink:
                 self.event_sink('runtime.container.created',{'container_id':cid,'image_id':self.provenance['image_id'],
                     'mounts':[{'target':target,'read_only':ro,'source_name':source.name} for source,target,ro in mounts]})
+            if self.execution_observer is not None:
+                self.execution_observer(cid,docker_json('inspect',cid)[0])
             process=bounded_process(['docker','start','-a',cid],timeout,self.config['output_limit_bytes'],kill)
             inspection=docker_json('inspect',cid)[0]
             state=inspection.get('State',{})

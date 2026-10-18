@@ -477,13 +477,15 @@ def _initial_upgrade_request(parent: Path, manifest: dict, cp: dict) -> bytes:
     return (parent/request['data']['body']['path']).read_bytes()
 
 
-def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False,resume_context_overflow_id:str|None=None)->dict:
+def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False,resume_context_overflow_id:str|None=None,execution_observer=None)->dict:
     """Optionally admit every HTTP attempt via acquire(estimate, timeout)->bool.
 
     reconcile(estimate, actual) retains unknown usage with actual=None. An
     admitted attempt that never sends refunds its reservation with actual=0.
     The limiter is external runtime state and never enters resolved config.
     An optional remaining_seconds() also bounds transport and tool deadlines.
+    Optional per-run execution_observer binds external provenance before the
+    first container; observation failure prevents that container from starting.
     """
     config=copy.deepcopy(validate(config)); output=Path(output).absolute()
     if (config['agent'].get('validation_policy') == 'pi-native-0.73.1'
@@ -491,6 +493,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             and config['agent'].get('harness_revision') != 'l1-pi-native-errors-context-v2'):
         raise ConfigurationError('Native Pi compaction execution requires harness_revision=l1-pi-native-errors-context-v2; migrate the config explicitly')
     config['agent']['system_prompt']=build_execution_contract_prompt(config)
+    if execution_observer is not None:
+        execution_observer.validate(copy.deepcopy(config))
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
     if resume_response_id is not None and (parent is None or checkpoint_id is None):
         raise ConfigurationError('Saved-response continuation requires parent and checkpoint_id')
@@ -637,6 +641,11 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         cp_records.append({'checkpoint_id':cp_id,'path':relative,'eligible':q['eligible']})
         journal.emit('checkpoint.created',{'checkpoint':journal.ref(relative)})
     try:
+        if execution_observer is not None:
+            execution_observer.bind_workspace(workspace)
+            binding=execution_observer.bind_episode(eid,digest(config))
+            write_json(output,'runtime/prospective/anchor.json',binding)
+            journal.emit('provenance.bound',{'anchor':journal.ref('runtime/prospective/anchor.json')})
         if injected is not None:
             comp=injected; mode='test_fixture'
         elif parent_cp is None:
@@ -657,6 +666,16 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         runtime=comp['runtime']; model=comp['model']; evaluator=comp['evaluation']; components_ready=True
         if hasattr(runtime,'set_event_sink'):
             runtime.set_event_sink(lambda kind,data:journal.emit(kind,data))
+        if execution_observer is not None:
+            if not hasattr(runtime,'set_execution_observer'):
+                raise ConfigurationError('Runtime does not support prospective execution observation')
+            def observe_container(cid,inspection):
+                receipt=execution_observer.observe_container(cid,copy.deepcopy(inspection))
+                relative=f'runtime/prospective/containers/{cid}.json'
+                write_json(output,relative,{'container_id':cid,'inspection':inspection,'receipt':receipt})
+                journal.emit('runtime.container.inspected',{'container_id':cid,'inspection':journal.ref(relative)})
+                return receipt
+            runtime.set_execution_observer(observe_container)
         model.native_pi_validation=native_policy
         agent_info['identity']=model.identity()
         if native_policy:
