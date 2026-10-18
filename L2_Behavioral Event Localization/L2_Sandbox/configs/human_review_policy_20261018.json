@@ -1,0 +1,16 @@
+{
+  "schema_version": "human-review-policy-1",
+  "human_review_policy": "waived_by_user",
+  "authorization_source": "direct_user_message",
+  "exact_text": "跳过人审核",
+  "source": "direct human user message in this chat on 2026-10-18",
+  "scope": [
+    "requirement_catalog_human_review",
+    "G3_human_review"
+  ],
+  "review_status": "automatic_unreviewed",
+  "preserve_existing_human_approvals": true,
+  "fabricate_human_signatures": false,
+  "technical_measurement_requirements_unchanged": true,
+  "thresholds_and_execution_limits_unchanged": true
+}

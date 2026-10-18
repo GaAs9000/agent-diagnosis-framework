@@ -307,6 +307,8 @@ def build_task_requirement_lists(
     task_id: str,
     *,
     rubrics_dir: Path | None = None,
+    human_review_policy: str = "required",
+    review_authorization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """R7 & R8 (V3 §3.4): Build full whole-task `explicit` and `implicit` requirement lists for `task_id`.
 
@@ -321,7 +323,23 @@ def build_task_requirement_lists(
         requirements without leaking hidden verifier numeric tolerances)
       * `exact_verifier_specification` -> appended to `implicit` (so `R_implicit` includes all exact
         verifier tolerances in addition to pure `implicit` rules).
+    - An explicit user waiver can make sourced, resolved rules execution-eligible;
+      it never fills reviewer fields or changes the actual `review_complete` flag.
     """
+    # A waiver changes execution eligibility, never the historical review record.
+    if human_review_policy not in {"required", "waived_by_user"}:
+        raise L2Error("Unknown human_review_policy")
+    if human_review_policy == "waived_by_user" and (
+        not isinstance(review_authorization, dict)
+        or review_authorization.get("human_review_policy") != "waived_by_user"
+        or review_authorization.get("authorization_source") != "direct_user_message"
+        or review_authorization.get("exact_text") != "跳过人审核"
+        or not isinstance(review_authorization.get("scope"), list)
+        or "requirement_catalog_human_review" not in review_authorization["scope"]
+        or not all(isinstance(review_authorization.get(key), str)
+                   and review_authorization[key].strip() for key in ("exact_text", "source"))
+    ):
+        raise L2Error("Human review waiver requires scoped direct user authorization exact_text and source")
     short_id = task_id.split(":")[-1]
     full_id = f"officeval:{short_id}" if not task_id.startswith("officeval:") else task_id
 
@@ -415,24 +433,55 @@ def build_task_requirement_lists(
 
     unresolved_rules: list[str] = []
     provenance_errors: list[str] = []
+    source_errors: list[str] = []
+    human_review_missing: list[str] = []
+    category_errors: list[str] = []
+
+    def valid_citation(value: Any) -> bool:
+        if isinstance(value, str):
+            return bool(value.strip())  # Legacy path:line citations remain supported.
+        if isinstance(value, list):
+            return bool(value) and all(isinstance(item, dict) and valid_citation(item) for item in value)
+        if not isinstance(value, dict):
+            return False
+        path, sha = value.get("path"), value.get("sha256")
+        location = any(isinstance(value.get(k), str) and value[k].strip()
+                       for k in ("quote", "json_pointer"))
+        location = location or (type(value.get("line_start")) is int and value["line_start"] > 0)
+        return (isinstance(path, str) and bool(path.strip()) and isinstance(sha, str)
+                and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha.lower())
+                and bool(location))
+
     for cleaned, info in normalized_rules:
         if not all(info.get(k) for k in ("reviewer", "reviewed_at", "source_citation")):
             provenance_errors.append(cleaned)
+        if not all(info.get(k) for k in ("reviewer", "reviewed_at")):
+            human_review_missing.append(cleaned)
+        if not valid_citation(info.get("source_citation")):
+            source_errors.append(cleaned)
         cat = str((info or {}).get("source_category") or (info or {}).get("rule_source") or "ambiguous")
+        if cat not in {"explicit", "implicit", "ambiguous"}:
+            category_errors.append(cleaned)
         if cat == "explicit":
-            explicit_only.append(cleaned)
-            if cleaned not in explicit_reqs:
-                explicit_reqs.append(cleaned)
+            visible = str(info.get("visible_requirement") or cleaned).strip()
+            if not info.get("lookup_only"):
+                explicit_only.append(visible)
+                if visible not in explicit_reqs:
+                    explicit_reqs.append(visible)
         elif cat == "implicit":
-            implicit_only.append(cleaned)
-            if cleaned not in implicit_reqs:
-                implicit_reqs.append(cleaned)
+            exact = str(info.get("exact_verifier_specification") or cleaned).strip()
+            if not info.get("lookup_only"):
+                implicit_only.append(exact)
+                if exact not in implicit_reqs:
+                    implicit_reqs.append(exact)
         else:
             ambiguous_reqs.append(cleaned)
             try:
                 vis_req, exact_spec = split_ambiguous_requirement(cleaned, info)
             except L2Error:
                 unresolved_rules.append(cleaned)
+                continue
+            if info.get("lookup_only"):
                 continue
             ambiguous_visible.append(vis_req)
             ambiguous_exact.append(exact_spec)
@@ -441,11 +490,28 @@ def build_task_requirement_lists(
             if exact_spec not in implicit_reqs:
                 implicit_reqs.append(exact_spec)
 
+    review_complete = bool(normalized_rules) and not unresolved_rules and not provenance_errors
+    execution_errors = list(dict.fromkeys(
+        unresolved_rules + source_errors + category_errors
+        + (provenance_errors if human_review_policy == "required" else [])
+    ))
+    execution_eligible = bool(normalized_rules) and not execution_errors
+    accepted_errors = provenance_errors if human_review_policy == "required" else source_errors + category_errors
     return {
         "task_id": short_id,
         "rule_sources": {rule: info.get("source_category", info.get("rule_source", "ambiguous"))
-                         for rule, info in normalized_rules if rule not in provenance_errors and rule not in unresolved_rules},
-        "review_complete": bool(normalized_rules) and not unresolved_rules and not provenance_errors,
+                         for rule, info in normalized_rules if rule not in accepted_errors and rule not in unresolved_rules},
+        "review_complete": review_complete,
+        "human_review_policy": human_review_policy,
+        "review_authorization": dict(review_authorization) if human_review_policy == "waived_by_user" else None,
+        "review_authorization_sha256": digest(review_authorization) if human_review_policy == "waived_by_user" else None,
+        "execution_eligible": execution_eligible,
+        "validation_status": (
+            "human_reviewed" if execution_eligible and review_complete else
+            "user_waived_human_review" if execution_eligible else "blocked"
+        ),
+        "execution_errors": execution_errors,
+        "human_review_missing": human_review_missing,
         "unresolved_rules": unresolved_rules,
         "provenance_errors": provenance_errors,
         "explicit": explicit_reqs,

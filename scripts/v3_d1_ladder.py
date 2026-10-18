@@ -51,12 +51,14 @@ from l2_sandbox.v05 import (  # noqa: E402
 )
 
 from l2_sandbox.v3_execution import (Admission, approve, digest, exclusive, file_digest, identity, native_branch, read_json, seal, verify_branch, verify_seal, write_json)
-from l2_sandbox.measurement_gates import measurement_gate_binding, verify_measurement_gate_binding
+from l2_sandbox.measurement_gates import human_review_policy_binding, measurement_gate_binding, verify_measurement_gate_binding
 
 DEFAULT_DEV45_RUNS_DIR = L1_ROOT / "runs" / "v3_qwen36_pi_dev45_20261017" / "episodes"
-DEFAULT_DEV45_DIAG_DIR = L2_ROOT / "diagnoses" / "v3_qwen36_pi_dev45_20261017"
-DEFAULT_P0A_CATALOG = L2_ROOT / "reports" / "v3_p0a_audit_20261017.json"
-DEFAULT_PLAN_OUT = L2_ROOT / "reports" / "v3_d1_ladder_plan_20261017.json"
+DEFAULT_DEV45_DIAG_DIR = L2_ROOT / "diagnoses" / "d0_20261018"
+DEFAULT_P0A_CATALOG = L2_ROOT / "validation/d0_human_waiver_20261018/requirements_catalog.json"
+DEFAULT_REVIEW_AUTHORIZATION = L2_ROOT / "configs/human_review_policy_20261018.json"
+DEFAULT_GATE_AUDIT = L2_ROOT / "validation/d0_human_waiver_20261018/measurement_audit.json"
+DEFAULT_PLAN_OUT = L2_ROOT / "validation/d0_human_waiver_20261018/d1_plan.json"
 DEFAULT_OUTCOMES_OUT = L2_ROOT / "reports" / "v3_d1_ladder_outcomes_20261017.json"
 DEFAULT_D0_FREEZE_FILE = L2_ROOT / "configs" / "v3_d0_freeze.json"
 DEFAULT_RECEIPTS_DIR = L2_ROOT / "validation" / "v3_d1_receipts"
@@ -64,6 +66,27 @@ DEFAULT_RECEIPTS_DIR = L2_ROOT / "validation" / "v3_d1_receipts"
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _bind_requirement_review_policy(path: Path | None) -> tuple[dict, dict | None]:
+    if path is None:
+        return {"human_review_policy": "required", "human_review_status": "required"}, None
+    audit = {"human_review_policy": "waived_by_user", "human_review_authorization": {
+        "path": str(path.resolve()), "sha256": file_digest(path)}}
+    binding, errors = human_review_policy_binding(
+        audit, path, required_scope="requirement_catalog_human_review")
+    if errors:
+        raise ValueError(";".join(errors))
+    return binding, read_json(path)
+
+
+def _verify_requirement_review_policy(plan: dict) -> None:
+    frozen = plan.get("requirements_review_policy_binding")
+    if not frozen or frozen.get("human_review_policy") == "required":
+        return
+    current, _ = _bind_requirement_review_policy(Path(frozen["human_review_authorization"]["path"]))
+    if current != frozen:
+        raise ValueError("requirement review policy authorization changed")
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -145,12 +168,16 @@ def build_d1_units_and_plan(
     alpha: float = 0.05,
     ceiling_threshold: float = 0.05,
     gate_audit_path: Path | None = None,
+    human_review_authorization_path: Path | None = None,
 ) -> dict[str, Any]:
     if not 0 < passing_harm_sample_size <= 6:
         raise ValueError("passing harm sample must be positive and capped at six")
     if target_failure_units <= 0 or n_per_arm <= 0:
         raise ValueError("positive failure-unit target and replication count required")
     p0a = _load_json(p0a_catalog_path) if p0a_catalog_path.exists() else {}
+    review_policy, review_authorization = _bind_requirement_review_policy(human_review_authorization_path)
+    requirement_options = {"human_review_policy": review_policy["human_review_policy"],
+                           "review_authorization": review_authorization}
     family_path = L1_ROOT / "benchmarks/officeval/family_split.json"
     family_doc = read_json(family_path)
     families = {r["task_id"]: r["family_id"] for r in family_doc["tasks"]}
@@ -195,7 +222,7 @@ def build_d1_units_and_plan(
             term_score = float(st_out.get("study_outcome_y") or 0.0)
 
             if short_task not in task_req_cache:
-                req_lists = build_task_requirement_lists(p0a, short_task)
+                req_lists = build_task_requirement_lists(p0a, short_task, **requirement_options)
                 task_req_cache[short_task] = req_lists
                 ladder_msgs = build_ladder_intervention_messages(
                     explicit_requirements=req_lists["explicit"],
@@ -218,8 +245,9 @@ def build_d1_units_and_plan(
                 req_lists = task_req_cache[short_task]
                 ladder_msgs = task_ladder_specs[short_task]["ladder_messages"]
 
-            if not req_lists.get("review_complete"):
-                readiness_errors.append(f"{short_task}:whole_task_requirements_not_reviewed")
+            if not req_lists.get("execution_eligible", req_lists.get("review_complete")):
+                reason = "not_reviewed" if review_policy["human_review_policy"] == "required" else "source_or_split_invalid"
+                readiness_errors.append(f"{short_task}:whole_task_requirements_{reason}")
             grades_path = diag_dir / ep_id / "grades.jsonl"
             cp_rows = _load_jsonl(grades_path)
             if cp_rows:
@@ -331,7 +359,8 @@ def build_d1_units_and_plan(
                     if isinstance(r_src, dict):
                         r_src = r_src.get("source_category", "ambiguous")
                     if rule_txt not in (req_lists.get("rule_sources") or {}):
-                        readiness_errors.append(f"{short_task}:unreviewed_rule:{rule_txt}")
+                        reason = "unreviewed_rule" if review_policy["human_review_policy"] == "required" else "rule_not_in_sourced_catalog"
+                        readiness_errors.append(f"{short_task}:{reason}:{rule_txt}")
                     units.append(
                         DiagnosticUnitV05(
                             unit_id=f"{ep_id}::ITEM::{idx}",
@@ -398,7 +427,7 @@ def build_d1_units_and_plan(
     units_by_id = {u.unit_id: u for u in units}
     for s_unit in frame["sampled_units"]:
         t_id = s_unit["task_id"]
-        req_lists = task_req_cache.get(t_id) or build_task_requirement_lists(p0a, t_id)
+        req_lists = task_req_cache.get(t_id) or build_task_requirement_lists(p0a, t_id, **requirement_options)
         single_req = (
             str(s_unit.get("defect_name") or "").strip()
             if s_unit["rule_source"] != "gate_or_no_artifact"
@@ -471,6 +500,7 @@ def build_d1_units_and_plan(
         "pricing_mode": "local_no_provider_charge",
         "actor_identity": actor_identities[0] if actor_identities and all(x == actor_identities[0] for x in actor_identities) else None,
         "mode": "plan_only",
+        "requirements_review_policy_binding": review_policy,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "note": (
             "Development-set descriptive planning artifact (R15, R18). "
@@ -576,6 +606,7 @@ def _execute_d1_locked(plan, *, runs_dir, receipts_dir, outcomes_out, freeze, br
         raise ValueError('offline simulation requires an explicit injected adapter; native execution is forbidden')
     caps = approve(plan, freeze)
     if not simulate_offline:
+        _verify_requirement_review_policy(plan)
         verify_measurement_gate_binding(plan)
     ledger = Admission(receipts_dir / 'admission.json', plan['plan_sha256'], caps)
     params = plan['d0_candidate_parameters']
@@ -775,7 +806,9 @@ def main() -> int:
     parser.add_argument("--tau", type=float, default=.20)
     parser.add_argument("--alpha", type=float, default=.05)
     parser.add_argument("--ceiling-threshold", type=float, default=.05)
-    parser.add_argument("--gate-audit", type=Path, default=L2_ROOT / "reports/v3_gates_g2_g3_g4_audit_20261017.json")
+    parser.add_argument("--gate-audit", type=Path, default=DEFAULT_GATE_AUDIT)
+    parser.add_argument("--human-review-authorization", type=Path, default=DEFAULT_REVIEW_AUTHORIZATION,
+                        help="User waiver record; signatures remain unreviewed and technical checks still apply")
     parser.add_argument("--plan-only", action="store_true", help="Generate plan JSON without running requests (default)")
     parser.add_argument("--execute", action="store_true", help="Execute planned branches (requires --d0-confirmed)")
     parser.add_argument("--d0-confirmed", action="store_true", help="Explicit flag confirming user has frozen D0")
@@ -798,6 +831,7 @@ def main() -> int:
         passing_harm_sample_size=args.passing_harm_sample_size,
         estimand=args.estimand, delta=args.delta, tau=args.tau, alpha=args.alpha,
         ceiling_threshold=args.ceiling_threshold, gate_audit_path=args.gate_audit,
+        human_review_authorization_path=args.human_review_authorization,
     )
     if not args.execute:
         write_json(args.out, plan)

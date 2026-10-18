@@ -1,6 +1,6 @@
 {
   "schema_version": "l2-0.5.3-d0-conditional-pool",
-  "status": "parameters_approved_inputs_pending",
+  "status": "parameters_approved_technical_inputs_pending",
   "d0_frozen": false,
   "user_authorization": {
     "received_date": "2026-10-18",
@@ -193,14 +193,26 @@
     "scope": "classification and visible/hidden split proposals only",
     "pending_sample_count": 53,
     "full_task_catalog_approved": false,
-    "g3_human_approved_count": 0
+    "g3_human_approved_count": 0,
+    "human_review_required": false,
+    "unreviewed_sample_count": 53,
+    "required_human_actions": 0,
+    "human_review_policy": "waived_by_user",
+    "human_review_authorization": {
+      "path": "L2_Behavioral Event Localization/L2_Sandbox/configs/human_review_policy_20261018.json",
+      "sha256": "54bed32a112cb01e6a907f63dde914103fd930c2bee13468cd5520116ce53942"
+    },
+    "scope_note": "Existing10 human approvals retained; remaining source classifications and G3 visual conclusions are unreviewed under direct user waiver"
   },
   "dataset_snapshot": {
-    "progress_updated_at": "2026-10-17T16:12:31.435172Z",
-    "study_valid_parents": 41,
-    "g2_pairs": 0
+    "study_valid_parents": 43,
+    "g2_pairs": 0,
+    "historical_progress_updated_at": "2026-10-17T16:12:31.435172Z",
+    "source": "validation/d0_20261018/prerequisite_resume/result.json",
+    "source_sha256": "61e155115a73fd067ca6ada7f6bda42dd185f27e0c7aaeb91e3ab1f64e7e65d4"
   },
   "power_warning": "n=14 does not resolve individual full-ladder E2 claims under current multiplicity bounds; conditional D2 simulation is not benchmark efficacy",
   "recorded_at_utc": "2026-10-17T16:49:49.534826+00:00",
-  "artifact_sha256": "a20dc83a7219c3be5d0b39a586e9af83d2ebaf0b7ea61656b3f860ed3a23d552"
+  "human_review_policy_updated_at_utc": "2026-10-18T02:41:25.219840+00:00",
+  "artifact_sha256": "79902214b45d7dd2dfe125d32e9d2d5a789af436f59ab0ff0ec2431bb06617c6"
 }
