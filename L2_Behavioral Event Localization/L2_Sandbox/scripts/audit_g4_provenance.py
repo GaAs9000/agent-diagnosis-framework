@@ -11,6 +11,7 @@ import argparse
 import copy
 import json
 from pathlib import Path
+import re
 import sys
 
 L2_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,7 @@ from c3_sandbox.l1.core.orchestrator import _maybe_compact_pi_conversation
 from c3_sandbox.l1.evaluation.study import study_outcome
 from c3_sandbox.l1.models.native import OpenAICompatibleBackend
 from c3_sandbox.l1.package import verify_package
-from c3_sandbox.l1.runtime.tools import _detect_image_mime, tools_for_config
+from c3_sandbox.l1.runtime.tools import _detect_image_mime, format_pi_bash_observation, tools_for_config
 from c3_sandbox.l1.storage import confined, digest, file_digest, read_json
 
 DEV = tuple('officeval_' + n for n in ('003', '004', '010', '033', '050', '060', '070', '085', '090'))
@@ -48,6 +49,44 @@ def compare(expected, actual):
     """Compare the entire JSON structure, including unknown/extra fields."""
     return {'status': 'verified' if expected == actual else 'mismatch',
             'expected_sha256': digest(expected), 'actual_sha256': digest(actual)}
+
+
+def reconstruct_observation(call, raw, result_data, read):
+    """Restore production dict insertion order lost by canonical evidence JSON.
+
+    The backend embeds json.dumps(observation) as a *string*. Sorting that
+    observation changes sent bytes, even though the parsed object is equal.
+    Bash is rebuilt with the actual formatter and retained streams. Other
+    supported tools use their exact current production literal field order;
+    unrecognized fields/schema are refused rather than normalized away.
+    """
+    obs = raw['observation']
+    if call.name == 'bash':
+        stdout = read(result_data['stdout'])
+        stderr = read(result_data['stderr'])
+        provenance = raw['provenance']
+        rebuilt = format_pi_bash_observation(stdout, stderr, provenance['container_exit_code'],
+                                             provenance['stop_reason'], provenance['output_complete'], provenance['oom_killed'])
+        if rebuilt != obs:
+            raise ValueError('bash observation differs from actual streams/runtime receipt')
+        return rebuilt
+    prefix = ('output', 'stdout', 'stderr')
+    tail = ('exit_code', 'stop_reason', 'output_complete')
+    candidates = [prefix + tail]  # common failed-tool observation
+    if call.name == 'read':
+        candidates += [prefix + ('path',) + tail, prefix + ('path', 'mime_type', 'size_bytes') + tail]
+    elif call.name == 'write':
+        candidates += [prefix + ('path', 'bytes_written') + tail]
+    elif call.name == 'edit':
+        candidates += [prefix + ('path', 'diff') + tail]
+    elif call.name == 'read_image':
+        candidates += [('path', 'mime_type', 'size_bytes', 'exit_code')]
+    elif call.name == 'run':
+        candidates += [('stdout', 'stderr', 'exit_code', 'stop_reason', 'output_complete', 'oom_killed')]
+    matches = [order for order in candidates if set(order) == set(obs)]
+    if len(matches) != 1:
+        raise ValueError('unsupported or ambiguous production observation schema for ' + call.name)
+    return {key: copy.deepcopy(obs[key]) for key in matches[0]}
 
 
 def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None):
@@ -98,7 +137,7 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
                 raw = json.loads(read(result_event['data']['result']))
                 if raw['call_id'] != call.call_id:
                     raise ValueError('tool result call identity mismatch')
-                delivered = copy.deepcopy(raw['observation'])
+                delivered = reconstruct_observation(call, raw, result_event['data'], read)
                 limit = config['recording']['observation_limit_chars']
                 cut = []
                 for field in ('stdout', 'stderr', 'output'):
@@ -147,17 +186,57 @@ def source_identity():
     return {'sha256': digest(files), 'files': files, 'scope': 'current_audit_and_replay_code_only'}
 
 
-def runtime_graph(events, runtime):
+def runtime_graph(events, runtime, *, episode_id=None):
     """Saved mount claims cannot establish unrecorded image/controller facts."""
     containers = [e['data'] for e in events if e['kind'] == 'runtime.container.created']
     unexpected = []
+    unknown = []
+    valid_episode = isinstance(episode_id, str) and re.fullmatch(r'ep_[0-9a-f]{32}', episode_id) is not None
+    expected_source = '.l1-work-' + episode_id if valid_episode else None
+    probe_id = runtime.get('environment_probe', {}).get('container_id')
+    probe_count = 0
+    actor_count = 0
+    if expected_source is None:
+        unknown.append({'reason': 'missing_or_invalid_episode_id'})
     for c in containers:
-        for mount in c.get('mounts', []):
-            if mount.get('target') != '/workspace' or mount.get('read_only') is not False or mount.get('source_name') != 'workspace':
-                unexpected.append({'container_id': c.get('container_id'), 'mount': mount})
+        cid = c.get('container_id')
+        mounts = c.get('mounts')
+        if not isinstance(cid, str) or not cid:
+            unknown.append({'reason': 'missing_container_identity'})
+        if not isinstance(mounts, list):
+            unknown.append({'container_id': cid, 'reason': 'missing_or_invalid_mount_inventory'})
+            continue
+        # Production preflight runs its image probe with no workspace mount.
+        # Only the exact recorded probe container is exempt from Actor mounts.
+        if isinstance(probe_id, str) and probe_id and cid == probe_id:
+            probe_count += 1
+            if mounts:
+                unexpected.append({'container_id': cid, 'reason': 'image_probe_has_unexpected_mounts', 'mounts': mounts})
+            continue
+        actor_count += 1
+        if not mounts:
+            unknown.append({'container_id': cid, 'reason': 'empty_actor_mount_inventory'})
+            continue
+        if len(mounts) != 1:
+            unexpected.append({'container_id': cid, 'reason': 'extra_actor_mounts', 'mounts': mounts})
+            continue
+        mount = mounts[0]
+        if not isinstance(mount, dict) or set(mount) != {'target', 'read_only', 'source_name'}:
+            unknown.append({'container_id': cid, 'reason': 'incomplete_or_unknown_mount_receipt_schema'})
+            continue
+        if (mount['target'] != '/workspace' or mount['read_only'] is not False
+                or (expected_source is not None and mount['source_name'] != expected_source)):
+            unexpected.append({'container_id': cid, 'mount': mount})
+    if not actor_count:
+        unknown.append({'reason': 'no_actor_container_mount_receipts'})
+    if probe_count > 1:
+        unknown.append({'reason': 'duplicate_image_probe_identity'})
     return {
-        'recorded_actor_mounts': {'status': 'mismatch' if unexpected else ('verified' if containers else 'unverified'),
+        'recorded_actor_mounts': {'status': 'mismatch' if unexpected else ('unverified' if unknown else 'verified'),
                                   'container_count': len(containers), 'unexpected': unexpected,
+                                  'actor_container_count': actor_count, 'identified_probe_count': probe_count,
+                                  'unverified_reasons': unknown,
+                                  'expected_workspace_source_name': expected_source,
                                   'scope': 'recorded mount receipts; generic image files are not mounts'},
         'image_contents': {'status': 'unverified', 'image_id': runtime.get('image_id'),
                            'generic_grader_worker_sha256': runtime.get('python_environment', {}).get('grader_worker_sha256'),
@@ -194,7 +273,8 @@ def audit_package(path):
     rows = reconstruct_requests(config, public, events, read, parent_checkpoint=parent_cp)
     for row in rows:
         row['assurance'] = 'exact_saved_input_consistency_with_current_code; historical_source_not_attested'
-    graph = runtime_graph(events, read_json(path / 'runtime/provenance.json'))
+    graph = runtime_graph(events, read_json(path / 'runtime/provenance.json'),
+                          episode_id=read_json(path / 'manifest.json')['episode_id'])
     cp_path = path / 'checkpoints/cp000000.json'
     if cp_path.exists():
         cp = read_json(cp_path)

@@ -10,6 +10,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/audit_g4_provenance.py'
 spec = importlib.util.spec_from_file_location('audit_g4_provenance', SCRIPT)
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
+EPISODE = 'ep_' + 'a' * 32
 
 
 def fixture():
@@ -24,7 +25,7 @@ def fixture():
     store = {}
 
     def save(name, value):
-        store[name] = json.dumps(value).encode()
+        store[name] = json.dumps(value, sort_keys=True).encode()
         return {'path': name}
 
     events = []
@@ -38,10 +39,17 @@ def fixture():
         events.append({'kind': 'model.response', 'data': {'request_id': rid, 'body': save(f'response{turn}', response)}})
         reply = model.parse(store[f'response{turn}'], rid)
         call = reply.calls[0]
-        raw = {'call_id': call.call_id, 'observation': {'stdout': 'abcdef', 'exit_code': 0}}
-        events.append({'kind': 'tool.result', 'data': {'call_id': call.call_id, 'result': save(f'result{turn}', raw)}})
-        delivered = {'stdout': 'abcd', 'exit_code': 0,
-                     'observation_truncation': {'fields': ['stdout'], 'limit_chars': 4, 'raw_retained': True}}
+        observation = audit.format_pi_bash_observation(b'abcdef', b'', 0, None, True, False)
+        raw = {'call_id': call.call_id, 'observation': observation,
+               'provenance': {'container_exit_code': 0, 'stop_reason': None, 'output_complete': True, 'oom_killed': False}}
+        store[f'stdout{turn}'] = b'abcdef'
+        store[f'stderr{turn}'] = b''
+        events.append({'kind': 'tool.result', 'data': {'call_id': call.call_id, 'result': save(f'result{turn}', raw),
+                       'stdout': {'path': f'stdout{turn}'}, 'stderr': {'path': f'stderr{turn}'}}})
+        delivered = copy.deepcopy(observation)
+        delivered['stdout'] = 'abcd'
+        delivered['output'] = 'abcd'
+        delivered['observation_truncation'] = {'fields': ['stdout', 'output'], 'limit_chars': 4, 'raw_retained': True}
         conversation = model.accept(conversation, reply, [(call, audit.Result(delivered))])
     return config, public, events, store
 
@@ -138,14 +146,80 @@ def test_public_or_independently_generated_rubric_constants_are_not_leak_verdict
 
 def test_mount_claims_and_image_or_controller_attestation_are_separate():
     events = [{'kind': 'runtime.container.created', 'data': {'container_id': 'c', 'mounts': [
-        {'target': '/workspace', 'source_name': 'workspace', 'read_only': False}]}}]
-    graph = audit.runtime_graph(events, {'image_id': 'sha256:image', 'python_environment': {'grader_worker_sha256': 'generic'}})
+        {'target': '/workspace', 'source_name': '.l1-work-' + EPISODE, 'read_only': False}]}}]
+    graph = audit.runtime_graph(events, {'image_id': 'sha256:image', 'python_environment': {'grader_worker_sha256': 'generic'}}, episode_id=EPISODE)
     assert graph['recorded_actor_mounts']['status'] == 'verified'
     assert graph['image_contents']['status'] == 'unverified'
     assert graph['historical_controller']['status'] == 'unverified'
     assert graph['external_input_exclusion']['status'] == 'unverified'
     events[0]['data']['mounts'].append({'target': '/verifiers', 'source_name': 'source', 'read_only': True})
-    assert audit.runtime_graph(events, {})['recorded_actor_mounts']['status'] == 'mismatch'
+    assert audit.runtime_graph(events, {}, episode_id=EPISODE)['recorded_actor_mounts']['status'] == 'mismatch'
+
+
+def test_different_episode_workspace_mount_is_rejected():
+    events = [{'kind': 'runtime.container.created', 'data': {'container_id': 'c', 'mounts': [
+        {'target': '/workspace', 'source_name': '.l1-work-ep_other', 'read_only': False}]}}]
+    assert audit.runtime_graph(events, {}, episode_id=EPISODE)['recorded_actor_mounts']['status'] == 'mismatch'
+
+
+@pytest.mark.parametrize('data', [
+    {'container_id': 'actor'},
+    {'container_id': 'actor', 'mounts': []},
+    {'container_id': 'actor', 'mounts': None},
+    {'container_id': 'actor', 'mounts': [{}]},
+    {'mounts': [{'target': '/workspace', 'source_name': '.l1-work-' + EPISODE, 'read_only': False}]},
+])
+def test_missing_actor_mount_evidence_is_unverified_not_a_leak(data):
+    graph = audit.runtime_graph([{'kind': 'runtime.container.created', 'data': data}], {}, episode_id=EPISODE)
+    assert graph['recorded_actor_mounts']['status'] == 'unverified'
+    assert graph['recorded_actor_mounts']['unexpected'] == []
+
+
+@pytest.mark.parametrize('episode', [None, '', 'ep_wrong', '../ep_bad'])
+def test_missing_or_invalid_episode_identity_cannot_verify_mounts(episode):
+    events = [{'kind': 'runtime.container.created', 'data': {'container_id': 'actor', 'mounts': [
+        {'target': '/workspace', 'source_name': '.l1-work-' + EPISODE, 'read_only': False}]}}]
+    assert audit.runtime_graph(events, {}, episode_id=episode)['recorded_actor_mounts']['status'] == 'unverified'
+
+
+def test_only_positive_image_probe_identity_allows_empty_mounts():
+    events = [{'kind': 'runtime.container.created', 'data': {'container_id': 'probe', 'mounts': []}},
+              {'kind': 'runtime.container.created', 'data': {'container_id': 'actor', 'mounts': [
+                  {'target': '/workspace', 'source_name': '.l1-work-' + EPISODE, 'read_only': False}]}}]
+    assert audit.runtime_graph(events, {}, episode_id=EPISODE)['recorded_actor_mounts']['status'] == 'unverified'
+    runtime = {'environment_probe': {'container_id': 'probe'}}
+    result = audit.runtime_graph(events, runtime, episode_id=EPISODE)['recorded_actor_mounts']
+    assert result['status'] == 'verified'
+    assert result['identified_probe_count'] == 1
+    assert result['actor_container_count'] == 1
+    events[0]['data']['mounts'] = [{'target': '/private', 'source_name': 'grader', 'read_only': True}]
+    assert audit.runtime_graph(events, runtime, episode_id=EPISODE)['recorded_actor_mounts']['status'] == 'mismatch'
+
+
+def test_probe_only_is_insufficient_actor_evidence():
+    events = [{'kind': 'runtime.container.created', 'data': {'container_id': 'probe', 'mounts': []}}]
+    runtime = {'environment_probe': {'container_id': 'probe'}}
+    assert audit.runtime_graph(events, runtime, episode_id=EPISODE)['recorded_actor_mounts']['status'] == 'unverified'
+
+
+def test_image_read_serialization_restores_production_order_without_changing_values():
+    observation = {'output': 'Read image file [image/png]', 'stdout': 'Read image file [image/png]', 'stderr': '',
+                   'path': 'input/image.png', 'mime_type': 'image/png', 'size_bytes': 12,
+                   'exit_code': 0, 'stop_reason': None, 'output_complete': True}
+    canonicalized = json.loads(json.dumps(observation, sort_keys=True))
+    call = type('Call', (), {'name': 'read'})()
+    restored = audit.reconstruct_observation(call, {'observation': canonicalized}, {}, lambda _: None)
+    assert restored == observation
+    assert json.dumps(restored) == json.dumps(observation)
+    assert json.dumps(restored) != json.dumps(canonicalized)
+
+
+def test_changed_bash_stream_is_rejected_even_when_saved_observation_matches_request():
+    config, public, events, store = fixture()
+    store['stdout0'] = b'poisoned output'
+    rows = reconstruct(config, public, events, store)
+    assert rows[1]['status'] == 'unverified'
+    assert 'differs from actual streams' in rows[1]['reason']
 
 
 def test_no_transport_is_constructed(monkeypatch):
