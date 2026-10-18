@@ -49,11 +49,11 @@
   },
   "runtime": {
     "adapter": "docker-cold",
-    "image": "l1-office:0.2.0"
+    "image": "sha256:aa7ba396159dad7dab8491b5817df749e77ead9ff18a29e9d136ae182fd07807"
   },
   "evaluation": {
     "adapter": "docker-verifier",
-    "image": "l1-office:0.2.0",
+    "image": "sha256:aa7ba396159dad7dab8491b5817df749e77ead9ff18a29e9d136ae182fd07807",
     "outcome_policy": "official_dimensions"
   },
   "budget": {
