@@ -225,3 +225,29 @@ def test_two_runs_keep_callbacks_and_evidence_separate(config, tmp_path):
     assert a.workspace != b.workspace
     assert read_json(first / 'runtime/prospective/anchor.json')['episode_id'] == a.episode_id
     assert read_json(second / 'runtime/prospective/anchor.json')['episode_id'] == b.episode_id
+
+
+def test_native_identity_mismatch_stops_before_probe_or_model(config, tmp_path, monkeypatch):
+    cfg=copy.deepcopy(config)
+    cfg['agent'].update(harness='pi',version='0.73.1',validation_policy='pi-native-0.73.1',
+                        harness_revision='l1-pi-native-errors-context-v2')
+    calls=[]
+    class Native:
+        def start(self):calls.append('native_started')
+        def dependency_identity(self):return {'actual_dependency':'fixture_wrong_hash'}
+        def close(self):calls.append('native_closed')
+    class RejectingObserver(Observer):
+        def validate_native_identity(self,identity):
+            calls.append('identity_checked')
+            assert identity=={'actual_dependency':'fixture_wrong_hash'}
+            raise RuntimeError('native dependency differs from prospective freeze')
+    output=tmp_path/'native_rejected'
+    components=fixture_components(cfg,tmp_path)
+    monkeypatch.setattr('c3_sandbox.l1.runtime.pi_native_validation.NativePiValidator',Native)
+    monkeypatch.setattr(components['runtime'],'preflight',lambda:pytest.fail('probe before native identity check'))
+    result=run(cfg,output,injected=components,execution_observer=RejectingObserver(output))
+    assert calls==['native_started','identity_checked','native_closed']
+    assert components['model'].bodies==[]
+    assert result['status']['execution_validity']=='invalid'
+    assert not (output/'runtime/prospective/containers').exists()
+    assert 'model.request' not in [event['kind'] for event in events(output)]

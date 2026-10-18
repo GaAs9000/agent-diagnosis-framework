@@ -683,6 +683,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             native_validator=NativePiValidator()
             native_validator.start()
             agent_info['native_validation']=native_validator.dependency_identity()
+            if execution_observer is not None:
+                execution_observer.validate_native_identity(copy.deepcopy(agent_info['native_validation']))
         if parent_cp is None:
             journal.emit('benchmark.load.started',{'adapter':config['benchmark']['adapter'],'task_id':config['benchmark']['task_id']})
             task=comp['benchmark'].load(config['benchmark']['task_id'])
