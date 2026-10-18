@@ -11,6 +11,16 @@ d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(d)
 
 
+@pytest.fixture(autouse=True)
+def historical_t2_source(monkeypatch):
+    """T2's archived transform is tested against its own execution version."""
+    source=d.p.L1 / 'validation/pi_native_alignment_20261018/legacy_source/L1_sandbox/C3_Experimental_Sandbox/src/c3_sandbox/l1/core/orchestrator.py'
+    if not source.is_file():
+        pytest.skip('The archived pre-R22 T2 source is not installed on this host')
+    original=d.derivative_record
+    monkeypatch.setattr(d,'derivative_record',lambda:original(source))
+
+
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(d, 'assert_sources', lambda _: None)

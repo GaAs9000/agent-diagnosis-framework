@@ -44,7 +44,7 @@ def test_real_generated_facts_have_documented_predicate_fields(tmp_path):
     assert {fact['type'] for fact in facts}.issubset(set(sections))
     assert set(sections) == {
         'tool_requested', 'preview_rendered', 'tool_exit', 'file_transition', 'object_structure_change',
-        'model_output_text', 'protocol_error', 'execution_error', 'termination',
+        'model_output_text', 'protocol_error', 'execution_error', 'termination', 'tool_validation_error',
     }
     for fact in facts:
         section = sections[fact['type']]

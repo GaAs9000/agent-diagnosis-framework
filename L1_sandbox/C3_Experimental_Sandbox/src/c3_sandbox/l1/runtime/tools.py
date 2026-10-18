@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
-from ..core.contracts import L1Error, ProtocolError, Result
+from ..core.contracts import L1Error, ProtocolError, Result, NativeValidatedCall
 from ..storage import confined, regular_file, utc_now
 
 DEFAULT_MAX_LINES = 2000
@@ -149,6 +149,8 @@ def _prepare_edit_arguments(args: dict) -> dict:
 
 
 def validate_call(call, images: bool = True, harness: str | None = None):
+    if isinstance(call, NativeValidatedCall):
+        return
     if not isinstance(call.arguments, dict):
         raise ProtocolError('Invalid native tool arguments')
     if harness in (None, 'minimal') and call.name in ('run', 'read_image'):
@@ -664,7 +666,9 @@ def _apply_edits_to_normalized_content(normalized_content: str, edits: list[dict
 
 def execute_pi_edit(call, workspace: Path) -> Result:
     start = utc_now()
-    norm_args = _prepare_edit_arguments(call.arguments)
+    norm_args = dict(call.arguments) if isinstance(call, NativeValidatedCall) else _prepare_edit_arguments(call.arguments)
+    if isinstance(call, NativeValidatedCall) and not norm_args['edits']:
+        return _tool_error_result('Edit tool input is invalid. edits must contain at least one replacement.', 'pi_workspace_edit', start)
     raw_path = norm_args['path']
     edits = norm_args['edits']
     try:

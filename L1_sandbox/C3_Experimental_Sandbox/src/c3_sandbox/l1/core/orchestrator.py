@@ -16,7 +16,7 @@ import shutil
 import signal
 import time
 import uuid
-from .contracts import VERSION, Result, ProtocolError, EvidenceError, ConfigurationError, EvaluationSpec
+from .contracts import VERSION, Result, NativeValidatedCall, HTTPResult, ProtocolError, EvidenceError, ConfigurationError, EvaluationSpec
 from .config import validate
 from ..storage import canonical, digest, file_digest, regular_file, read_json, write_json, write_bytes, confined, utc_now, copy_file
 from ..recording.state import StateStore, restore
@@ -306,7 +306,84 @@ def _receipt_tokens(receipt) -> float | None:
     return float(total) if type(total) is int and total>=0 else None
 
 
-def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None)->dict:
+def digest_bytes(value: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(value).hexdigest()
+
+
+def _check_native_upgrade(previous: dict, current: dict) -> bool:
+    """The only permitted harness transition for response consumption."""
+    old = copy.deepcopy(previous)
+    if active_harness(old) != 'pi' or old['agent'].get('version') != '0.73.1':
+        return False
+    if old['agent'].get('validation_policy') is not None or old['agent'].get('harness_revision') is not None:
+        return False
+    if old['model']['timeout_seconds'] not in (300, 600):
+        return False
+    old['model']['timeout_seconds'] = 600
+    old['agent'].update(validation_policy='pi-native-0.73.1', harness_revision='l1-pi-native-errors-v1')
+    return old == current
+
+
+def _saved_response_source(parent: Path, manifest: dict, cp: dict, response_id: str) -> dict:
+    """Bind a complete, rejected sole-edit response to its untouched prefix."""
+    if manifest['recording_mode'] != 'live' or manifest['status']['termination'] != 'protocol_error':
+        raise EvidenceError('Saved-response continuation requires sealed live protocol_error evidence')
+    if not re.fullmatch(r'r\d{6}', response_id):
+        raise ConfigurationError('resume_response_id must be r followed by six digits')
+    if int(response_id[1:]) != cp['budget_used']['model_requests']:
+        raise EvidenceError('Saved response must immediately follow the source checkpoint')
+    events = [json.loads(line) for line in (parent/'trajectory.jsonl').read_text().splitlines()]
+    requests = [e for e in events if e['kind'] == 'model.request']
+    if not requests or requests[-1]['data']['request_id'].split(':')[-1] != response_id:
+        raise EvidenceError('Only the final parent response can be consumed')
+    request = requests[-1]
+    rid = request['data']['request_id']
+    responses = [e for e in events if e['kind'] == 'model.response' and e['data']['request_id'] == rid]
+    calls = [e for e in events if e['kind'] == 'tool.call' and e['data']['request_id'] == rid]
+    if len(responses) != 1 or len(calls) != 1 or calls[0]['data']['name'] != 'edit':
+        raise EvidenceError('Saved response must contain a sole rejected edit call')
+    cid = calls[0]['data']['call_id']
+    if not any(e['kind'] == 'tool.rejected' and e['data']['call_id'] == cid for e in events):
+        raise EvidenceError('Saved edit lacks a rejection receipt')
+    if any(e['kind'] in ('tool.started', 'tool.result') and e['data'].get('call_id') == cid for e in events):
+        raise EvidenceError('Saved edit already started; partial batches are unsupported')
+    response = responses[0]
+    metadata = read_json(parent/response['data']['http']['path'])
+    if response['data']['status_code'] != 200 or metadata.get('body_truncated') or metadata.get('transport_error'):
+        raise EvidenceError('Saved response must be a complete successful HTTP 200 receipt')
+    snapshots = [e for e in events if e['kind'] == 'state.snapshot']
+    final = read_json(parent/snapshots[-1]['data']['snapshot']['path'])
+    source = read_json(parent/f"states/snapshots/{cp['snapshot_id']}.json")
+    if source['content_sha256'] != final['content_sha256']:
+        raise EvidenceError('Source checkpoint state differs from parent final state')
+    return {'request': request, 'response': response, 'call': calls[0], 'metadata': metadata,
+            'request_bytes': (parent/request['data']['body']['path']).read_bytes(),
+            'response_bytes': (parent/response['data']['body']['path']).read_bytes()}
+
+
+def _initial_upgrade_request(parent: Path, manifest: dict, cp: dict) -> bytes:
+    if manifest['recording_mode'] != 'live' or cp['checkpoint_id'] != 'cp000000':
+        raise EvidenceError('Native cold upgrade requires a live initial checkpoint')
+    used = cp.get('budget_used', {})
+    if any(used.get(key) != 0 for key in ('model_requests', 'tool_calls', 'known_total_tokens')):
+        raise EvidenceError('Native cold upgrade requires zero consumed requests, tools and tokens')
+    if cp.get('pending_calls') or cp.get('pending_observations'):
+        raise EvidenceError('Native cold upgrade requires empty pending calls and observations')
+    snap = read_json(parent/f"states/snapshots/{cp['snapshot_id']}.json")
+    if snap.get('label') != 'initial':
+        raise EvidenceError('Native cold upgrade requires original initial workspace state')
+    history = [json.loads(line) for line in (parent/'trajectory.jsonl').read_text().splitlines()]
+    initial = next((e for e in history if e['kind'] == 'state.snapshot'), None)
+    if initial is None or initial['data']['snapshot_id'] != cp['snapshot_id']:
+        raise EvidenceError('Native cold upgrade checkpoint is not the original initial snapshot')
+    request = next((e for e in history if e['kind'] == 'model.request'), None)
+    if request is None or not request['data']['request_id'].endswith(':r000000'):
+        raise EvidenceError('Native cold upgrade lacks frozen origin request zero')
+    return (parent/request['data']['body']['path']).read_bytes()
+
+
+def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False)->dict:
     """Optionally admit every HTTP attempt via acquire(estimate, timeout)->bool.
 
     reconcile(estimate, actual) retains unknown usage with actual=None. An
@@ -317,7 +394,11 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     config=copy.deepcopy(validate(config)); output=Path(output).absolute()
     config['agent']['system_prompt']=build_execution_contract_prompt(config)
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
-    parent_cp=None; lineage=None; parent_manifest=None
+    if resume_response_id is not None and (parent is None or checkpoint_id is None):
+        raise ConfigurationError('Saved-response continuation requires parent and checkpoint_id')
+    if allow_pi_native_upgrade and (parent is None or (resume_response_id is None and checkpoint_id != 'cp000000')):
+        raise ConfigurationError('Native upgrade requires saved-response consumption or original checkpoint zero')
+    parent_cp=None; lineage=None; parent_manifest=None; saved_response=None; initial_upgrade_request=None
     if parent is not None:
         parent=Path(parent).resolve()
         pv=verify(parent)
@@ -334,19 +415,48 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         base_config=copy.deepcopy(config); prev_base=copy.deepcopy(previous_config)
         child_iv=base_config.get('agent',{}).pop('intervention',None)
         parent_iv=prev_base.get('agent',{}).pop('intervention',None)
-        if base_config!=prev_base:
+        upgrade = allow_pi_native_upgrade and _check_native_upgrade(previous_config, config)
+        if base_config!=prev_base and not upgrade:
             raise ConfigurationError('Cold resume currently requires the same resolved config; branch policy changes are not silently applied')
         if child_iv!=parent_iv:
             if child_iv is None or child_iv['at_request']<=parent_cp.get('budget_used',{}).get('model_requests',0):
                 raise ConfigurationError('Branch intervention on cold resume must target a request strictly after the checkpoint')
         lineage={'parent_episode_id':parent_manifest['episode_id'],'parent_checkpoint_id':checkpoint_id,
                  'parent_index_sha256':pv['index_sha256'],'parent_checkpoint_sha256':file_digest(parent/f'checkpoints/{checkpoint_id}.json')}
+        if allow_pi_native_upgrade:
+            if child_iv != parent_iv:
+                raise ConfigurationError('Native upgrade cannot change intervention')
+            if config['agent'].get('validation_policy') != 'pi-native-0.73.1':
+                raise ConfigurationError('Native upgrade requires explicit native policy')
+            lineage['config_upgrade'] = {'policy':'pi-native-0.73.1', 'harness_revision':'l1-pi-native-errors-v1',
+                'source_config_sha256':digest(previous_config), 'target_config_sha256':digest(config),
+                'applied':bool(upgrade), 'mode':'saved_response' if resume_response_id is not None else 'initial_checkpoint'}
+            if resume_response_id is None:
+                initial_upgrade_request = _initial_upgrade_request(parent, parent_manifest, parent_cp)
+                lineage['config_upgrade']['origin_request_sha256'] = digest_bytes(initial_upgrade_request)
+        if resume_response_id is not None:
+            if config['agent'].get('validation_policy') != 'pi-native-0.73.1':
+                raise ConfigurationError('Saved-response continuation requires explicit native validation policy')
+            if child_iv != parent_iv:
+                raise ConfigurationError('Saved-response continuation cannot change intervention')
+            saved_response = _saved_response_source(parent, parent_manifest, parent_cp, resume_response_id)
+            lineage['response_use'] = {'source_request_id': saved_response['request']['data']['request_id'],
+                'source_call_id': saved_response['call']['data']['call_id'],
+                'source_request_sha256': digest_bytes(saved_response['request_bytes']),
+                'source_response_sha256': digest_bytes(saved_response['response_bytes']),
+                'source_response_event_sha256': saved_response['response']['sha256'],
+                'source_trajectory_head_sha256': read_json(parent/'evidence_index.json')['trajectory_head_sha256'],
+                'new_http_attempts_during_consume': 0}
     eid='ep_'+uuid.uuid4().hex
     created=utc_now(); started=time.monotonic()
     inherited=parent_cp.get('budget_used',{}) if parent_cp else {}
     elapsed_before=inherited.get('agent_seconds',0.0)
     request_count=inherited.get('model_requests',0); tool_count=inherited.get('tool_calls',0)
     token_count=inherited.get('known_total_tokens',0); usage_complete=True
+    if saved_response is not None:
+        # Parent totals already include the response that failed validation.
+        usage_complete=parent_manifest['usage']['all_requests_have_usage']
+        elapsed_before=parent_manifest['usage']['agent_phase_seconds']
     deadline=started+max(0,config['budget']['wall_time_seconds']-elapsed_before)
     external_remaining=None
     remaining_seconds=getattr(request_limiter,'remaining_seconds',None)
@@ -372,7 +482,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     status={'termination':'initializing','protocol_validity':'unknown','execution_validity':'unknown',
             'evaluation_validity':'not_run','task_outcome':'unknown','evidence_completeness':'complete'}
     conversation=None; task=None; spec=None; prepared=False; runtime=None; model=None; evaluator=None
-    pending=[]; components_ready=False
+    pending=[]; validation_errors_pending=[]; components_ready=False; native_validator=None; new_http_attempts=0; saved_response_consumptions=0; native_policy=config['agent'].get('validation_policy') == 'pi-native-0.73.1'
     def missing(code,detail):
         coverage.append({'code':code,'detail':detail}); status['evidence_completeness']='incomplete'
     def snapshot(label,tool_result_event_id=None):
@@ -433,7 +543,13 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         runtime=comp['runtime']; model=comp['model']; evaluator=comp['evaluation']; components_ready=True
         if hasattr(runtime,'set_event_sink'):
             runtime.set_event_sink(lambda kind,data:journal.emit(kind,data))
+        model.native_pi_validation=native_policy
         agent_info['identity']=model.identity()
+        if native_policy:
+            from ..runtime.pi_native_validation import NativePiValidator
+            native_validator=NativePiValidator()
+            native_validator.start()
+            agent_info['native_validation']=native_validator.dependency_identity()
         if parent_cp is None:
             journal.emit('benchmark.load.started',{'adapter':config['benchmark']['adapter'],'task_id':config['benchmark']['task_id']})
             task=comp['benchmark'].load(config['benchmark']['task_id'])
@@ -480,6 +596,31 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         for p in (output/'benchmark/source').rglob('*'):
             os.chmod(p,0o755 if p.is_dir() else 0o644)
         os.chmod(output/'benchmark/source',0o755)
+        if initial_upgrade_request is not None:
+            if canonical(model.request(conversation, tools_for_config(config))) != initial_upgrade_request:
+                raise EvidenceError('Reconstructed initial request differs from frozen origin request zero')
+            write_bytes(output,'lineage/origin_request_zero.bin',initial_upgrade_request)
+            journal.emit('config.upgraded',{'upgrade':lineage['config_upgrade'],
+                'origin_request':journal.ref('lineage/origin_request_zero.bin')})
+        if saved_response is not None:
+            reconstructed=canonical(model.request(conversation, tools_for_config(config)))
+            if reconstructed != saved_response['request_bytes']:
+                raise EvidenceError('Reconstructed checkpoint request differs from frozen parent request')
+            # Reparse original bytes with the new validation boundary, preserving native history.
+            source_reply=model.parse(saved_response['response_bytes'], saved_response['request']['data']['request_id'])
+            if len(source_reply.calls) != 1 or source_reply.calls[0].name != 'edit':
+                raise EvidenceError('Saved response projection differs from sole-edit restriction')
+            write_json(output,'lineage/response_use.json',lineage['response_use'])
+            write_bytes(output,'lineage/source_request.bin',saved_response['request_bytes'])
+            write_bytes(output,'lineage/source_response.bin',saved_response['response_bytes'])
+            copy_file(parent/'evidence_index.json',output,'lineage/source_evidence_index.json')
+            copy_file(parent/'manifest.json',output,'lineage/source_manifest.json')
+            copy_file(parent/'trajectory.jsonl',output,'lineage/source_trajectory.jsonl')
+            journal.emit('response.bound',{'binding':journal.ref('lineage/response_use.json'),
+                'request':journal.ref('lineage/source_request.bin'),'response':journal.ref('lineage/source_response.bin'),
+                'source_evidence_index':journal.ref('lineage/source_evidence_index.json'),
+                'source_manifest':journal.ref('lineage/source_manifest.json'),
+                'source_trajectory':journal.ref('lineage/source_trajectory.jsonl')})
         runtime_info=runtime.preflight()
         if parent_cp and runtime_info.get('image_id')!=parent_cp['qualification']['image_id']:
             raise EvidenceError('Restored runtime image does not match checkpoint')
@@ -507,16 +648,24 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             body=model.request(conversation,tools)
             relative=f'raw/model/{rid.split(":")[-1]}/request.json'
             write_bytes(output,relative,canonical(body))
+            consuming=saved_response is not None
             request_event=journal.emit('model.request',{'request_id':rid,'body':journal.ref(relative),
-                'parameters_declared':config['model']['parameters']})
+                'parameters_declared':config['model']['parameters'],
+                **({'source':'saved_response','http_attempts':0} if consuming else {})})
             prefix=relative.removesuffix('request.json')
             request_bytes=canonical(body)
+            if initial_upgrade_request is not None:
+                if request_bytes != initial_upgrade_request:
+                    raise EvidenceError('First fresh upgraded request differs from frozen origin request zero')
+                initial_upgrade_request=None
+            if consuming and request_bytes != saved_response['request_bytes']:
+                raise EvidenceError('Consumed request differs from frozen parent request')
             estimated_tokens=_request_token_estimate(request_bytes,config['model']['parameters']) if request_limiter is not None else None
             admission_expired=False
             transport_attempts=0
             stop_phase='wall_deadline'
             def send_attempt():
-                nonlocal admission_expired, transport_attempts, stop_phase
+                nonlocal admission_expired, transport_attempts, stop_phase, new_http_attempts
                 rem=deadline-time.monotonic()
                 if rem<=0:
                     admission_expired=True; return None
@@ -530,7 +679,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                         stop_phase='deadline_after_admission'
                         admission_expired=True; return None
                 try:
-                    transport_attempts+=1
+                    transport_attempts+=1; new_http_attempts+=1
                     result=model.send(request_bytes,min(rem,config['model']['timeout_seconds']))
                 except BaseException:
                     if request_limiter is not None: request_limiter.reconcile(estimated_tokens,None)
@@ -539,7 +688,13 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 return result
             receipt=None
             retry_cfg=config['model'].get('retry')
-            if retry_cfg:
+            if consuming:
+                receipt=HTTPResult(200,saved_response['response_bytes'],saved_response['metadata'])
+                journal.emit('response.consumed',{'request_id':rid,'new_http_attempts':0,
+                    'binding':journal.ref('lineage/response_use.json')},links={'request':request_event['event_id']})
+                saved_response_consumptions+=1
+                saved_response=None
+            elif retry_cfg:
                 max_attempts=retry_cfg.get('max_attempts',1)
                 retry_statuses=set(retry_cfg.get('retry_on_status',[429,500,502,503,504]))
                 retry_transport=bool(retry_cfg.get('retry_on_transport_error',True))
@@ -617,11 +772,23 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 'finish_reason':reply.finish_reason,'text':reply.text},links={'response':response_event['event_id']})
             usage=reply.usage or {}
             current_tokens=usage.get('totalTokenCount',usage.get('total_tokens'))
-            if type(current_tokens) is int and current_tokens>=0: token_count+=current_tokens
+            if type(current_tokens) is int and current_tokens>=0:
+                token_count+=current_tokens
             else: usage_complete=False
+            if consuming:
+                if request_count != int(resume_response_id[1:])+1 or token_count != parent_manifest['usage']['known_total_tokens_including_parent']:
+                    raise EvidenceError('Consumed response cumulative request/token budget differs from parent')
+                journal.emit('response.prefix_accounted',{'model_requests':request_count,'known_total_tokens':token_count,
+                    'source_call_id':lineage['response_use']['source_call_id'],'new_http_attempts':0})
             if not reply.calls:
                 conversation=model.accept(conversation,reply,[])
                 status['termination']='assistant_finished'; break
+            if validation_errors_pending:
+                journal.emit('model.response_after_validation_error',{'request_id':rid,
+                    'prior_error_call_ids':validation_errors_pending,
+                    'subsequent_calls':[{'name':c.name,'arguments':c.arguments} for c in reply.calls],
+                    'interpretation':'observed_sequence_only_no_causal_attribution'})
+                validation_errors_pending=[]
             call_events={}
             for call in reply.calls:
                 ce=journal.emit('tool.call',{'request_id':rid,'call_id':call.call_id,'native_id':call.native_id,
@@ -634,15 +801,55 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     for skipped in reply.calls[index:]:
                         journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':reason},links={'call':call_events[skipped.call_id]['event_id']})
                     status['termination']=reason; interrupted_batch=True; break
-                try: validate_call(call,config['model']['supports_images'],harness=active_harness(config))
+                validation=None; execution_call=call
+                if native_policy:
+                    tool_count+=1
+                    try:
+                        validation=native_validator.validate(call.name,call.arguments,call_id=call.native_id or call.call_id,
+                            deadline_monotonic=deadline)
+                    except Exception as exc:
+                        if time.monotonic()>=deadline:
+                            for skipped in reply.calls[index:]:
+                                journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':'wall_time_budget'},
+                                    links={'call':call_events[skipped.call_id]['event_id']})
+                            status['termination']='wall_time_budget'; interrupted_batch=True; break
+                        journal.emit('tool.error',{'call_id':call.call_id,'error_type':type(exc).__name__,'message':str(exc)},
+                            links={'call':call_events[call.call_id]['event_id']})
+                        for skipped in reply.calls[index+1:]:
+                            journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':'native_validation_infrastructure_error'},
+                                links={'call':call_events[skipped.call_id]['event_id']})
+                        raise
+                    journal.emit('tool.validation',{'call_id':call.call_id, **validation},
+                        links={'call':call_events[call.call_id]['event_id']})
+                    if time.monotonic()>=deadline:
+                        for skipped in reply.calls[index:]:
+                            journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':'wall_time_budget'},
+                                links={'call':call_events[skipped.call_id]['event_id']})
+                        status['termination']='wall_time_budget'; interrupted_batch=True; break
+                    if not validation['ok']: validation_errors_pending.append(call.call_id)
+                    if validation['ok']:
+                        execution_call=NativeValidatedCall(call.call_id,call.name,validation['validated_arguments'],call.native_id)
+                try:
+                    if not native_policy: validate_call(call,config['model']['supports_images'],harness=active_harness(config))
                 except ProtocolError:
                     for rejected in reply.calls[index:]:
                         journal.emit('tool.rejected',{'call_id':rejected.call_id,'reason':'protocol_error'},links={'call':call_events[rejected.call_id]['event_id']})
                     raise
-                tool_count+=1
-                journal.emit('tool.started',{'call_id':call.call_id,'before_snapshot_id':last_snapshot['snapshot_id']},links={'call':call_events[call.call_id]['event_id']})
+                if not native_policy: tool_count+=1
+                if validation is None or validation['ok']:
+                    journal.emit('tool.started',{'call_id':call.call_id,'before_snapshot_id':last_snapshot['snapshot_id']},links={'call':call_events[call.call_id]['event_id']})
                 try:
-                    actual=runtime.execute(call,workspace,min(config['runtime']['tool_timeout_seconds'],max(.001,deadline-time.monotonic())))
+                    if validation is not None and not validation['ok']:
+                        actual=Result(copy.deepcopy(validation['native_result']),
+                            provenance={'pi_native_validation_error':True, 'validation':validation['provenance'], 'quiescent':True})
+                    else:
+                        execution_remaining=deadline-time.monotonic()
+                        if execution_remaining<=0:
+                            for skipped in reply.calls[index:]:
+                                journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':'wall_time_budget'},
+                                    links={'call':call_events[skipped.call_id]['event_id']})
+                            status['termination']='wall_time_budget'; interrupted_batch=True; break
+                        actual=runtime.execute(execution_call,workspace,min(config['runtime']['tool_timeout_seconds'],execution_remaining))
                 except Exception as exc:
                     journal.emit('tool.error',{'call_id':call.call_id,'error_type':type(exc).__name__,'message':str(exc)},links={'call':call_events[call.call_id]['event_id']})
                     for skipped in reply.calls[index+1:]:
@@ -697,6 +904,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         if isinstance(exc,EvidenceError): missing(code,str(exc))
         journal.emit('episode.error',{'error_type':type(exc).__name__,'code':code,'message':str(exc)})
     finally:
+        if native_validator is not None: native_validator.close()
         agent_phase_elapsed=time.monotonic()-started+elapsed_before
         # The controller attempts final state and scoring even after agent failure.
         # A grade failure is never allowed to overwrite the agent stop reason.
@@ -769,7 +977,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 'eligible_checkpoints':sum(x['eligible'] for x in cp_records),'deterministic_model_replay':False,
                 'object_state':False,'official_batch_runner':False},
             'lineage':lineage,'usage':{'known_total_tokens_including_parent':token_count,'all_requests_have_usage':usage_complete and sum(e['kind']=='model.parsed' for e in journal.events)==sum(e['kind']=='model.request' for e in journal.events),
-                'actual_cost_usd':None,'budget_includes_parent':bool(parent_cp),'agent_phase_seconds':agent_phase_elapsed,
+                'actual_cost_usd':None,'new_http_attempts':new_http_attempts,'saved_response_consumptions':saved_response_consumptions,'model_requests_including_parent':request_count,'tool_calls_including_parent':tool_count,'budget_includes_parent':bool(parent_cp),'agent_phase_seconds':agent_phase_elapsed,
                 'token_limit_enforcement':'post_response_threshold_not_hard_preallocation'},'config_sha256':digest(config)}
         write_json(output,'manifest.json',manifest)
         seal(output,journal.events)

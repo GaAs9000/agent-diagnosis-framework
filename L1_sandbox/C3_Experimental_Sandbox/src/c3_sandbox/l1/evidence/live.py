@@ -90,6 +90,101 @@ def _refs(value):
         for x in value: yield from _refs(x)
 
 
+def _verify_response_consumption(root,manifest,events,requests,responses):
+    """Bind reused wire evidence to the original, externally anchored prefix."""
+    import hashlib
+    reused=[e for e in requests.values() if e['data'].get('source')=='saved_response']
+    consumed=[e for e in events if e['kind']=='response.consumed']
+    if not reused and not consumed:
+        if manifest.get('usage',{}).get('saved_response_consumptions',0)!=0:
+            raise EvidenceError('Response consumption count without consumed response')
+        return
+    if len(reused)!=1 or len(consumed)!=1:
+        raise EvidenceError('Exactly one saved response may be consumed')
+    request=reused[0]; rid=request['data']['request_id']; consumption=consumed[0]
+    if (request['data'].get('http_attempts')!=0 or consumption['data'].get('request_id')!=rid or
+            consumption['data'].get('new_http_attempts')!=0 or
+            consumption['links'].get('request')!=request['event_id'] or
+            manifest['usage'].get('saved_response_consumptions')!=1):
+        raise EvidenceError('Saved response transport/count binding mismatch')
+    lineage=manifest.get('lineage') or {}
+    binding=read_json(root/'lineage/response_use.json')
+    if binding!=lineage.get('response_use') or binding.get('new_http_attempts_during_consume')!=0:
+        raise EvidenceError('Response-use lineage differs from saved binding')
+    source_index_path=root/'lineage/source_evidence_index.json'
+    if file_digest(source_index_path)!=lineage.get('parent_index_sha256'):
+        raise EvidenceError('Consumed response original index hash mismatch')
+    source_index=read_json(source_index_path); validate('index',source_index)
+    inventory_by_path={row['path']:row for row in source_index['files']}
+    def original_file(relative,copy_path):
+        row=inventory_by_path.get(relative)
+        if row is None or file_digest(copy_path)!=row['sha256'] or copy_path.stat().st_size!=row['size_bytes']:
+            raise EvidenceError('Consumed source differs from original index: '+relative)
+    original_file('manifest.json',root/'lineage/source_manifest.json')
+    original_file('trajectory.jsonl',root/'lineage/source_trajectory.jsonl')
+    source_manifest=read_json(root/'lineage/source_manifest.json')
+    if source_manifest['episode_id']!=lineage.get('parent_episode_id') or source_index['episode_id']!=source_manifest['episode_id']:
+        raise EvidenceError('Consumed source episode identity mismatch')
+    source_scan=scan(root/'lineage/source_trajectory.jsonl')
+    source_events=source_scan['events']
+    if (not source_scan['complete'] or len(source_events)!=source_index['event_count'] or
+            not source_events or source_events[-1]['sha256']!=source_index['trajectory_head_sha256'] or
+            source_index['trajectory_head_sha256']!=binding.get('source_trajectory_head_sha256')):
+        raise EvidenceError('Consumed source trajectory chain mismatch')
+    source_rid=binding['source_request_id']
+    original_requests=[e for e in source_events if e['kind']=='model.request' and e['data']['request_id']==source_rid]
+    original_responses=[e for e in source_events if e['kind']=='model.response' and e['data']['request_id']==source_rid]
+    if len(original_requests)!=1 or len(original_responses)!=1:
+        raise EvidenceError('Consumed source lacks unique request and response')
+    old_request,old_response=original_requests[0],original_responses[0]
+    source_calls=[e for e in source_events if e['kind']=='tool.call' and e['data'].get('request_id')==source_rid]
+    if (len(source_calls)!=1 or source_calls[0]['data'].get('name')!='edit' or
+            source_calls[0]['data'].get('call_id')!=binding.get('source_call_id') or
+            old_response['links'].get('request')!=old_request['event_id'] or
+            source_calls[0]['links'].get('response')!=old_response['event_id']):
+        raise EvidenceError('Consumed source call graph mismatch')
+    cid=binding['source_call_id']
+    if (sum(e['kind']=='tool.rejected' and e['data'].get('call_id')==cid for e in source_events)!=1 or
+            any(e['kind'] in ('tool.started','tool.result') and e['data'].get('call_id')==cid for e in source_events) or
+            [e for e in source_events if e['kind']=='model.request'][-1]!=old_request or
+            source_manifest.get('recording_mode')!='live' or source_manifest['status']['termination']!='protocol_error'):
+        raise EvidenceError('Consumed source is not a final unexecuted rejected call')
+    if old_response['sha256']!=binding.get('source_response_event_sha256'):
+        raise EvidenceError('Consumed response event hash mismatch')
+    source_request=root/'lineage/source_request.bin'; source_response=root/'lineage/source_response.bin'
+    original_file(old_request['data']['body']['path'],source_request)
+    original_file(old_response['data']['body']['path'],source_response)
+    for name,path in [('source_request_sha256',source_request),('source_response_sha256',source_response)]:
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=binding.get(name):
+            raise EvidenceError('Consumed wire hash differs from binding')
+    if (source_request.read_bytes()!=(root/request['data']['body']['path']).read_bytes() or
+            rid not in responses or source_response.read_bytes()!=(root/responses[rid]['data']['body']['path']).read_bytes()):
+        raise EvidenceError('Consumed child wire bytes differ from original')
+    if list((root/request['data']['body']['path']).parent.glob('attempt_*/http.json')):
+        raise EvidenceError('Saved response contains a new transport-attempt receipt')
+    cp_relative='checkpoints/'+lineage['parent_checkpoint_id']+'.json'
+    original_file(cp_relative,root/'lineage/parent_checkpoint.json')
+    if file_digest(root/'lineage/parent_checkpoint.json')!=lineage.get('parent_checkpoint_sha256'):
+        raise EvidenceError('Consumed parent checkpoint digest mismatch')
+    parent_cp=read_json(root/'lineage/parent_checkpoint.json')
+    source_offset=int(source_rid.rsplit(':r',1)[1])
+    if (parent_cp.get('checkpoint_id')!=lineage['parent_checkpoint_id'] or
+            parent_cp.get('budget_used',{}).get('model_requests')!=source_offset or
+            parent_cp.get('qualification',{}).get('eligible') is not True):
+        raise EvidenceError('Consumed source checkpoint does not immediately precede response')
+    original_file('states/snapshots/'+parent_cp['snapshot_id']+'.json',root/'lineage/parent_snapshot.json')
+    first_snapshot=next(e for e in events if e['kind']=='state.snapshot')
+    restored=read_json(root/first_snapshot['data']['snapshot']['path'])
+    parent_snapshot=read_json(root/'lineage/parent_snapshot.json')
+    if any(restored.get(k)!=parent_snapshot.get(k) for k in ('content_sha256','files','directories')):
+        raise EvidenceError('Consumed response initial workspace differs from original checkpoint')
+    prefix=[e for e in events if e['kind']=='response.prefix_accounted']
+    if (len(prefix)!=1 or prefix[0]['data'].get('source_call_id')!=binding.get('source_call_id') or
+            prefix[0]['data'].get('model_requests')!=int(source_rid.rsplit(':r',1)[1])+1 or
+            prefix[0]['data'].get('known_total_tokens')!=source_manifest['usage']['known_total_tokens_including_parent']):
+        raise EvidenceError('Consumed prefix budget accounting mismatch')
+
+
 def verify(root:Path,expected_index_sha256=None):
     root=Path(root); errors=[]; warnings=[]; manifest=None
     def error(code,detail): errors.append({'code':code,'detail':str(detail)})
@@ -166,10 +261,13 @@ def verify(root:Path,expected_index_sha256=None):
         # Verify native call projection, rather than trusting recorded normalized calls.
         config=read_json(root/'raw/resolved_config.json')
         if digest(config)!=manifest['config_sha256']: error('config_digest_mismatch','resolved config')
+        _verify_response_consumption(root,manifest,events,requests,responses)
         backend=None
         from ..models.native import GeminiBackend, OpenAICompatibleBackend
         cls={'gemini':GeminiBackend,'openai-compatible':OpenAICompatibleBackend}.get(config['model']['adapter'])
-        if cls: backend=cls(config['model'])
+        if cls:
+            backend=cls(config['model'])
+            backend.native_pi_validation = config.get('agent',{}).get('validation_policy') == 'pi-native-0.73.1'
         else: warnings.append('native_projection_not_supported_for_this_plugin')
         parsed_ids={e['data']['request_id'] for e in events if e['kind']=='model.parsed'}
         if backend:
@@ -258,16 +356,32 @@ def verify(root:Path,expected_index_sha256=None):
 
 
 def observation_in_request(body,obs,native_id,name):
+    native_error = None
+    if isinstance(obs,dict) and obs.get('isError') is True and isinstance(obs.get('content'),list):
+        content=obs['content']
+        if all(isinstance(part,dict) and part.get('type')=='text' and isinstance(part.get('text'),str) for part in content):
+            native_error='\n'.join(part['text'] for part in content)
     if 'contents' in body:
         for content in last_observation_turn(body):
             for part in content.get('parts',[]):
                 fc=part.get('functionResponse')
-                if fc and fc.get('name')==name and fc.get('id')==native_id and fc.get('response')==obs: return True
+                if fc and fc.get('name')==name and fc.get('id')==native_id:
+                    if fc.get('response')==obs: return True
+                    if native_error is not None and fc.get('response')=={'error':native_error}: return True
     for msg in reversed(last_observation_turn(body)):
         if msg.get('role')=='tool' and msg.get('tool_call_id')==native_id:
+            if native_error is not None and msg.get('content')==native_error: return True
             try:
                 if json.loads(msg['content'])==obs: return True
             except (ValueError,TypeError): pass
+        if native_error is not None and msg.get('role')=='user' and isinstance(msg.get('content'),list):
+            if any(isinstance(part,dict) and part.get('type')=='tool_result' and
+                   part.get('tool_use_id')==native_id and part.get('is_error') is True and
+                   part.get('content')==native_error for part in msg['content']): return True
+    if native_error is not None:
+        for item in body.get('input',[]):
+            if isinstance(item,dict) and item.get('type')=='function_call_output' and item.get('call_id')==native_id and item.get('output')==native_error:
+                return True
     return False
 
 

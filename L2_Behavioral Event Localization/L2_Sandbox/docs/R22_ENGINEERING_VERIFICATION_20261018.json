@@ -1,0 +1,50 @@
+{
+  "schema": "r22_engineering_verification_v1",
+  "execution": "aml-b CPU4",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "gpu_started": false,
+  "live_continuations": "NOT_RUN",
+  "g2": "NOT_RUN",
+  "d0_frozen": false,
+  "scientific_efficacy": "not_tested",
+  "tests": [
+    {
+      "scope": "L1 tests/l1 + tests/l1_live",
+      "passed": 401,
+      "skipped": 87,
+      "failed": 0,
+      "seconds": 35.27
+    },
+    {
+      "scope": "L2 tests",
+      "passed": 480,
+      "skipped": 8,
+      "failed": 0,
+      "seconds": 22.73
+    }
+  ],
+  "native_audit": {
+    "passed_packages": 42,
+    "validation_calls": 767,
+    "stub_responses": 744,
+    "validation_failures": 0,
+    "raw_differences": 0,
+    "effective_differences": 0,
+    "prefix_validation_calls": 42,
+    "prefix_stub_responses": 39,
+    "summary_sha256": "8eeebc1d48a68e73d5b2634863147625c74add9aa4352ca5f05ae4a5630eed6b"
+  },
+  "wheel": {
+    "native_assets": 6,
+    "source_bytes_match": true,
+    "sha256": "696e440e5d8f0ea6c9ec796042f0ecdab1531b6bb85f160b93e048bec8224c7a"
+  },
+  "independent_review": {
+    "core_and_driver": "GO",
+    "supervisor": "GO",
+    "accepted_cleanup_findings": 2,
+    "resolved": 2
+  },
+  "limit": "Validation boundary only; no full native Pi harness or model/scientific efficacy claim"
+}

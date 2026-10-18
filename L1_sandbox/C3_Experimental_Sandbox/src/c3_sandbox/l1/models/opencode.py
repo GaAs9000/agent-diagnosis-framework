@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import quote
 from ..core.contracts import Call, Reply, ProtocolError, ConfigurationError, Result
 from .http import NativeHTTP
-from .native import GeminiBackend, parse_json, _arguments
+from .native import GeminiBackend, parse_json, _arguments, tool_result_text, is_native_error
 
 
 def _normalize_usage(usage):
@@ -133,8 +133,8 @@ class OpenCodeChatBackend:
             if not isinstance(fn.get('name'), str):
                 raise ProtocolError('Invalid function name')
             raw_args = fn.get('arguments', '{}')
-            args = (parse_json(raw_args.encode('utf-8')) if isinstance(raw_args, str)
-                    else _arguments(raw_args))
+            args = (parse_json(raw_args.encode('utf-8'), require_object=not getattr(self, 'native_pi_validation', False)) if isinstance(raw_args, str)
+                    else _arguments(raw_args, allow_any=getattr(self, 'native_pi_validation', False)))
             calls.append(Call(f'{request_id}:c{index}', fn['name'], args, native_id))
         finish = c.get('finish_reason')
         if finish not in ('stop', 'tool_calls'):
@@ -158,7 +158,7 @@ class OpenCodeChatBackend:
             new['messages'].append({
                 'role': 'tool',
                 'tool_call_id': call.native_id,
-                'content': json.dumps(result.observation, ensure_ascii=False, allow_nan=False),
+                'content': tool_result_text(result),
             })
             if result.image:
                 images.append({
@@ -252,8 +252,8 @@ class OpenAIResponsesBackend:
                     raise ProtocolError('Missing or duplicate function_call call_id')
                 seen.add(native_id)
                 raw_args = item.get('arguments', '{}')
-                args = (parse_json(raw_args.encode('utf-8')) if isinstance(raw_args, str)
-                        else _arguments(raw_args))
+                args = (parse_json(raw_args.encode('utf-8'), require_object=not getattr(self, 'native_pi_validation', False)) if isinstance(raw_args, str)
+                        else _arguments(raw_args, allow_any=getattr(self, 'native_pi_validation', False)))
                 calls.append(Call(f'{request_id}:c{len(calls)}', name, args, native_id))
             elif itype == 'message':
                 for part in item.get('content') or []:
@@ -280,7 +280,7 @@ class OpenAIResponsesBackend:
             new['input'].append({
                 'type': 'function_call_output',
                 'call_id': call.native_id,
-                'output': json.dumps(result.observation, ensure_ascii=False, allow_nan=False),
+                'output': tool_result_text(result),
             })
             if result.image:
                 new['input'].append({
@@ -369,7 +369,7 @@ class AnthropicMessagesBackend:
                 if not isinstance(name, str) or not name:
                     raise ProtocolError('Invalid tool_use name')
                 seen.add(native_id)
-                args = _arguments(block.get('input', {}))
+                args = _arguments(block.get('input', {}), allow_any=getattr(self, 'native_pi_validation', False))
                 calls.append(Call(f'{request_id}:c{len(calls)}', name, args, native_id))
             elif btype == 'text' and isinstance(block.get('text'), str):
                 texts.append(block['text'])
@@ -395,7 +395,7 @@ class AnthropicMessagesBackend:
             for call, result in results:
                 if not call.native_id:
                     raise ProtocolError('Anthropic tool_result requires tool_use_id')
-                obs_json = json.dumps(result.observation, ensure_ascii=False, allow_nan=False)
+                obs_json = tool_result_text(result)
                 if result.image:
                     content_val = [
                         {'type': 'text', 'text': obs_json},
@@ -414,6 +414,7 @@ class AnthropicMessagesBackend:
                     'type': 'tool_result',
                     'tool_use_id': call.native_id,
                     'content': content_val,
+                    **({'is_error': True} if is_native_error(result) else {}),
                 })
             new['messages'].append({'role': 'user', 'content': blocks})
         return new

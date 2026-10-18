@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from ..core.contracts import CapabilityError, L1Error, Result
+from ..core.contracts import CapabilityError, L1Error, Result, NativeValidatedCall
 from ..storage import utc_now, confined, regular_file
 from .tools import (
     execute_pi_edit,
@@ -245,7 +245,7 @@ class DockerRuntime:
                             shutil.copy2(item,dst_i)
                     shutil.rmtree(stage_dir,ignore_errors=True)
             proxy_args=dict(call.arguments,path=rel_app)
-            proxy_call=Call(call.call_id,call.name,proxy_args,call.native_id)
+            proxy_call=type(call)(call.call_id,call.name,proxy_args,call.native_id)
             if call.name=='read':
                 res=execute_pi_read(proxy_call,tmp_root,self.config['max_image_bytes'],supports_images=supports_images)
             elif call.name=='write':
@@ -268,6 +268,8 @@ class DockerRuntime:
             return res
     def execute(self,call,workspace,timeout,*,supports_images:bool=True):
         validate_call(call,images=supports_images)
+        if isinstance(call, NativeValidatedCall) and call.name == 'edit' and call.arguments['edits'] == []:
+            return execute_pi_edit(call,workspace)
         if not self.provenance: self.preflight()
         has_app_git=self._has_app_git()
         if call.name=='read_image':

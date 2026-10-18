@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/earendil-works/pi",
+  "commit": "781152fc24841dc54b22284514604048ebe5e2c9",
+  "version": "0.73.1",
+  "validation_entrypoint": "@mariozechner/pi-agent-core.runAgentLoop",
+  "tool_factories": ["createReadTool", "createBashTool", "createEditTool", "createWriteTool"],
+  "mode": "recorded_assistant_validation_only",
+  "actor_requests": 0
+}

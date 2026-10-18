@@ -49,8 +49,12 @@ class Task:
 class Call:
     call_id: str
     name: str
-    arguments: dict
+    arguments: Any
     native_id: str | None
+
+@dataclass(frozen=True)
+class NativeValidatedCall(Call):
+    """Internal execution capability issued only after pinned native validation."""
 
 @dataclass(frozen=True)
 class Reply:

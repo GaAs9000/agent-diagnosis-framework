@@ -15,6 +15,7 @@ from c3_sandbox.l1.runtime.tools import (
 )
 from .conftest import ScriptedGemini, gemini_call, gemini_done
 from .test_pi_harness import PiFixtureRuntime
+from .test_pi_response_continuation import native_bridge, fake_live_components, pi_config
 
 
 def arguments(tool, path):
@@ -92,10 +93,33 @@ def test_workspace_operations_still_work_after_rejected_path(tmp_path, prefix):
 
 
 @pytest.mark.parametrize('edits', ['original', {'oldText': 'original', 'newText': 'replacement'}, []])
-def test_malformed_edit_schema_remains_protocol_error(edits):
+def test_legacy_malformed_edit_schema_remains_protocol_error(edits):
     call = Call('r0:c0', 'edit', {'path': '/tmp/outside.txt', 'edits': edits}, 'malformed-edit')
     with pytest.raises(ProtocolError):
         validate_call(call, harness='pi')
+
+
+@pytest.mark.parametrize('args',[
+    {'path':'/tmp/outside.txt','edits':'original'},
+    {'edits':[{'path':'/workspace/note.txt','oldText':'old','newText':'new'}]},
+])
+def test_malformed_edit_schema_returns_native_error_and_continues(tmp_path,config,monkeypatch,native_bridge,args):
+    cfg=pi_config(config,native=True)
+    model=ScriptedGemini(cfg['model'],[
+        gemini_call('edit',args,native_id='malformed-edit'),
+        gemini_done(),
+    ])
+    fake_live_components(monkeypatch,model,PiFixtureRuntime())
+    result=run(cfg,tmp_path/'episode')
+    assert result['verification']['verified'],result
+    assert result['status']['termination']=='assistant_finished'
+    assert result['status']['protocol_validity']=='valid'
+    assert len(model.bodies)==2
+    response=model.bodies[1]['contents'][-1]['parts'][0]['functionResponse']
+    assert response['id']=='malformed-edit'
+    assert set(response['response'])=={'error'}
+    assert response['response']['error'].startswith('Validation failed for tool "edit":')
+    assert 'Received arguments:' in response['response']['error']
 
 
 def test_episode_continues_after_rejected_pi_paths(tmp_path, config, components):
@@ -116,3 +140,15 @@ def test_episode_continues_after_rejected_pi_paths(tmp_path, config, components)
     for body in model.bodies[1:]:
         response = body['contents'][-1]['parts'][0]['functionResponse']['response']
         assert response['exit_code'] == 1
+
+
+def test_native_empty_edits_fail_before_file_access(tmp_path, monkeypatch):
+    from c3_sandbox.l1.core.contracts import NativeValidatedCall
+    call = NativeValidatedCall('r0:c0', 'edit', {'path':'missing.txt','edits':[]}, 'empty-edits')
+    def unexpected_io(*args, **kwargs):
+        pytest.fail('empty edit reached file content I/O')
+    monkeypatch.setattr(Path, 'read_bytes', unexpected_io)
+    monkeypatch.setattr(Path, 'write_bytes', unexpected_io)
+    result = execute_pi_edit(call, tmp_path)
+    assert result.observation['exit_code'] == 1
+    assert result.observation['stderr'] == 'Edit tool input is invalid. edits must contain at least one replacement.'

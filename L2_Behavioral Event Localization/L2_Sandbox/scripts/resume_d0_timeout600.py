@@ -166,8 +166,8 @@ def _t2_resume_configs_match(current, previous):
     return current == expected
 
 
-def derivative_record():
-    path = p.L1 / 'src/c3_sandbox/l1/core/orchestrator.py'
+def derivative_record(source_path=None):
+    path = Path(source_path) if source_path is not None else p.L1 / 'src/c3_sandbox/l1/core/orchestrator.py'
     source = path.read_text()
     guard = 'if base_config!=prev_base:'
     if source.count(guard) != 1:

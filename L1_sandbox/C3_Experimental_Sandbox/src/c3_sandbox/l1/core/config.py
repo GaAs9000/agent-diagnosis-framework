@@ -30,7 +30,7 @@ DEFAULTS = {
 ALLOWED = {k:set(v) if isinstance(v,dict) else None for k,v in DEFAULTS.items()}
 ALLOWED['benchmark'] |= {'source_dir','data_dir','assets_dir','bundle_dir','data_lock', 'allow_unlocked_data'}
 ALLOWED['model'] |= {'reported_revision','provider','tokenizer_digest','weight_digest','retry'}
-ALLOWED['agent'] |= {'system_prompt', 'harness', 'intervention', 'compaction'}
+ALLOWED['agent'] |= {'system_prompt', 'harness', 'intervention', 'compaction', 'validation_policy', 'harness_revision'}
 for section in ('benchmark','model','runtime','evaluation'): ALLOWED[section].add('options')
 
 
@@ -68,6 +68,13 @@ def validate(config: dict) -> dict:
     if 'harness' in config['agent'] and config['agent']['harness'] is not None:
         if config['agent']['harness'] not in ('minimal', 'pi'):
             raise ConfigurationError('agent.harness must be minimal or pi')
+    policy = config['agent'].get('validation_policy')
+    revision = config['agent'].get('harness_revision')
+    if policy is not None or revision is not None:
+        from ..runtime.tools import active_harness
+        if (policy != 'pi-native-0.73.1' or revision != 'l1-pi-native-errors-v1'
+                or active_harness(config) != 'pi'):
+            raise ConfigurationError('Native validation requires Pi and its explicit policy/revision pair')
     if 'compaction' in config['agent'] and config['agent']['compaction'] is not None:
         comp = config['agent']['compaction']
         if not isinstance(comp, dict) or not set(comp) <= {'enabled', 'context_window_tokens', 'reserve_tokens', 'keep_recent_tokens'}:

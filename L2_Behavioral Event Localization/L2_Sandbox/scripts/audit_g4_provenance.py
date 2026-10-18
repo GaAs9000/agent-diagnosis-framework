@@ -37,6 +37,7 @@ def backend(config):
     # Deliberately bypass HTTP construction. Only pure protocol methods are used.
     model = object.__new__(OpenAICompatibleBackend)
     model.config = config['model']
+    model.native_pi_validation = config['agent'].get('validation_policy') == 'pi-native-0.73.1'
     return model
 
 
@@ -61,6 +62,15 @@ def reconstruct_observation(call, raw, result_data, read):
     unrecognized fields/schema are refused rather than normalized away.
     """
     obs = raw['observation']
+    if raw.get('provenance', {}).get('pi_native_validation_error') is True:
+        if (not isinstance(obs, dict) or set(obs) != {'content', 'details', 'isError'}
+                or obs['isError'] is not True or obs['details'] != {}
+                or not isinstance(obs['content'], list) or not obs['content']
+                or any(not isinstance(block, dict) or set(block) != {'type', 'text'}
+                       or block['type'] != 'text' or not isinstance(block['text'], str)
+                       for block in obs['content'])):
+            raise ValueError('unsupported native validation error schema')
+        return copy.deepcopy(obs)
     if call.name == 'bash':
         stdout = read(result_data['stdout'])
         stderr = read(result_data['stderr'])
@@ -103,7 +113,19 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
         return [{'status': 'unverified', 'reason': 'intervention_not_supported_by_plain_DEV_G2_audit'}]
     if parent_checkpoint is not None:
         if parent_checkpoint.get('budget_used', {}).get('model_requests') != 0:
-            return [{'status': 'unverified', 'reason': 'only_plain_c0_G2_parent_supported'}]
+            requests = [e for e in events if e['kind'] == 'model.request']
+            bindings = [e for e in events if e['kind'] == 'response.bound']
+            if (not requests or requests[0]['data'].get('source') != 'saved_response'
+                    or requests[0]['data'].get('http_attempts') != 0 or len(bindings) != 1):
+                return [{'status': 'unverified', 'reason': 'only_plain_c0_G2_parent_supported'}]
+            first = requests[0]['data']
+            responses = [e for e in events if e['kind'] == 'model.response'
+                         and e['data']['request_id'] == first['request_id']]
+            binding = bindings[0]['data']
+            if (len(responses) != 1 or read(binding['request']) != read(first['body'])
+                    or read(binding['response']) != read(responses[0]['data']['body'])):
+                return [{'status': 'mismatch', 'reason': 'saved_response_bytes_differ_from_bound_source'}]
+            conversation = copy.deepcopy(parent_checkpoint['conversation'])
         if parent_checkpoint['conversation'] != conversation:
             return [{'status': 'mismatch', 'reason': 'parent_c0_not_public_initial_conversation'}]
     rows = []
@@ -119,6 +141,9 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
         expected = model.request(conversation, tools_for_config(config))
         row = {'request_id': rid, 'event_id': event['event_id'],
                'reason': 'full_messages_tools_parameters_reconstructed', **compare(expected, actual)}
+        if parent_checkpoint is not None and parent_checkpoint.get('budget_used', {}).get('model_requests') != 0:
+            row['history_scope'] = 'suffix_from_supplied_parent_checkpoint; historical_prefix_not_reconstructed'
+            row['parent_conversation_sha256'] = digest(parent_checkpoint['conversation'])
         rows.append(row)
         if row['status'] != 'verified':
             row['reason'] = 'full_request_differs_from_constructed_input'
@@ -138,6 +163,16 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
                 if raw['call_id'] != call.call_id:
                     raise ValueError('tool result call identity mismatch')
                 delivered = reconstruct_observation(call, raw, result_event['data'], read)
+                if raw.get('provenance', {}).get('pi_native_validation_error') is True:
+                    validations = [e['data'] for e in events if e['kind'] == 'tool.validation'
+                                   and e['data'].get('call_id') == call.call_id]
+                    if (not model.native_pi_validation or len(validations) != 1
+                            or not {'raw_arguments', 'validated_arguments', 'native_result', 'provenance', 'telemetry'} <= validations[0].keys()
+                            or validations[0].get('ok') is not False
+                            or validations[0].get('raw_arguments') != call.arguments
+                            or validations[0].get('native_result') != delivered
+                            or validations[0].get('provenance') != raw['provenance'].get('validation')):
+                        raise ValueError('native validation error differs from validation event')
                 limit = config['recording']['observation_limit_chars']
                 cut = []
                 for field in ('stdout', 'stderr', 'output'):
@@ -151,7 +186,7 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
                 mime = _detect_image_mime(image) if image else None
                 if image and mime is None:
                     raise ValueError('unrecognized actual tool image')
-                accepted.append((call, Result(delivered, image=image, image_mime=mime)))
+                accepted.append((call, Result(delivered, image=image, image_mime=mime, provenance=copy.deepcopy(raw.get('provenance', {})))))
                 sources.append({'call_id': call.call_id, 'result_sha256': digest(raw),
                                 'delivered_observation_sha256': digest(delivered),
                                 'image_sha256': image_ref.get('sha256') if image_ref else None})

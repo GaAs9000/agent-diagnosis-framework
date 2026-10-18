@@ -40,3 +40,4 @@ markers = [
 [tool.setuptools.package-data]
 "c3_sandbox.l1" = ["evidence.schema.json"]
 "c3_sandbox.l1.evidence" = ["schema.json"]
+"c3_sandbox.l1.runtime" = ["pi_native/*.mjs", "pi_native/*.json"]

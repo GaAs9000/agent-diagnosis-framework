@@ -8,7 +8,7 @@ from ..core.contracts import Call, Reply, ProtocolError, ConfigurationError, Res
 from .http import NativeHTTP
 
 
-def parse_json(body: bytes):
+def parse_json(body: bytes, *, require_object=True):
     def pairs(items):
         d={}
         for k,v in items:
@@ -17,15 +17,27 @@ def parse_json(body: bytes):
         return d
     try:
         x=json.loads(body,object_pairs_hook=pairs,parse_constant=lambda _: (_ for _ in ()).throw(ValueError('nonfinite')))
-        if not isinstance(x,dict): raise ValueError('object required')
+        if require_object and not isinstance(x,dict): raise ValueError('object required')
         return x
     except (ValueError,UnicodeError,TypeError) as exc:
         raise ProtocolError('Invalid native JSON') from exc
 
 
-def _arguments(value):
-    if not isinstance(value,dict): raise ProtocolError('Tool arguments must be JSON object')
+def _arguments(value, *, allow_any=False):
+    if not allow_any and not isinstance(value,dict): raise ProtocolError('Tool arguments must be JSON object')
     return value
+
+def is_native_error(result):
+    return result.provenance.get('pi_native_validation_error') is True
+
+
+def native_error_text(result):
+    return '\n'.join(block['text'] for block in result.observation['content'] if block.get('type') == 'text').encode('utf-8', 'replace').decode('utf-8')
+
+
+def tool_result_text(result):
+    return native_error_text(result) if is_native_error(result) else json.dumps(result.observation, ensure_ascii=False, allow_nan=False)
+
 
 class GeminiBackend:
     def __init__(self, config):
@@ -65,7 +77,7 @@ class GeminiBackend:
                 if native_id is not None:
                     if not isinstance(native_id,str) or not native_id or native_id in seen: raise ProtocolError('Invalid or duplicate call ID')
                     seen.add(native_id)
-                calls.append(Call(f'{request_id}:c{index}',fc['name'],_arguments(fc.get('args',{})),native_id))
+                calls.append(Call(f'{request_id}:c{index}',fc['name'],_arguments(fc.get('args',{}), allow_any=getattr(self, 'native_pi_validation', False)),native_id))
             elif isinstance(part.get('text'),str) and not part.get('thought'):
                 texts.append(part['text'])
         if c.get('finishReason') not in (None,'STOP'):
@@ -79,7 +91,7 @@ class GeminiBackend:
         if results:
             parts=[]
             for call,result in results:
-                fc={'name':call.name,'response':copy.deepcopy(result.observation)}
+                fc={'name':call.name,'response':({'error': native_error_text(result)} if is_native_error(result) else copy.deepcopy(result.observation))}
                 if call.native_id: fc['id']=call.native_id
                 parts.append({'functionResponse':fc})
                 if result.image:
@@ -127,7 +139,7 @@ class OpenAICompatibleBackend:
             if not isinstance(native_id,str) or not native_id or native_id in seen: raise ProtocolError('Missing/duplicate tool_call_id')
             seen.add(native_id)
             if not isinstance(fn.get('name'),str) or not isinstance(fn.get('arguments'),str): raise ProtocolError('Invalid function')
-            args=parse_json(fn['arguments'].encode('utf-8'))
+            args=parse_json(fn['arguments'].encode('utf-8'), require_object=not getattr(self, 'native_pi_validation', False))
             calls.append(Call(f'{request_id}:c{index}',fn['name'],args,native_id))
         finish=c.get('finish_reason')
         if finish not in ('stop','tool_calls'): raise ProtocolError('Non-complete chat choice: '+str(finish))
@@ -138,7 +150,7 @@ class OpenAICompatibleBackend:
         new['messages'].append(copy.deepcopy(reply.native_message))
         for call,result in results:
             new['messages'].append({'role':'tool','tool_call_id':call.native_id,
-                'content':json.dumps(result.observation,ensure_ascii=False,allow_nan=False)})
+                'content':tool_result_text(result)})
             if result.image:
                 new['messages'].append({'role':'user','content':[
                     {'type':'text','text':f'Image returned by tool call {call.native_id}'},

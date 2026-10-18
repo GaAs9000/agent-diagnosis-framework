@@ -93,7 +93,10 @@ def selected_checkpoints(rows):
 def reconstruct_request(root, config, row):
     cp = row['checkpoint']
     cls = {'openai-compatible': OpenAICompatibleBackend, 'gemini': GeminiBackend}[config['model']['adapter']]
-    body = cls(config['model']).request(cp['conversation'], tools_for_config(config))
+    model = object.__new__(cls)  # Pure protocol reconstruction; no HTTP client.
+    model.config = config['model']
+    model.native_pi_validation = config.get('agent', {}).get('validation_policy') == 'pi-native-0.73.1'
+    body = model.request(cp['conversation'], tools_for_config(config))
     ref = row['next_request']['data']['body']
     recorded_path = confined(root, ref['path'])
     if file_digest(recorded_path) != ref['sha256']:

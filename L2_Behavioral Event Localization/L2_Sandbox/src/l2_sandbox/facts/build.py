@@ -30,6 +30,7 @@ FACT_FIELD_WHITELIST: dict[str, tuple[str, ...]] = {
         'arguments.limit',
     ),
     'preview_rendered': ('name', 'command'),
+    'tool_validation_error': ('call_id', 'request_id', 'name', 'raw_arguments', 'native_result', 'error_text', 'finish_reason', 'completion_tokens', 'next_response', 'next_call_changed', 'next_call_corrected'),
     'tool_exit': ('call_id', 'name', 'exit_code', 'stop_reason', 'output_complete', 'ok', 'stderr_preview'),
     'file_transition': (
         'path',
@@ -107,6 +108,8 @@ def build_facts(pkg: L1Package, probe_config: dict | None = None) -> list[dict[s
             if d.get('call_id'):
                 calls_by_id[d['call_id']] = d
 
+    parsed_by_request = {e['data'].get('request_id'): e['data'] for e in events if e.get('kind') == 'model.parsed'}
+    validations = {e['data'].get('call_id'): e['data'] for e in events if e.get('kind') == 'tool.validation'}
     facts: list[dict[str, Any]] = []
     for idx, start_i in enumerate(req_indices):
         end_i = req_indices[idx + 1] if idx + 1 < len(req_indices) else len(events)
@@ -123,7 +126,7 @@ def build_facts(pkg: L1Package, probe_config: dict | None = None) -> list[dict[s
                     'value': {'request_id': d.get('request_id'), 'text': d.get('text')},
                 })
             elif kind == 'tool.call':
-                args = d.get('arguments') or {}
+                args = d.get('arguments')
                 tool_name = d.get('name')
                 facts.append({
                     'turn': turn,
@@ -147,6 +150,47 @@ def build_facts(pkg: L1Package, probe_config: dict | None = None) -> list[dict[s
                                 'command': cmd,
                             },
                         })
+            elif kind == 'tool.validation' and d.get('ok') is False:
+                native = d.get('native_result')
+                if not isinstance(native, dict) or native.get('isError') is not True:
+                    continue
+                call = calls_by_id.get(d.get('call_id'), {})
+                parsed = parsed_by_request.get(call.get('request_id'), {})
+                usage = parsed.get('usage') or {}
+                next_parsed = None
+                next_calls = []
+                if idx + 1 < len(req_indices):
+                    next_start = req_indices[idx + 1]
+                    next_end = req_indices[idx + 2] if idx + 2 < len(req_indices) else len(events)
+                    following = events[next_start:next_end]
+                    next_parsed = next((x['data'] for x in following if x.get('kind') == 'model.parsed'), None)
+                    next_calls = [x['data'] for x in following if x.get('kind') == 'tool.call']
+                corrected = None
+                # A single same-tool retry is comparable; no causal repair claim is made.
+                if len(next_calls) == 1 and next_calls[0].get('name') == call.get('name'):
+                    validation = validations.get(next_calls[0].get('call_id'), {})
+                    if type(validation.get('ok')) is bool:
+                        corrected = validation['ok']
+                facts.append({
+                    'turn': turn, 'type': 'tool_validation_error',
+                    'value': {
+                        'call_id': d.get('call_id'), 'request_id': call.get('request_id'),
+                        'name': call.get('name'), 'raw_arguments': d.get('raw_arguments'),
+                        'native_result': native,
+                        'error_text': '\n'.join(b['text'] for b in native.get('content', [])
+                                               if b.get('type') == 'text' and isinstance(b.get('text'), str)),
+                        'finish_reason': parsed.get('finish_reason'),
+                        'completion_tokens': usage.get('completion_tokens', usage.get('candidatesTokenCount', usage.get('output_tokens'))),
+                        'next_response': None if next_parsed is None else {
+                            'request_id': next_parsed.get('request_id'),
+                            'finish_reason': next_parsed.get('finish_reason'),
+                            'usage': next_parsed.get('usage'), 'calls': next_calls,
+                        },
+                        'next_call_changed': (next_calls[0].get('arguments') != d.get('raw_arguments'))
+                            if len(next_calls) == 1 and next_calls[0].get('name') == call.get('name') else None,
+                        'next_call_corrected': corrected,
+                    },
+                })
             elif kind == 'tool.result':
                 res_path = (d.get('result') or {}).get('path')
                 obs = (pkg.json(res_path).get('observation') or {}) if res_path and (pkg.root / res_path).is_file() else {}
