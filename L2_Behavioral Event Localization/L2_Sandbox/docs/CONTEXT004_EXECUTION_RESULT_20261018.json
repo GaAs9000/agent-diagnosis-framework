@@ -126,7 +126,7 @@
     "gpu4_processes": [],
     "gpu4_memory_used_mib_readback": "3"
   },
-  "e1_chain_status": "in_progress_zero_actor",
+  "e1_chain_status": "completed",
   "d0_frozen": false,
   "scientific_efficacy": "not_tested",
   "evidence": {
@@ -135,6 +135,82 @@
     "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/context004_recovery/reports/summary.json": "b8d941dedf624206a50f02805a0a2fad0757a51297237ed239b0300b83c36b78",
     "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_context004_20261018/segments/officeval_004.r02/manifest.json": "355d89d147f4d0b7ffd4d5ea8cf624c02e19cb0e44fce1047195878ae343177a",
     "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_context004_20261018/segments/officeval_004.r02/evidence_index.json": "6cd36ef9d3c80c69fed569a0144fd372100e4e40cd60d54c1639ee56e6210dbd",
-    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_context004_20261018/segments/officeval_004.r02/official_grade.json": "7dbd3e699c1304b793f2956788699cef9569233bc3fbd78fd24431907319f942"
+    "L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_context004_20261018/segments/officeval_004.r02/official_grade.json": "7dbd3e699c1304b793f2956788699cef9569233bc3fbd78fd24431907319f942",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/context004_recovery/e1_cpu/analysis_receipt.json": "2897647bba4f3d33461a3553694db5cf24d5654d87d476ffc1107f8b9645aa96",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/context004_recovery/e1_cpu/summary.json": "1d7cc87a0fb1051feb964249bf021d5126dc2916b61b925b4086cd4d9c7499a8"
+  },
+  "analysis_source_commit": "44aa94fea527a3bb72627b4745049aa39eba9830",
+  "e1": {
+    "analysis_source_commit": "44aa94f",
+    "plan_sha256": "83ae9c1beea16c916eeea26dcb365a04a1e2ecc37a54d34846f9808e55480dee",
+    "grade_rows": 32,
+    "checkpoint_boundaries": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30
+    ],
+    "latest_terminal_score": 0.36363636363636365,
+    "snapshot_terminal_score": 0.36363636363636365,
+    "max_snapshot_score": 0.36363636363636365,
+    "first_peak_boundary": 18,
+    "terminal_checkpoint_id": null,
+    "terminal_synthetic": true,
+    "terminal_anchor_eligible": false,
+    "fact_count": 94,
+    "fact_turn_min": 1,
+    "fact_turn_max": 30,
+    "defect_counts": {
+      "never": 8
+    },
+    "input_inventories_unchanged": true,
+    "official_grader_invocations": 3,
+    "actor_requests": 0,
+    "analyst_requests": 0,
+    "execution": "official grading frozen ARM64 Docker; facts/defects aml-b CPU4",
+    "artifacts": {
+      "grade_output/plan.json": "7170574f78434faa18c9a560346eff43346f4f8aa46eb90c149beaba2303d769",
+      "grade_output/grade_receipt.json": "b8af39bbc5ee83d0e9e72663a13382e666c31a4fb9793a0c74848f78f6339fde",
+      "grade_output/grading_complete.json": "27508247fdede7baa60db60d2331e4be86d18da0478e777554bf6f4710d423b9",
+      "grade_output/grades.jsonl": "4902f189e42747e3d92f6a90de5b06067bb1849fc4921feaf95cef7b4eff615f",
+      "cpu/analysis_receipt.json": "2897647bba4f3d33461a3553694db5cf24d5654d87d476ffc1107f8b9645aa96",
+      "cpu/facts.jsonl": "66ec46c1bffb66c98c7d7b606710821d7cf401df135961c725cd4b8113f7a586",
+      "cpu/defects.json": "94aa15e271e8d05bb3fd374daffa3627840ad4cc1d1d400bb76569220b0d743a"
+    }
+  },
+  "verification": {
+    "final_l2_passed": 631,
+    "final_l2_skipped": 8,
+    "pi_context_targeted_passed": 182,
+    "pi_context_targeted_skipped": 0,
+    "independent_source_review": "GO",
+    "three_segments_independent_cpu_verified": true
   }
 }
