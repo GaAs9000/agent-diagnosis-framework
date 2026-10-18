@@ -16,7 +16,7 @@ import shutil
 import signal
 import time
 import uuid
-from .contracts import VERSION, Result, NativeValidatedCall, HTTPResult, ProtocolError, EvidenceError, ConfigurationError, EvaluationSpec
+from .contracts import VERSION, Result, NativeValidatedCall, HTTPResult, ProtocolError, EvidenceError, ConfigurationError, EvaluationSpec, L1Error
 from .config import validate
 from ..storage import canonical, digest, file_digest, regular_file, read_json, write_json, write_bytes, confined, utc_now, copy_file
 from ..recording.state import StateStore, restore
@@ -78,11 +78,18 @@ def _estimate_message_tokens(msg: dict) -> int:
     return max(1, (chars + 3) // 4)
 
 
+class _PiContextUnsatisfiable(L1Error):
+    code = 'pi_context_unsatisfiable'
+
+
 def _maybe_compact_pi_conversation(
     conversation: dict,
     comp_cfg: dict | None,
     last_usage_tokens: int | None,
     request_count: int,
+    *,
+    usage_messages: list[dict] | None = None,
+    usage_kind: str = 'total_tokens',
 ) -> tuple[dict, dict | None]:
     """Deterministic Pi context compaction preserving system prompt, initial task prompt,
     file operation tracking (readFiles/modifiedFiles), and recent turn boundaries.
@@ -90,19 +97,66 @@ def _maybe_compact_pi_conversation(
     if not isinstance(comp_cfg, dict) or not comp_cfg.get('enabled', False):
         return conversation, None
     messages = conversation.get('messages')
-    if not isinstance(messages, list) or len(messages) <= 4:
+    if not isinstance(messages, list):
         return conversation, None
 
     context_window = int(comp_cfg.get('context_window_tokens', 131072))
     reserve_tokens = int(comp_cfg.get('reserve_tokens', 16384))
     keep_recent_tokens = int(comp_cfg.get('keep_recent_tokens', 20000))
 
-    est_total = sum(_estimate_message_tokens(m) for m in messages)
-    already_compacted = bool(conversation.get('_pi_compaction'))
-    reported = int(last_usage_tokens) if (isinstance(last_usage_tokens, int) and last_usage_tokens > 0) else 0
-    context_tokens = est_total if already_compacted else max(est_total, reported)
+    # Bind usage to the history actually sent, not to the newly accepted tool
+    # results. Keep a high-water calibration across compactions/cold restores:
+    # chars/4 and Pi's 1200-token image estimate can greatly undercount vision.
+    calibration = copy.deepcopy(conversation.get('_pi_context_usage') or {})
+    scale = max(1.0, calibration.get('estimate_multiplier', 1.0))
+    image_extra = max(0, calibration.get('extra_tokens_per_image', 0))
+    def image_count(history):
+        return sum(
+            block.get('type') in ('image', 'image_url')
+            for message in history if isinstance(message.get('content'), list)
+            for block in message['content'] if isinstance(block, dict)
+        )
+    reported = last_usage_tokens if type(last_usage_tokens) is int and last_usage_tokens > 0 else 0
+    source_messages = usage_messages if usage_messages is not None else messages
+    source_estimate = sum(_estimate_message_tokens(m) for m in source_messages)
+    if reported and request_count > calibration.get('at_request', -1):
+        # Ten percent headroom on an observed underestimate; this is an
+        # empirical upper estimate, not a claim to reproduce the tokenizer.
+        if reported > source_estimate:
+            scale = max(scale, reported * 1.1 / max(1, source_estimate))
+            images = image_count(source_messages)
+            if images:
+                # Also attribute the full unexplained excess to images. A
+                # global ratio alone loses its protection when compaction
+                # discards much text but retains the expensive image blocks.
+                image_extra = max(image_extra, math.ceil((reported * 1.1 - source_estimate) / images))
+        calibration = {
+            'at_request': request_count,
+            'reported_tokens': reported,
+            'reported_usage_kind': usage_kind,
+            'source_messages_sha256': digest(source_messages),
+            'source_message_count': len(source_messages),
+            'source_tokens_estimate': source_estimate,
+            'estimate_multiplier': scale,
+            'extra_tokens_per_image': image_extra,
+        }
+    def estimate(history):
+        base = sum(_estimate_message_tokens(m) for m in history)
+        return max(math.ceil(base * scale), base + image_count(history) * image_extra)
+
+    context_tokens = estimate(messages)
+    new_conv = copy.deepcopy(conversation)
+    if calibration:
+        new_conv['_pi_context_usage'] = calibration
     if context_tokens <= context_window - reserve_tokens:
-        return conversation, None
+        return new_conv, None
+
+    def unsatisfiable():
+        raise _PiContextUnsatisfiable(
+            f'Pi context cannot fit {context_window - reserve_tokens} tokens while preserving '
+            f'system, initial task and latest complete turn (estimated {context_tokens}; '
+            f'usage provenance: {json.dumps(calibration, sort_keys=True)}).'
+        )
 
     # Find last assistant message index so we never cut inside the final observation turn
     last_assistant_idx = -1
@@ -111,47 +165,87 @@ def _maybe_compact_pi_conversation(
             last_assistant_idx = idx
             break
     if last_assistant_idx <= 2:
-        return conversation, None
+        unsatisfiable()
 
     # Walk backwards from end to find cut point keeping ~keep_recent_tokens
     # Never cut at a 'tool' message (must keep assistant + its tool results together)
-    valid_cuts = [
-        idx for idx in range(2, last_assistant_idx + 1)
-        if messages[idx].get('role') in ('user', 'assistant')
-        and not (
-            messages[idx].get('role') == 'user'
-            and isinstance(messages[idx].get('content'), str)
-            and messages[idx]['content'].startswith('[PI CONTEXT COMPACTION SUMMARY')
-        )
-    ]
+    valid_cuts = []
+    pending_ids = set()
+    for idx, message in enumerate(messages):
+        if idx > 2 and idx <= last_assistant_idx and not pending_ids and message.get('role') in ('user', 'assistant'):
+            valid_cuts.append(idx)
+        if message.get('role') == 'assistant':
+            pending_ids.update(call['id'] for call in message.get('tool_calls', []) if call.get('id'))
+        elif message.get('role') == 'tool':
+            pending_ids.discard(message.get('tool_call_id'))
+    if pending_ids:
+        unsatisfiable()
     if not valid_cuts:
-        return conversation, None
+        unsatisfiable()
 
     accumulated = 0
-    cut_idx = last_assistant_idx
+    cut_idx = valid_cuts[-1]
     for idx in range(len(messages) - 1, 1, -1):
-        accumulated += _estimate_message_tokens(messages[idx])
+        accumulated += math.ceil(_estimate_message_tokens(messages[idx]) * scale)
         if accumulated >= keep_recent_tokens:
             candidates = [c for c in valid_cuts if c <= idx]
             cut_idx = candidates[-1] if candidates else valid_cuts[-1]
             break
 
     if cut_idx <= 2:
-        return conversation, None
-
-    to_summarize = messages[2:cut_idx]
-    if len(to_summarize) == 1 and isinstance(to_summarize[0].get('content'), str) and to_summarize[0]['content'].startswith('[PI CONTEXT COMPACTION SUMMARY'):
-        return conversation, None
+        unsatisfiable()
 
     prev_records = list(conversation.get('_pi_compaction') or [])
+    # Shorten only at complete turns until the entire retained history fits.
+    # Check every candidate: a summary's tracked-file list can itself grow.
+    candidates = [candidate for candidate in valid_cuts if candidate >= cut_idx]
+    for candidate in candidates:
+        to_summarize = messages[2:candidate]
+        if len(to_summarize) == 1 and str(to_summarize[0].get('content', '')).startswith('[PI CONTEXT COMPACTION SUMMARY'):
+            continue
+        new_messages, summary_msg, read_files, modified_files = _pi_compacted_messages(
+            messages, candidate, prev_records, request_count, context_tokens,
+            context_window - reserve_tokens,
+        )
+        tokens_after_est = estimate(new_messages)
+        if tokens_after_est < context_tokens and tokens_after_est <= context_window - reserve_tokens:
+            cut_idx = candidate
+            break
+    else:
+        unsatisfiable()
+
+    receipt = {
+        'compaction_index': len(prev_records) + 1,
+        'at_request': request_count,
+        'tokens_before': context_tokens,
+        'tokens_after_estimate': tokens_after_est,
+        'context_window_tokens': context_window,
+        'reserve_tokens': reserve_tokens,
+        'keep_recent_tokens': keep_recent_tokens,
+        'compacted_message_count': cut_idx - 2,
+        'kept_message_count': len(new_messages),
+        'cut_index': cut_idx,
+        'read_files': sorted(read_files),
+        'modified_files': sorted(modified_files),
+        'summary_sha256': digest(summary_msg),
+        'usage_calibration': calibration,
+        'tokens_before_uncalibrated': sum(_estimate_message_tokens(m) for m in messages),
+        'estimation_method': 'chars4_image1200_observed_ratio_and_image_excess_high_water_1.1',
+    }
+    new_conv['messages'] = new_messages
+    new_conv['_pi_compaction'] = prev_records + [receipt]
+    return new_conv, receipt
+
+
+def _pi_compacted_messages(messages, cut_idx, prev_records, request_count, context_tokens, threshold):
+    """Build the deterministic summary without altering native retained messages."""
     read_files: set[str] = set()
     modified_files: set[str] = set()
     for rec in prev_records:
         read_files.update(rec.get('read_files') or [])
         modified_files.update(rec.get('modified_files') or [])
-
     digest_lines: list[str] = []
-    for m in to_summarize:
+    for m in messages[2:cut_idx]:
         role = m.get('role')
         if role == 'assistant':
             for tc in m.get('tool_calls') or []:
@@ -162,6 +256,8 @@ def _maybe_compact_pi_conversation(
                     parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args if isinstance(raw_args, dict) else {})
                 except Exception:
                     parsed_args = {}
+                if not isinstance(parsed_args, dict):
+                    parsed_args = {}
                 path_arg = parsed_args.get('path')
                 if name == 'read' and isinstance(path_arg, str):
                     read_files.add(path_arg)
@@ -170,13 +266,13 @@ def _maybe_compact_pi_conversation(
                     modified_files.add(path_arg)
                     digest_lines.append(f"- tool `{name}`: {path_arg}")
                 elif name in ('bash', 'run'):
-                    cmd_str = str(parsed_args.get('command') or '').strip().splitlines()[0][:120]
+                    cmd_str = (str(parsed_args.get('command') or '').strip().splitlines() or [''])[0][:120]
                     digest_lines.append(f"- tool `{name}`: {cmd_str}")
 
     comp_index = len(prev_records) + 1
     summary_text = (
         f"[PI CONTEXT COMPACTION SUMMARY #{comp_index} at request {request_count}]\n"
-        f"Context tokens before compaction: {context_tokens} (threshold: {context_window - reserve_tokens}).\n"
+        f"Context tokens before compaction: {context_tokens} (threshold: {threshold}).\n"
         f"Read files ({len(read_files)}): {', '.join(sorted(read_files)) if read_files else '(none)'}\n"
         f"Modified files ({len(modified_files)}): {', '.join(sorted(modified_files)) if modified_files else '(none)'}\n"
         f"Compacted actions ({len(digest_lines)}):\n"
@@ -184,27 +280,7 @@ def _maybe_compact_pi_conversation(
     )
     summary_msg = {'role': 'user', 'content': summary_text}
     new_messages = messages[:2] + [summary_msg] + messages[cut_idx:]
-    tokens_after_est = sum(_estimate_message_tokens(m) for m in new_messages)
-
-    receipt = {
-        'compaction_index': comp_index,
-        'at_request': request_count,
-        'tokens_before': context_tokens,
-        'tokens_after_estimate': tokens_after_est,
-        'context_window_tokens': context_window,
-        'reserve_tokens': reserve_tokens,
-        'keep_recent_tokens': keep_recent_tokens,
-        'compacted_message_count': len(to_summarize),
-        'kept_message_count': len(new_messages),
-        'cut_index': cut_idx,
-        'read_files': sorted(read_files),
-        'modified_files': sorted(modified_files),
-        'summary_sha256': digest(summary_msg),
-    }
-    new_conv = copy.deepcopy(conversation)
-    new_conv['messages'] = new_messages
-    new_conv['_pi_compaction'] = prev_records + [receipt]
-    return new_conv, receipt
+    return new_messages, summary_msg, read_files, modified_files
 
 
 def build_execution_contract_prompt(config: dict) -> str:
@@ -316,12 +392,22 @@ def _check_native_upgrade(previous: dict, current: dict) -> bool:
     old = copy.deepcopy(previous)
     if active_harness(old) != 'pi' or old['agent'].get('version') != '0.73.1':
         return False
-    if old['agent'].get('validation_policy') is not None or old['agent'].get('harness_revision') is not None:
+    previous_revision = old['agent'].get('harness_revision')
+    previous_policy = old['agent'].get('validation_policy')
+    target_revision = current['agent'].get('harness_revision')
+    if (previous_policy, previous_revision) not in (
+        (None, None), ('pi-native-0.73.1', 'l1-pi-native-errors-v1'),
+    ):
         return False
-    if old['model']['timeout_seconds'] not in (300, 600):
+    if target_revision not in ('l1-pi-native-errors-v1', 'l1-pi-native-errors-context-v2'):
         return False
-    old['model']['timeout_seconds'] = 600
-    old['agent'].update(validation_policy='pi-native-0.73.1', harness_revision='l1-pi-native-errors-v1')
+    if previous_revision == 'l1-pi-native-errors-v1' and target_revision != 'l1-pi-native-errors-context-v2':
+        return False
+    if current['model']['timeout_seconds'] != old['model']['timeout_seconds']:
+        if (old['model']['timeout_seconds'], current['model']['timeout_seconds']) != (300, 600):
+            return False
+        old['model']['timeout_seconds'] = 600
+    old['agent'].update(validation_policy='pi-native-0.73.1', harness_revision=target_revision)
     return old == current
 
 
@@ -392,6 +478,10 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     An optional remaining_seconds() also bounds transport and tool deadlines.
     """
     config=copy.deepcopy(validate(config)); output=Path(output).absolute()
+    if (config['agent'].get('validation_policy') == 'pi-native-0.73.1'
+            and (config['agent'].get('compaction') or {}).get('enabled')
+            and config['agent'].get('harness_revision') != 'l1-pi-native-errors-context-v2'):
+        raise ConfigurationError('Native Pi compaction execution requires harness_revision=l1-pi-native-errors-context-v2; migrate the config explicitly')
     config['agent']['system_prompt']=build_execution_contract_prompt(config)
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
     if resume_response_id is not None and (parent is None or checkpoint_id is None):
@@ -428,7 +518,7 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 raise ConfigurationError('Native upgrade cannot change intervention')
             if config['agent'].get('validation_policy') != 'pi-native-0.73.1':
                 raise ConfigurationError('Native upgrade requires explicit native policy')
-            lineage['config_upgrade'] = {'policy':'pi-native-0.73.1', 'harness_revision':'l1-pi-native-errors-v1',
+            lineage['config_upgrade'] = {'policy':'pi-native-0.73.1', 'harness_revision':config['agent']['harness_revision'],
                 'source_config_sha256':digest(previous_config), 'target_config_sha256':digest(config),
                 'applied':bool(upgrade), 'mode':'saved_response' if resume_response_id is not None else 'initial_checkpoint'}
             if resume_response_id is None:
@@ -876,12 +966,20 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 pending.append({'call_id':call.call_id,'native_id':call.native_id,'result_event_id':re['event_id'],'observation':journal.ref(op)})
                 results.append((call,Result(delivered,actual.stdout,actual.stderr,actual.image,actual.image_mime,actual.provenance)))
             if interrupted_batch: break
+            usage_messages = conversation.get('messages')
             conversation=model.accept(conversation,reply,results)
+            context_usage = usage.get('prompt_tokens', usage.get('promptTokenCount'))
+            context_usage_kind = 'prompt_tokens'
+            if type(context_usage) is not int or context_usage <= 0:
+                context_usage = current_tokens
+                context_usage_kind = 'total_tokens'
             conversation, comp_receipt = _maybe_compact_pi_conversation(
                 conversation,
                 config['agent'].get('compaction'),
-                current_tokens if type(current_tokens) is int else None,
+                context_usage,
                 request_count,
+                usage_messages=usage_messages,
+                usage_kind=context_usage_kind,
             )
             if comp_receipt is not None:
                 journal.emit('session.compacted', comp_receipt)

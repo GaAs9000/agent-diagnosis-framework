@@ -72,7 +72,8 @@ def validate(config: dict) -> dict:
     revision = config['agent'].get('harness_revision')
     if policy is not None or revision is not None:
         from ..runtime.tools import active_harness
-        if (policy != 'pi-native-0.73.1' or revision != 'l1-pi-native-errors-v1'
+        if (policy != 'pi-native-0.73.1' or revision not in (
+                'l1-pi-native-errors-v1', 'l1-pi-native-errors-context-v2')
                 or active_harness(config) != 'pi'):
             raise ConfigurationError('Native validation requires Pi and its explicit policy/revision pair')
     if 'compaction' in config['agent'] and config['agent']['compaction'] is not None:

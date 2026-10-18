@@ -108,7 +108,8 @@ def test_non_c0_and_intervention_histories_are_not_silently_accepted():
 
 def test_history_rewrite_is_replayed_instead_of_prefix_comparison(monkeypatch):
     config, public, events, store = fixture()
-    def rewrite(conversation, *_):
+    config['agent']['harness_revision'] = 'l1-pi-native-errors-context-v2'
+    def rewrite(conversation, *_, **__):
         conv = copy.deepcopy(conversation)
         conv['messages'] = conv['messages'][:2] + [{'role': 'user', 'content': 'derived compact summary'}]
         return conv, {'summary_sha256': audit.digest(conv['messages'][-1])}
@@ -127,6 +128,33 @@ def test_history_rewrite_is_replayed_instead_of_prefix_comparison(monkeypatch):
     assert all(r['status'] == 'verified' for r in reconstruct(config, public, events, store))
     next(e for e in events if e['kind'] == 'session.compacted')['data'] = {'summary_sha256': 'forged'}
     assert reconstruct(config, public, events, store)[-1]['status'] == 'mismatch'
+
+
+def test_historical_compaction_is_not_reinterpreted_with_new_algorithm():
+    config, public, events, store = fixture()
+    events.insert(3, {'kind': 'session.compacted', 'data': {'at_request': 1}})
+    rows = reconstruct(config, public, events, store)
+    assert rows == [{'status': 'unverified', 'reason': 'historical_compaction_requires_bound_legacy_controller'}]
+
+
+def test_v2_reconstruction_uses_prompt_usage_bound_to_sent_history(monkeypatch):
+    config, public, events, store = fixture()
+    config['agent'].update(harness_revision='l1-pi-native-errors-context-v2', compaction={
+        'enabled': True, 'context_window_tokens': 8192, 'reserve_tokens': 1024, 'keep_recent_tokens': 1000})
+    expected = []
+    for turn in (0, 1):
+        response = json.loads(store[f'response{turn}'])
+        response['usage'] = {'prompt_tokens': 25, 'completion_tokens': 5, 'total_tokens': 30}
+        store[f'response{turn}'] = json.dumps(response).encode()
+        expected.append(json.loads(store[f'request{turn}'])['messages'])
+    original = audit._maybe_compact_pi_conversation
+    seen = []
+    def observed(conversation, settings, tokens, count, *, usage_messages, usage_kind):
+        seen.append((tokens, copy.deepcopy(usage_messages), usage_kind))
+        return original(conversation, settings, tokens, count, usage_messages=usage_messages, usage_kind=usage_kind)
+    monkeypatch.setattr(audit, '_maybe_compact_pi_conversation', observed)
+    assert all(row['status'] == 'verified' for row in reconstruct(config, public, events, store))
+    assert seen == [(25, history, 'prompt_tokens') for history in expected]
 
 
 def test_public_or_independently_generated_rubric_constants_are_not_leak_verdicts():

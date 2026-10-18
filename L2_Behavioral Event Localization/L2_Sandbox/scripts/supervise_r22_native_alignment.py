@@ -145,40 +145,137 @@ def wait_child(process, deadline):
 
 # Remote code receives only the bound receipt. It never searches/kills by name.
 STOP_CODE = r'''
-import json, os, signal, subprocess, sys, time
-s=json.load(sys.stdin); pid=s['leader_pid']; pgid=s['pgid']; owner=s['owner_tag']
-def members():
-    result=[]
-    for entry in os.scandir('/proc'):
+import json, os, re, signal, subprocess, sys, time
+PROC_ROOT='/proc'
+
+def process(n):
+    base=PROC_ROOT+'/'+str(n)
+    with open(base+'/stat') as f: raw=f.read()
+    fields=raw[raw.rindex(')')+2:].split()
+    with open(base+'/environ','rb') as f: env=f.read().split(b'\0')
+    with open(base+'/cmdline','rb') as f: args=f.read().rstrip(b'\0').split(b'\0')
+    return dict(pid=n, uid=os.stat(base).st_uid, ppid=int(fields[1]),
+        pgid=int(fields[2]), start=int(fields[19]), state=fields[0], env=env, args=args)
+
+def members(pgid):
+    found={}
+    for entry in os.scandir(PROC_ROOT):
         if entry.name.isdigit():
             try:
-                n=int(entry.name)
-                if os.getpgid(n)==pgid: result.append(n)
-            except ProcessLookupError: pass
+                with open(PROC_ROOT+'/'+entry.name+'/stat') as f: raw=f.read()
+                fields=raw[raw.rindex(')')+2:].split()
+                if int(fields[2])==pgid and fields[0]!='Z':
+                    p=process(int(entry.name))
+                    if p['pgid']!=pgid: raise ValueError('process group changed during read')
+                    found[p['pid']]=p
+            except FileNotFoundError: pass
+    return found
+
+def gpu_query(args):
+    r=subprocess.run(['nvidia-smi']+args+['--format=csv,noheader,nounits'],
+        capture_output=True,text=True,timeout=5,check=True)
+    return r.stdout.strip()
+
+def gpu_processes():
+    rows=gpu_query(['--query-compute-apps=pid,gpu_uuid'])
+    return [(int(n.strip()), uuid.strip()) for row in rows.splitlines()
+        for n,uuid in [row.split(',',1)]]
+
+def identity(p):
+    return tuple(p[k] for k in ('pid','uid','ppid','pgid','start'))
+
+def api_command(s, args):
+    expected=[v.encode() for v in s['command'][4:]]
+    # nice execs its command; a console script's shebang adds the interpreter.
+    # Admit only the recorded wrapper and a Python in that exact script's bin.
+    if expected[:3]==[b'nice',b'-n',b'10']: expected=expected[3:]
+    actual=args
+    if expected and expected[0].endswith(b'/vllm') and actual!=expected and len(actual)==len(expected)+1:
+        directory,_,name=actual[0].rpartition(b'/')
+        if directory==expected[0].rsplit(b'/',1)[0] and re.fullmatch(br'python(?:3(?:\.[0-9]+)?)?',name):
+            actual=actual[1:]
+    if actual!=expected or (s.get('api_argv') is not None and args!=[v.encode() for v in s['api_argv']]):
+        return False
+    return (b'8001' in actual and b'qwen' in b' '.join(actual).lower() and
+        (b'vllm.entrypoints.openai.api_server' in actual or any(
+            v.rsplit(b'/',1)[-1]==b'vllm' and actual[i+1:i+2]==[b'serve']
+            for i,v in enumerate(actual))))
+
+def prove(s, group, gpu, uuid):
+    pid=s['leader_pid']; owner=('C3_R22_SERVICE_OWNER='+s['owner_tag']).encode()
+    if pid!=s['pgid'] or pid not in group: raise ValueError('leader missing or foreign group')
+    api=[]
+    for n,p in group.items():
+        if p['uid']!=os.getuid(): raise ValueError('foreign UID')
+        tags=[v for v in p['env'] if v.startswith(b'C3_R22_SERVICE_OWNER=')]
+        if tags and tags!=[owner]: raise ValueError('owner mismatch')
+        args=p['args']; cmd=b' '.join(args)
+        if n==pid:
+            if tags!=[owner] or [v.decode() for v in args[:4]]!=s['command'][:4]:
+                raise ValueError('leader identity changed')
+        elif api_command(s,args):
+            if tags!=[owner] or p['ppid']!=pid: raise ValueError('API anchor mismatch')
+            if s.get('api_pid',n)!=n or s.get('api_start_ticks',p['start'])!=p['start']:
+                raise ValueError('API birth identity changed')
+            api.append(n)
+        elif args and re.fullmatch(br'VLLM::EngineCore(?:_DP[0-9]+)?',args[0].rstrip(b' ')):
+            if (n,uuid) not in gpu: raise ValueError('EngineCore exact GPU identity missing')
+        elif b'from multiprocessing.resource_tracker import main' in cmd:
+            if tags!=[owner]: raise ValueError('tracker owner missing')
+        else: raise ValueError('unknown group member')
+    if len(api)!=1: raise ValueError('unique Qwen 8001 API anchor missing')
+    # Only the observed API's direct EngineCore/tracker children are admitted.
+    for n,p in group.items():
+        if n not in (pid,api[0]) and p['ppid']!=api[0]:
+            raise ValueError('descendant chain changed')
+        if n!=pid and p['start']<group[p['ppid']]['start']:
+            raise ValueError('parent process identity changed')
+    with open(PROC_ROOT+'/stat') as f:
+        boot=next(int(line.split()[1]) for line in f if line.startswith('btime '))
+    started=boot+group[pid]['start']/os.sysconf('SC_CLK_TCK')
+    if not s['remote_launch_epoch']-2<=started<=s['remote_launch_epoch']+10:
+        raise ValueError('leader launch identity changed')
+    if s.get('leader_start_ticks',group[pid]['start'])!=group[pid]['start']:
+        raise ValueError('leader start identity changed')
+    for n,u in gpu:
+        if (n in group and u!=uuid) or (u==uuid and n not in group):
+            raise ValueError('foreign GPU process')
+
+def cleanup(s):
+    pid=s['leader_pid']; pgid=s['pgid']; handles={}
+    result=dict(status='cleanup_unconfirmed',leader_pid=pid,pgid=pgid)
+    try:
+        uuid=gpu_query(['-i','4','--query-gpu=uuid'])
+        if not uuid or '\n' in uuid or s.get('gpu_uuid')!=uuid:
+            raise ValueError('GPU UUID mismatch')
+        group=members(pgid); gpu=gpu_processes()
+        if group:
+            prove(s,group,gpu,uuid)
+            # Open stable process handles, then prove the entire unchanged graph again.
+            # No signal can hit a reused PID, even during the final syscall race.
+            for n in group: handles[n]=os.pidfd_open(n)
+            current=members(pgid)
+            if {n:identity(p) for n,p in current.items()}!={n:identity(p) for n,p in group.items()}:
+                raise ValueError('process identity changed before signal')
+            prove(s,current,gpu_processes(),uuid)
+            for n in sorted(group,key=lambda n: (group[n]['start'],n),reverse=True):
+                try: signal.pidfd_send_signal(handles[n],signal.SIGTERM)
+                except ProcessLookupError: pass
+            deadline=time.monotonic()+20
+            while members(pgid) and time.monotonic()<deadline: time.sleep(.25)
+        remaining=members(pgid)
+        gpu=gpu_processes()
+        result.update(remaining_pids=sorted(remaining),gpu4_processes=[n for n,u in gpu if u==uuid])
+        if not remaining and not result['gpu4_processes'] and not any(n in group for n,u in gpu):
+            result['status']='confirmed_absent'
+    except Exception as exc: result['error']=type(exc).__name__+': '+str(exc)
+    finally:
+        for fd in handles.values(): os.close(fd)
+    try: result['gpu4_memory_used_mib_readback']=gpu_query(['-i','4','--query-gpu=memory.used'])
+    except Exception: result['gpu4_memory_used_mib_readback']=None
     return result
-result={'status':'cleanup_unconfirmed','leader_pid':pid,'pgid':pgid}
-try:
-    group=members()
-    if group:
-        if os.stat('/proc/'+str(pid)).st_uid != os.getuid() or os.getpgid(pid)!=pgid or pid!=pgid:
-            raise ValueError('service identity changed')
-        matched=False
-        for n in group:
-            base='/proc/'+str(n)
-            if os.stat(base).st_uid!=os.getuid(): raise ValueError('foreign group member')
-            env=open(base+'/environ','rb').read().split(b'\0')
-            if ('C3_R22_SERVICE_OWNER='+owner).encode() not in env: raise ValueError('owner mismatch')
-            cmd=open(base+'/cmdline','rb').read().replace(b'\0',b' ').decode(errors='replace')
-            if 'qwen' in cmd.lower() and '8001' in cmd: matched=True
-        if not matched: raise ValueError('Qwen 8001 identity missing')
-        os.killpg(pgid,signal.SIGTERM)
-        deadline=time.monotonic()+20
-        while members() and time.monotonic()<deadline: time.sleep(.25)
-    result.update(status='confirmed_absent' if not members() else 'cleanup_unconfirmed', remaining_pids=members())
-except Exception as exc: result['error']=type(exc).__name__+': '+str(exc)
-r=subprocess.run(['nvidia-smi','-i','4','--query-gpu=memory.used','--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=5)
-result['gpu4_memory_used_mib_readback']=r.stdout.strip() if r.returncode==0 else None
-print(json.dumps(result))
+
+if __name__=='__main__': print(json.dumps(cleanup(json.load(sys.stdin))))
 '''
 
 

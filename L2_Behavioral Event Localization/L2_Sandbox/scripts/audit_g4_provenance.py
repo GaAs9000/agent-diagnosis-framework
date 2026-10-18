@@ -134,6 +134,10 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
     results = {e['data']['call_id']: e for e in events if e['kind'] == 'tool.result'}
     last_request_position = max((i for i, e in enumerate(events) if e['kind'] == 'model.request'), default=-1)
     compact_events = [e['data'] for e in events[:last_request_position] if e['kind'] == 'session.compacted']
+    context_v2 = (config['agent'].get('harness_revision') == 'l1-pi-native-errors-context-v2'
+                  or any('usage_calibration' in receipt for receipt in compact_events))
+    if compact_events and not context_v2:
+        return [{'status': 'unverified', 'reason': 'historical_compaction_requires_bound_legacy_controller'}]
     actual_compactions = []
     for number, event in enumerate(requests):
         rid = event['data']['request_id']
@@ -190,12 +194,19 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
                 sources.append({'call_id': call.call_id, 'result_sha256': digest(raw),
                                 'delivered_observation_sha256': digest(delivered),
                                 'image_sha256': image_ref.get('sha256') if image_ref else None})
+            usage_messages = conversation.get('messages')
             conversation = model.accept(conversation, reply, accepted)
             usage = reply.usage or {}
-            tokens = usage.get('totalTokenCount', usage.get('total_tokens'))
+            prompt_tokens = usage.get('prompt_tokens', usage.get('promptTokenCount'))
+            has_prompt_tokens = type(prompt_tokens) is int and prompt_tokens > 0
+            tokens = prompt_tokens if has_prompt_tokens else usage.get('totalTokenCount', usage.get('total_tokens'))
             count = int(rid.rsplit(':r', 1)[1]) + 1
-            conversation, receipt = _maybe_compact_pi_conversation(
-                conversation, config['agent'].get('compaction'), tokens if type(tokens) is int else None, count)
+            receipt = None
+            if context_v2:
+                conversation, receipt = _maybe_compact_pi_conversation(
+                    conversation, config['agent'].get('compaction'),
+                    tokens if type(tokens) is int else None, count, usage_messages=usage_messages,
+                    usage_kind='prompt_tokens' if has_prompt_tokens else 'total_tokens')
             if receipt is not None:
                 actual_compactions.append(receipt)
             row['continuation_sources'] = sources

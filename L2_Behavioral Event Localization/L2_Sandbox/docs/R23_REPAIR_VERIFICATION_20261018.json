@@ -1,0 +1,79 @@
+{
+  "schema": "r23-offline-repair-verification-v1",
+  "execution": "aml-b CPU4, Python3.12",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "gpu_service_started": false,
+  "tests": [
+    {
+      "scope": "L1 tests/l1 + tests/l1_live",
+      "passed": 481,
+      "skipped": 24,
+      "failed": 0,
+      "seconds": 41.31
+    },
+    {
+      "scope": "L2 tests",
+      "passed": 556,
+      "skipped": 8,
+      "failed": 0,
+      "seconds": 35.29
+    },
+    {
+      "scope": "final G2 integration source guards and CLI",
+      "passed": 41,
+      "failed": 0,
+      "seconds": 13.6
+    }
+  ],
+  "real_004_replay": {
+    "old_estimate": 42369,
+    "reported_prompt_tokens": 114090,
+    "calibrated_before_estimate": 125500,
+    "calibrated_after_estimate": 27856,
+    "kept_message_count": 15,
+    "model_execution": false
+  },
+  "historical_evidence": {
+    "status": "pass",
+    "scope": "read-only predecessor metadata and immutable-evidence preflight",
+    "source_plan_sha256": "2b6eeb1334028881d18c17c78bd4474849c47807f2da491ff921999e7a99b8d8",
+    "cohort_sha256": "c6bead23c4858636b7ab4898f938df644cbf4a0058c9fb529e718f3f3092a608",
+    "bound_files": 9,
+    "actor_requests": 0
+  },
+  "wheel": {
+    "status": "pass",
+    "l1_source_assets": 54,
+    "sha256": "310da7cc305534e2c1acc0d8b99e7c30a2228895ea9dbfd9ff22c6789425b503"
+  },
+  "review": {
+    "status": "GO",
+    "material_findings_resolved": [
+      "reject output under every immutable evidence tree before writes",
+      "actual nice/shebang/padded title cleanup fixture",
+      "non-object rejected tool arguments during summary"
+    ]
+  },
+  "unchanged_research_status": {
+    "valid_dev_slots": 44,
+    "total_dev_slots": 45,
+    "g2_pairs": 0,
+    "d0_frozen": false,
+    "scientific_efficacy": "not_tested"
+  },
+  "limits": {
+    "g2_slots": 20,
+    "max_continuation_requests": 0,
+    "max_g2_logical_requests": 700,
+    "max_new_http": 2800,
+    "old_http": 181,
+    "aggregate_authorized_max": 2981,
+    "aggregate_hard_cap": 3360
+  },
+  "limitations": [
+    "Empirical image/token estimate does not prove future exact token costs",
+    "GPU cleanup verified against archived/mocked process evidence; no new live GPU service",
+    "New G2 is joint restore and harness comparison, not pure equivalence"
+  ]
+}

@@ -26,9 +26,10 @@ read_json, write_json, seal, verify_seal, file_digest = s.read_json, s.write_jso
 L1, L2, ROOT = p.L1, p.L2, p.ROOT
 BASE = L2 / 'validation/d0_20261018'
 OUTPUT = BASE / 'r22_native_alignment'
-CONFIG = L1 / 'configs/l1/officeval.qwen36.pi.t1.native-validation.timeout600.json'
+CONFIG = L1 / 'configs/l1/officeval.qwen36.pi.t1.native-validation.context-v2.timeout600.json'
 RUN_ROOT = L1 / 'runs/v3_qwen36_pi_dev45_r22_20261018'
-POLICY, REVISION = 'pi-native-0.73.1', 'l1-pi-native-errors-v1'
+G2_ONLY_RUN_ROOT = L1 / 'runs/v3_qwen36_pi_dev45_r23_g2_20261018'
+POLICY, REVISION = 'pi-native-0.73.1', 'l1-pi-native-errors-context-v2'
 SELECTED = {
     'officeval_050.r04': ('runs/v3_qwen36_pi_dev45_t2_20261018/episodes/officeval_050.r04', 'ep_513d44f1f4a248dcadc8c7ba36901748', 9, 25),
     'officeval_004.r02': ('runs/v3_qwen36_pi_dev45_20261017/failed_attempts/officeval_004.r02.d0_resume_1792257570352387000', 'ep_94dde6631ebe4f038867e2a618fd0344', 7, 27),
@@ -41,6 +42,11 @@ G2_SLOTS = [f'{task}.{rep}' for task, rep in c.G2_SLOTS]
 WINDOW, WALL, OLD_HTTP = 645, 21600, 144
 HTTP_CAPS = {'continuations': 380, 'g2': 2800}
 LOGICAL_CAPS = {'continuations': 95, 'g2': 700}
+PLAN_SCHEMA = 'r22-native-alignment-2'
+G2_READINESS_POLICY = 'exact-frozen20-formal-endpoints-v1'
+G2_ONLY_OLD_HTTP = 181
+G2_ONLY_HTTP_CAPS = {'continuations': 0, 'g2': 2800}
+G2_ONLY_LOGICAL_CAPS = {'continuations': 0, 'g2': 700}
 
 
 def native_config(old):
@@ -73,7 +79,9 @@ def source_files(config_path):
              ROOT / 'scripts/run_v3_stage_d_dev45_and_g2.py', ROOT / 'scripts/v3_evaluate_gates_g2_g3_g4.py']
     for directory in (L1 / 'src', L2 / 'src'):
         paths.extend(f for f in directory.rglob('*') if f.is_file() and f.suffix in ('.py', '.json', '.mjs', '.js') and 'node_modules' not in f.parts and '__pycache__' not in f.parts)
-    paths.extend(L2 / 'scripts' / name for name in ('resume_d0_serial.py', 'resume_d0_prerequisites.py', 'audit_r22_native_validation.py', 'audit_g4_provenance.py'))
+    paths.extend(L2 / 'scripts' / name for name in ('resume_d0_serial.py', 'resume_d0_prerequisites.py',
+        'audit_r22_native_validation.py', 'audit_g4_provenance.py', 'start_owned_native_service.py',
+        'supervise_r22_native_alignment.py', 'finalize_d0_timeout600.py'))
     return {str(path.relative_to(ROOT)): file_digest(path) for path in sorted(set(paths))}
 
 
@@ -91,6 +99,16 @@ def assert_originals(plan):
     for path, expected in plan['immutable_trees'].items():
         if s.tree_digest(Path(path)) != expected:
             raise ValueError('immutable original evidence changed: ' + path)
+
+
+def assert_write_paths(plan, *paths):
+    roots = [Path(path).resolve() for path in plan['immutable_trees']]
+    if plan.get('predecessor_phase'):
+        roots.append(Path(plan['predecessor_phase']).resolve())
+    for path in paths:
+        target = Path(path).resolve()
+        if any(root in (target, *target.parents) for root in roots):
+            raise ValueError('write path must be outside immutable predecessor phase and evidence roots: ' + str(path))
 
 
 def checkpoint(path, k):
@@ -138,11 +156,131 @@ def predecessor_bindings(base):
     return {str(path): file_digest(path) for path in paths}
 
 
-def build_plan(*, service_stop_epoch, authorization_paths, audit_path=OUTPUT / 'audit42/summary.json', config_path=CONFIG, run_root=RUN_ROOT, base=BASE):
+def reference_config(origin, config):
+    """Accept only the unchanged baseline or its historical native-v1 delta."""
+    legacy = origin['source_config']
+    native_v1 = native_config(legacy)
+    native_v1['agent']['harness_revision'] = 'l1-pi-native-errors-v1'
+    if config != legacy and config != native_v1:
+        raise ValueError('reference configuration exceeds baseline/native-v1 delta')
+    return copy.deepcopy(config)
+
+
+def g2_predecessor(cohort_path, phase):
+    names = ('executed_plan.json', 'executed_freeze.json', 'result.json',
+             'admission_continuations.json', 'admission_g2.json')
+    paths = [phase / name for name in names]
+    old, freeze, result, continuation, g2 = map(read_json, paths)
+    cohort = read_json(cohort_path)
+    verify_seal(old, 'plan_sha256')
+    for value in (result, continuation, g2, cohort):
+        verify_seal(value)
+    if (old.get('schema_version') != 'r22-native-alignment-1' or old.get('selected') != list(SELECTED) or
+            old.get('g2_slots') != G2_SLOTS or set(old.get('origins', {})) != set(SLOTS) or
+            old.get('http_caps') != HTTP_CAPS or old.get('logical_caps') != LOGICAL_CAPS or
+            old.get('old_http_attempts') != OLD_HTTP or old.get('aggregate_http_cap') != 3360 or
+            old.get('aggregate_authorized_max') != 3324 or old.get('max_new_generation') != 63 or
+            old.get('d0_frozen') is not False):
+        raise ValueError('predecessor is not the original frozen R22 workload')
+    if (freeze.get('approved_plan_sha256') != old['plan_sha256'] or
+            any(freeze.get(key) is not True for key in ('phase_authorized', 'phase_frozen', 'internal_plan_reviewed')) or
+            freeze.get('d0_frozen') is not False or not freeze.get('user_authorization_record', {}).get('exact_text') or
+            not freeze.get('user_authorization_record', {}).get('source')):
+        raise ValueError('predecessor freeze does not authorize the exact executed plan')
+    if (result.get('plan_sha256') != old['plan_sha256'] or cohort.get('plan_sha256') != old['plan_sha256'] or
+            result.get('aggregate_http_attempts') != G2_ONLY_OLD_HTTP or result.get('g2') != [] or
+            result.get('all_45_study_valid') is not False or result.get('stop_reason') is not None or
+            continuation.get('requests') != 37 or g2.get('requests') != 0 or
+            len(continuation.get('sends', [])) != 37 or g2.get('sends') != []):
+        raise ValueError('predecessor completed 37/0 HTTP and 181 aggregate receipt required')
+    for name, ledger in (('continuations', continuation), ('g2', g2)):
+        if (ledger.get('plan_sha256') != old['plan_sha256'] or
+                result.get('admissions', {}).get(name) != {k: v for k, v in ledger.items() if k != 'artifact_sha256'}):
+            raise ValueError('predecessor admission identity differs')
+    receipts = result.get('continuations', [])
+    if len(receipts) != 3 or [row['label'] for row in receipts] != list(SELECTED):
+        raise ValueError('predecessor continuation coverage differs')
+    if set(cohort.get('slots', {})) != set(SLOTS):
+        raise ValueError('predecessor cohort must preserve all 45 slots')
+    if cohort.get('demoted_controls') != {label: {**row, 'status': 'nonformal_control'} for label, row in old['demoted'].items()}:
+        raise ValueError('predecessor demoted controls differ')
+    for receipt in receipts:
+        label = receipt['label']
+        path = phase / f'receipt_continuations_{label}.json'
+        value = read_json(path); verify_seal(value)
+        if {k: v for k, v in value.items() if k != 'artifact_sha256'} != receipt:
+            raise ValueError('predecessor continuation receipt differs')
+        row = cohort['slots'][label]
+        if (row['terminal_endpoint'] != receipt['package']['path'] or
+                row['endpoint_index_sha256'] != receipt['package']['index_file_sha256'] or
+                row['status'] != ('formal' if receipt['package']['valid'] else 'invalid_continuation')):
+            raise ValueError('predecessor cohort differs from terminal receipt')
+        paths.append(path)
+    if (cohort['slots']['officeval_004.r02']['status'] != 'invalid_continuation' or
+            any(row['status'] != 'formal' for label, row in cohort['slots'].items() if label != 'officeval_004.r02')):
+        raise ValueError('predecessor invalid 004.r02 and 44 formal endpoints must be preserved')
+    assert_originals(old)
+    return old, cohort, {str(path.resolve()): file_digest(path) for path in [*paths, cohort_path]}
+
+
+def build_g2_only_plan(*, service_stop_epoch, authorization_paths, config_path, run_root, cohort_path, predecessor_phase):
+    old, cohort, bound = g2_predecessor(cohort_path, predecessor_phase)
+    config = c.resolve_config(config_path)
+    assert_delta(c.resolve_config(c.CONFIG_PATH), config)
+    immutable = dict(old['immutable_trees'])
+    immutable[old['run_root']] = s.tree_digest(Path(old['run_root']))
+    references = {}
+    for label, row in cohort['slots'].items():
+        origin = old['origins'][label]
+        if (row['attempt_id'] != origin['episode_id'] or row['origin_prefix'] != origin['path'] or
+                row['origin_index_sha256'] != origin['index_sha256']):
+            raise ValueError('predecessor cohort changed original attempt identity')
+        endpoint = Path(row['terminal_endpoint'])
+        references[label] = reference_config(origin, read_json(endpoint / 'raw/resolved_config.json'))
+        for name in ('raw/resolved_config.json', 'evidence_index.json'):
+            bound[str(endpoint / name)] = file_digest(endpoint / name)
+        if file_digest(endpoint / 'evidence_index.json') != row['endpoint_index_sha256']:
+            raise ValueError('predecessor terminal endpoint index changed')
+        immutable[str(endpoint)] = s.tree_digest(endpoint)
+    assert_write_paths(dict(immutable_trees=immutable, predecessor_phase=str(predecessor_phase)), run_root)
+    if run_root.exists():
+        raise ValueError('new G2-only root required; no overwrite or resume')
+    for path in authorization_paths:
+        bound[str(path.resolve())] = file_digest(path)
+    plan = dict(schema_version=PLAN_SCHEMA, g2_readiness_policy=G2_READINESS_POLICY,
+        mode='g2_only', phase='r22_existing_cohort_original_g2_context_v2', execution_ready=True,
+        d0_frozen=False, service_stop_epoch=service_stop_epoch, service_safety_margin_seconds=300,
+        service_renewal_authorized=False, wall_seconds=WALL, old_http_attempts=G2_ONLY_OLD_HTTP,
+        http_caps=G2_ONLY_HTTP_CAPS, logical_caps=G2_ONLY_LOGICAL_CAPS,
+        aggregate_http_cap=3360, aggregate_authorized_max=2981, max_new_generation=0,
+        continuation_concurrency=0, g2_concurrency=3, attempt_limit_per_slot=1, selected=[], g2_slots=G2_SLOTS,
+        config_path=str(config_path), native_config=config, origins=old['origins'], preserved=old['preserved'],
+        demoted=old['demoted'], immutable_trees=immutable, run_root=str(run_root),
+        source_fingerprints=source_files(config_path), bound_files=bound, native_dependency_identity=dependency_identity(),
+        authorization_paths=[str(x.resolve()) for x in authorization_paths],
+        predecessor_phase=str(predecessor_phase.resolve()), predecessor_plan_sha256=old['plan_sha256'],
+        cohort_path=str(cohort_path.resolve()), frozen_cohort=cohort, reference_configs=references,
+        source_profiles=dict(prefix='immutable original R22 v1 plan and cohort', continuation='none', g2='source_fingerprints'),
+        known_selection_bias_slots=list(EXCLUDED_SENSITIVITY), pure_equivalence_eligible=False,
+        g1_gate='historical_unverified', g2_gate='undecided', g4_gate='historical_unverified', scientific_efficacy='not_tested')
+    validate_contract(seal(plan, 'plan_sha256'))
+    assert_originals(plan); assert_sources(plan)
+    return seal(plan, 'plan_sha256')
+
+
+def build_plan(*, service_stop_epoch, authorization_paths, audit_path=OUTPUT / 'audit42/summary.json', config_path=CONFIG,
+               run_root=None, base=BASE, cohort_path=None, predecessor_phase=None):
     if not math.isfinite(service_stop_epoch) or service_stop_epoch - time.time() < WINDOW or service_stop_epoch - time.time() > WALL:
         raise ValueError('fresh bounded service stop epoch required; no implicit renewal')
     if not authorization_paths:
         raise ValueError('exact user/Notion authorization artifacts required')
+    if (cohort_path is None) != (predecessor_phase is None):
+        raise ValueError('G2-only planning requires both cohort and predecessor phase')
+    if run_root is None:
+        run_root = G2_ONLY_RUN_ROOT if cohort_path is not None else RUN_ROOT
+    if cohort_path is not None:
+        return build_g2_only_plan(service_stop_epoch=service_stop_epoch, authorization_paths=authorization_paths,
+            config_path=config_path, run_root=run_root, cohort_path=cohort_path, predecessor_phase=predecessor_phase)
     audit = read_json(audit_path); validate_audit(audit)
     if dependency_identity() != audit['native_identity_before']:
         raise ValueError('audit native dependencies differ from current execution dependencies')
@@ -156,6 +294,7 @@ def build_plan(*, service_stop_epoch, authorization_paths, audit_path=OUTPUT / '
     assert_delta(c.resolve_config(c.CONFIG_PATH), config)
     roots = {c.OUT_ROOT, L1 / 'runs/v3_qwen36_pi_dev45_t2_20261018'}
     immutable = {str(path): s.tree_digest(path) for path in roots}
+    assert_write_paths(dict(immutable_trees=immutable), run_root)
     origins, preserved, demoted = {}, {}, {}
     from c3_sandbox.l1.core.orchestrator import _saved_response_source
     for label in SLOTS:
@@ -196,7 +335,7 @@ def build_plan(*, service_stop_epoch, authorization_paths, audit_path=OUTPUT / '
         bound[str(ROOT / name)] = file_digest(ROOT / name)
     for path in audit_path.parent.glob('*.json'):
         bound[str(path.resolve())] = file_digest(path)
-    plan = dict(schema_version='r22-native-alignment-1', execution_ready=True, d0_frozen=False,
+    plan = dict(schema_version=PLAN_SCHEMA, g2_readiness_policy=G2_READINESS_POLICY, execution_ready=True, d0_frozen=False,
         phase='r22_continuations_then_original_g2', service_stop_epoch=service_stop_epoch,
         service_safety_margin_seconds=300, service_renewal_authorized=False, wall_seconds=WALL,
         old_http_attempts=OLD_HTTP, http_caps=HTTP_CAPS, logical_caps=LOGICAL_CAPS,
@@ -216,13 +355,35 @@ def build_plan(*, service_stop_epoch, authorization_paths, audit_path=OUTPUT / '
 
 def validate_contract(plan):
     verify_seal(plan, 'plan_sha256')
-    if (plan['selected'] != list(SELECTED) or plan['g2_slots'] != G2_SLOTS or
-            set(plan['origins']) != set(SLOTS) or plan['http_caps'] != HTTP_CAPS or plan['logical_caps'] != LOGICAL_CAPS or
-            plan['old_http_attempts'] != OLD_HTTP or plan['aggregate_http_cap'] != 3360 or plan['aggregate_authorized_max'] != 3324 or
-            plan['max_new_generation'] != 63 or plan['wall_seconds'] != WALL or plan['continuation_concurrency'] != 1 or
+    if plan.get('schema_version') != PLAN_SCHEMA or plan.get('g2_readiness_policy') != G2_READINESS_POLICY:
+        raise ValueError('new R22 plan with explicit frozen20 readiness policy required')
+    g2_only = plan.get('mode') == 'g2_only'
+    if plan.get('mode', 'continuations_then_g2') not in ('continuations_then_g2', 'g2_only'):
+        raise ValueError('unknown R22 execution mode')
+    if (plan['selected'] != ([] if g2_only else list(SELECTED)) or plan['g2_slots'] != G2_SLOTS or
+            set(plan['origins']) != set(SLOTS) or plan['http_caps'] != (G2_ONLY_HTTP_CAPS if g2_only else HTTP_CAPS) or
+            plan['logical_caps'] != (G2_ONLY_LOGICAL_CAPS if g2_only else LOGICAL_CAPS) or
+            plan['old_http_attempts'] != (G2_ONLY_OLD_HTTP if g2_only else OLD_HTTP) or plan['aggregate_http_cap'] != 3360 or
+            plan['aggregate_authorized_max'] != (2981 if g2_only else 3324) or
+            plan['max_new_generation'] != (0 if g2_only else 63) or plan['wall_seconds'] != WALL or
+            plan['continuation_concurrency'] != (0 if g2_only else 1) or
             plan['g2_concurrency'] != 3 or plan['attempt_limit_per_slot'] != 1 or plan['d0_frozen'] is not False or
             plan['service_renewal_authorized'] is not False or set(plan['demoted']) != set(DEMOTED)):
         raise ValueError('R22 exact workload or hard limits differ')
+    if g2_only:
+        if (set(plan['reference_configs']) != set(SLOTS) or set(plan['frozen_cohort']['slots']) != set(SLOTS) or
+                plan['frozen_cohort']['plan_sha256'] != plan['predecessor_plan_sha256'] or
+                plan['pure_equivalence_eligible'] is not False):
+            raise ValueError('G2-only frozen reference cohort differs')
+        verify_seal(plan['frozen_cohort'])
+        previous = read_json(Path(plan['predecessor_phase']) / 'executed_plan.json')
+        verify_seal(previous, 'plan_sha256')
+        if (previous['plan_sha256'] != plan['predecessor_plan_sha256'] or
+                plan['frozen_cohort'] != read_json(Path(plan['cohort_path'])) or
+                any(plan[key] != previous[key] for key in ('origins', 'preserved', 'demoted'))):
+            raise ValueError('G2-only references differ from immutable predecessor')
+        for label, config in plan['reference_configs'].items():
+            reference_config(plan['origins'][label], config)
     if sum(row.get('max_new_logical', 0) for row in plan['origins'].values()) != 63:
         raise ValueError('R22 remaining logical budgets differ')
     for label, origin in plan['origins'].items():
@@ -314,6 +475,60 @@ def score_record(label, path):
                 score=outcome.get('study_outcome_y') if outcome.get('study_valid') is True else None)
 
 
+def g2_readiness(plan, cohort):
+    """Audit the exact frozen endpoints independently of DEV45 completeness.
+
+    Eligibility permits the paired collection only; it does not pass G2 or D0.
+    Common source and original-evidence guards apply even when all endpoints pass.
+    """
+    validate_contract(plan)
+    common_errors = []
+    try:
+        assert_sources(plan)
+        assert_originals(plan)
+    except Exception as exc:
+        common_errors.append(f'{type(exc).__name__}: {exc}')
+    slots = {}
+    for label in plan['g2_slots']:
+        row = cohort.get(label)
+        errors = []
+        try:
+            if not row or row.get('status') != 'formal':
+                raise ValueError('required frozen slot lacks a formal terminal endpoint')
+            origin = plan['origins'][label]
+            if (row['attempt_id'] != origin['episode_id'] or row['origin_prefix'] != origin['path'] or
+                    row['origin_index_sha256'] != origin['index_sha256']):
+                raise ValueError('required endpoint origin identity differs')
+            parent, endpoint = Path(origin['path']), Path(row['terminal_endpoint'])
+            record = p.package_record(endpoint)
+            if not record['valid'] or record['index_file_sha256'] != row['endpoint_index_sha256']:
+                raise ValueError('required endpoint missing, invalid or index changed')
+            if file_digest(parent / 'checkpoints/cp000000.json') != origin['cp0']['checkpoint_sha256']:
+                raise ValueError('required origin cp000000 changed')
+            config = read_json(endpoint / 'raw/resolved_config.json')
+            expected = (plan['reference_configs'][label] if plan.get('mode') == 'g2_only' else
+                        native_config(origin['source_config']) if label in SELECTED else origin['source_config'])
+            if config != expected or config['benchmark']['task_id'] != label.rsplit('.', 1)[0]:
+                raise ValueError('required endpoint task or runtime configuration differs')
+            if file_digest(endpoint / 'benchmark/public_task.json') != file_digest(parent / 'benchmark/public_task.json'):
+                raise ValueError('required endpoint public task differs')
+            if label in SELECTED:
+                if row['continuation_segment'] != str(endpoint) or endpoint == parent:
+                    raise ValueError('required continuation endpoint differs')
+                validate_lineage(origin, endpoint, origin['continuation_checkpoint']['checkpoint_id'], response=True)
+            elif endpoint != parent or read_json(endpoint / 'manifest.json').get('lineage'):
+                raise ValueError('required original endpoint replaced')
+        except Exception as exc:
+            errors.append(f'{type(exc).__name__}: {exc}')
+        slots[label] = dict(ready=not errors, terminal_endpoint=row.get('terminal_endpoint') if row else None,
+                            endpoint_index_sha256=row.get('endpoint_index_sha256') if row else None, errors=errors)
+    return dict(schema_version='r22-g2-readiness-1', policy=G2_READINESS_POLICY, plan_sha256=plan['plan_sha256'],
+                required_slots=list(plan['g2_slots']), n_required=len(slots), n_ready=sum(row['ready'] for row in slots.values()),
+                common_harness_ready=not common_errors, common_errors=common_errors, slots=slots,
+                eligible=not common_errors and all(row['ready'] for row in slots.values()),
+                g2_gate='undecided', d0_frozen=False)
+
+
 def score_inputs(plan, cohort, g2):
     primary = [score_record(label, Path(row['terminal_endpoint'])) for label, row in cohort.items()]
     alternatives = {label: score_record(label, Path(row['package']['path'])) for label, row in plan['demoted'].items()}
@@ -361,6 +576,7 @@ def summarize_cpu(inputs):
 
 def execute(plan, freeze, output):
     validate_contract(plan)
+    assert_write_paths(plan, Path(plan['run_root']), output)
     if (freeze.get('approved_plan_sha256') != plan['plan_sha256'] or freeze.get('phase_authorized') is not True or
             freeze.get('phase_frozen') is not True or freeze.get('internal_plan_reviewed') is not True or
             freeze.get('d0_frozen') is not False or not freeze.get('user_authorization_record', {}).get('exact_text') or
@@ -386,13 +602,19 @@ def execute(plan, freeze, output):
         write_json(output / 'executed_plan.json', plan); write_json(output / 'executed_freeze.json', freeze)
         metadata = {path: file_digest(path) for path in (output / 'executed_plan.json', output / 'executed_freeze.json')}
         admissions = {phase: p.Admission(output / f'admission_{phase}.json', plan['plan_sha256'],
-            {**p.LIMITS, 'max_requests': cap, 'max_tokens': cap*p.GIB, 'max_wall_seconds': WALL, 'max_invalid_attempts': 24}) for phase, cap in HTTP_CAPS.items()}
+            {**p.LIMITS, 'max_requests': cap, 'max_tokens': cap*p.GIB, 'max_wall_seconds': WALL, 'max_invalid_attempts': 24})
+            for phase, cap in plan['http_caps'].items()}
         stop_event = threading.Event()
         limiters = {phase: GuardedAdmission(admission, plan, metadata, started, stop_event) for phase, admission in admissions.items()}
         continuations, g2, stop_reason = [], [], None
         cohort = {label: dict(attempt_id=row['episode_id'], origin_prefix=row['path'], origin_index_sha256=row['index_sha256'],
             continuation_segment=None, terminal_endpoint=row['path'], endpoint_index_sha256=row['index_sha256'],
             status='pending_continuation' if label in SELECTED else 'formal') for label, row in plan['origins'].items()}
+        if plan.get('mode') == 'g2_only':
+            cohort = copy.deepcopy(plan['frozen_cohort']['slots'])
+            write_json(output / 'cohort.json', seal(dict(plan_sha256=plan['plan_sha256'], slots=cohort,
+                predecessor_plan_sha256=plan['predecessor_plan_sha256'],
+                demoted_controls=plan['frozen_cohort']['demoted_controls'])))
 
         def trial(label, cold=False):
             phase = 'g2' if cold else 'continuations'
@@ -444,7 +666,7 @@ def execute(plan, freeze, output):
                 raise ValueError(structural_error)
             return row
 
-        valid45 = False
+        valid45, readiness = False, None
         try:
             for label in plan['selected']:
                 row = trial(label); continuations.append(row)
@@ -456,7 +678,9 @@ def execute(plan, freeze, output):
                 write_json(output / 'cohort.json', seal(dict(plan_sha256=plan['plan_sha256'], slots=cohort,
                     demoted_controls={label: {**row, 'status': 'nonformal_control'} for label, row in plan['demoted'].items()})))
             valid45 = len(cohort) == 45 and all(row['status'] == 'formal' and p.package_record(Path(row['terminal_endpoint']))['valid'] for row in cohort.values())
-            if valid45:
+            readiness = g2_readiness(plan, cohort)
+            write_json(output / 'g2_readiness.json', seal(readiness))
+            if readiness['eligible']:
                 with ThreadPoolExecutor(max_workers=3) as pool:
                     futures = [pool.submit(trial, label, True) for label in plan['g2_slots']]
                     for future in as_completed(futures):
@@ -478,9 +702,10 @@ def execute(plan, freeze, output):
         finally:
             assert_originals(plan)
         ledgers = {phase: admission.snapshot() for phase, admission in admissions.items()}
-        total = OLD_HTTP + sum(row['requests'] for row in ledgers.values())
+        total = plan['old_http_attempts'] + sum(row['requests'] for row in ledgers.values())
         result = seal(dict(plan_sha256=plan['plan_sha256'], continuations=continuations, g2=g2,
-            all_45_study_valid=valid45, g2_status='completed' if len(g2)==20 and all(r['package']['valid'] for r in g2) else 'incomplete',
+            all_45_study_valid=valid45, g2_readiness=readiness,
+            g2_status='completed' if len(g2)==20 and all(r['package']['valid'] for r in g2) else 'incomplete',
             g2_gate='undecided', pure_equivalence_eligible=False, stop_reason=stop_reason, admissions=ledgers,
             aggregate_http_attempts=total, active_wall_seconds=time.time()-started, d0_frozen=False, scientific_efficacy='not_tested'))
         write_json(output / 'result.json', result)
@@ -494,6 +719,9 @@ def main():
     parser.add_argument('--service-stop-epoch', type=float)
     parser.add_argument('--authorization', type=Path, action='append', default=[])
     parser.add_argument('--audit', type=Path, default=OUTPUT / 'audit42/summary.json')
+    parser.add_argument('--cohort', type=Path)
+    parser.add_argument('--predecessor-phase', type=Path)
+    parser.add_argument('--run-root', type=Path)
     parser.add_argument('--config', type=Path, default=CONFIG)
     parser.add_argument('--output', type=Path, default=OUTPUT)
     parser.add_argument('--plan', type=Path); parser.add_argument('--freeze', type=Path)
@@ -509,9 +737,19 @@ def main():
     else:
         if args.service_stop_epoch is None:
             parser.error('planning requires --service-stop-epoch from the bounded fresh service lease')
-        plan = build_plan(service_stop_epoch=args.service_stop_epoch, authorization_paths=args.authorization, audit_path=args.audit, config_path=args.config)
+        if args.predecessor_phase and any(args.predecessor_phase.resolve() in (target.resolve(), *target.resolve().parents)
+                                         for target in (args.output, path)):
+            parser.error('G2-only plan and output must be outside immutable predecessor phase')
+        plan = build_plan(service_stop_epoch=args.service_stop_epoch, authorization_paths=args.authorization,
+            audit_path=args.audit, config_path=args.config, cohort_path=args.cohort, predecessor_phase=args.predecessor_phase,
+            run_root=args.run_root)
+        assert_write_paths(plan, Path(plan['run_root']), args.output, path)
         write_json(path, plan)
-        print(json.dumps(dict(plan=str(path), plan_sha256=plan['plan_sha256'], max_new_http=sum(HTTP_CAPS.values()), max_new_generation=63)))
+        print(json.dumps(dict(plan=str(path), plan_sha256=plan['plan_sha256'],
+            max_new_http=sum(plan['http_caps'].values()),
+            max_new_continuation_requests=plan['max_new_generation'],
+            max_g2_logical_requests=plan['logical_caps']['g2'],
+            aggregate_authorized_max=plan['aggregate_authorized_max'])))
 
 
 if __name__ == '__main__':
