@@ -49,4 +49,8 @@ G2-only continuation 请求上限为 0；原 20 槽最多 700 次逻辑请求／
 默认使用新的 R23 run root；在创建锁、计划或运行标记前，拒绝写入任何旧不可变目录及旧阶段目录。
 新阶段仍要求独立计划、源码封签及执行 freeze，旧阶段不得自动重启。
 
+真实旧 cohort 的只读就绪核验已完成：**20/20 ready、eligible=true**，Actor 请求为 0。
+预备计划 SHA-256：`49ac604876582de7b69fda7e5d63c0c5ff237ba4d676460aa8eb65d59dda20e9`。
+状态为 planned_not_executed，不把就绪核验记作 G2 实跑或 D0 通过。
+
 验收结果见同目录 `R23_REPAIR_VERIFICATION_20261018.json`。源码审阅通过不替代后续真实 G2 或 D1 的研究验证。

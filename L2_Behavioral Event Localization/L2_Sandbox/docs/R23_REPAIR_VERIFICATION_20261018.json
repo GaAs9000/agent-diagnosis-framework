@@ -75,5 +75,18 @@
     "Empirical image/token estimate does not prove future exact token costs",
     "GPU cleanup verified against archived/mocked process evidence; no new live GPU service",
     "New G2 is joint restore and harness comparison, not pure equivalence"
-  ]
+  ],
+  "real_g2_readiness": {
+    "n_required": 20,
+    "n_ready": 20,
+    "eligible": true,
+    "common_harness_ready": true,
+    "common_errors": [],
+    "g2_gate": "undecided",
+    "d0_frozen": false,
+    "actor_requests": 0,
+    "stage": "planned_not_executed",
+    "plan_sha256": "49ac604876582de7b69fda7e5d63c0c5ff237ba4d676460aa8eb65d59dda20e9",
+    "source_commit": "ed03d39"
+  }
 }
