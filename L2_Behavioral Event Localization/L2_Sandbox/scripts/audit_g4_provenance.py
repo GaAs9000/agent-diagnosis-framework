@@ -139,6 +139,13 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
     if compact_events and not context_v2:
         return [{'status': 'unverified', 'reason': 'historical_compaction_requires_bound_legacy_controller'}]
     actual_compactions = []
+    request_checkpoints = {}
+    latest_checkpoint = None
+    for event in events:
+        if event['kind'] == 'checkpoint.created':
+            latest_checkpoint = event['data']['checkpoint']
+        elif event['kind'] == 'model.request' and latest_checkpoint is not None:
+            request_checkpoints[event['data']['request_id']] = latest_checkpoint
     for number, event in enumerate(requests):
         rid = event['data']['request_id']
         actual = json.loads(read(event['data']['body']))
@@ -149,8 +156,15 @@ def reconstruct_requests(config, public, events, read, *, parent_checkpoint=None
             row['history_scope'] = 'suffix_from_supplied_parent_checkpoint; historical_prefix_not_reconstructed'
             row['parent_conversation_sha256'] = digest(parent_checkpoint['conversation'])
         rows.append(row)
+        if rid in request_checkpoints:
+            checkpoint = json.loads(read(request_checkpoints[rid]))
+            row['native_checkpoint_conversation'] = compare(conversation, checkpoint['conversation'])
+            if row['native_checkpoint_conversation']['status'] != 'verified':
+                row['status'] = 'mismatch'
+                row['reason'] = 'native_checkpoint_conversation_or_metadata_differs_from_replay'
         if row['status'] != 'verified':
-            row['reason'] = 'full_request_differs_from_constructed_input'
+            if row['reason'] == 'full_messages_tools_parameters_reconstructed':
+                row['reason'] = 'full_request_differs_from_constructed_input'
             rows.extend({'request_id': x['data']['request_id'], 'status': 'unverified',
                          'reason': 'earlier_history_mismatch'} for x in requests[number + 1:])
             break

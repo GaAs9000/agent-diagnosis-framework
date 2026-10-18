@@ -411,6 +411,14 @@ def _check_native_upgrade(previous: dict, current: dict) -> bool:
     return old == current
 
 
+def _check_context_upgrade(previous, current):
+    return (previous['agent'].get('harness_revision') == 'l1-pi-native-errors-v1'
+            and current['agent'].get('harness_revision') == 'l1-pi-native-errors-context-v2'
+            and previous['model']['timeout_seconds'] == current['model']['timeout_seconds'] == 600
+            and bool((current['agent'].get('compaction') or {}).get('enabled'))
+            and _check_native_upgrade(previous, current))
+
+
 def _saved_response_source(parent: Path, manifest: dict, cp: dict, response_id: str) -> dict:
     """Bind a complete, rejected sole-edit response to its untouched prefix."""
     if manifest['recording_mode'] != 'live' or manifest['status']['termination'] != 'protocol_error':
@@ -469,7 +477,7 @@ def _initial_upgrade_request(parent: Path, manifest: dict, cp: dict) -> bytes:
     return (parent/request['data']['body']['path']).read_bytes()
 
 
-def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False)->dict:
+def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False,resume_context_overflow_id:str|None=None)->dict:
     """Optionally admit every HTTP attempt via acquire(estimate, timeout)->bool.
 
     reconcile(estimate, actual) retains unknown usage with actual=None. An
@@ -486,9 +494,12 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
     if resume_response_id is not None and (parent is None or checkpoint_id is None):
         raise ConfigurationError('Saved-response continuation requires parent and checkpoint_id')
-    if allow_pi_native_upgrade and (parent is None or (resume_response_id is None and checkpoint_id != 'cp000000')):
+    if resume_context_overflow_id is not None:
+        if parent is None or checkpoint_id is None or resume_response_id is not None or not allow_pi_native_upgrade:
+            raise ConfigurationError('Context-overflow continuation requires parent, checkpoint and explicit native upgrade; cannot consume a saved response')
+    if allow_pi_native_upgrade and (parent is None or (resume_response_id is None and resume_context_overflow_id is None and checkpoint_id != 'cp000000')):
         raise ConfigurationError('Native upgrade requires saved-response consumption or original checkpoint zero')
-    parent_cp=None; lineage=None; parent_manifest=None; saved_response=None; initial_upgrade_request=None
+    parent_cp=None; lineage=None; parent_manifest=None; saved_response=None; initial_upgrade_request=None; context_source=None
     if parent is not None:
         parent=Path(parent).resolve()
         pv=verify(parent)
@@ -506,6 +517,8 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         child_iv=base_config.get('agent',{}).pop('intervention',None)
         parent_iv=prev_base.get('agent',{}).pop('intervention',None)
         upgrade = allow_pi_native_upgrade and _check_native_upgrade(previous_config, config)
+        if resume_context_overflow_id is not None and not _check_context_upgrade(previous_config, config):
+            raise ConfigurationError('Context overflow requires only native-v1 to context-v2 transition with unchanged 600-second timeout and budgets')
         if base_config!=prev_base and not upgrade:
             raise ConfigurationError('Cold resume currently requires the same resolved config; branch policy changes are not silently applied')
         if child_iv!=parent_iv:
@@ -520,10 +533,14 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 raise ConfigurationError('Native upgrade requires explicit native policy')
             lineage['config_upgrade'] = {'policy':'pi-native-0.73.1', 'harness_revision':config['agent']['harness_revision'],
                 'source_config_sha256':digest(previous_config), 'target_config_sha256':digest(config),
-                'applied':bool(upgrade), 'mode':'saved_response' if resume_response_id is not None else 'initial_checkpoint'}
-            if resume_response_id is None:
+                'applied':bool(upgrade), 'mode':'context_overflow' if resume_context_overflow_id is not None else ('saved_response' if resume_response_id is not None else 'initial_checkpoint')}
+            if resume_response_id is None and resume_context_overflow_id is None:
                 initial_upgrade_request = _initial_upgrade_request(parent, parent_manifest, parent_cp)
                 lineage['config_upgrade']['origin_request_sha256'] = digest_bytes(initial_upgrade_request)
+        if resume_context_overflow_id is not None:
+            from ..evidence.live import context_overflow_source
+            context_source=context_overflow_source(parent,checkpoint_id,resume_context_overflow_id)
+            lineage['context_overflow']=context_source['binding']
         if resume_response_id is not None:
             if config['agent'].get('validation_policy') != 'pi-native-0.73.1':
                 raise ConfigurationError('Saved-response continuation requires explicit native validation policy')
@@ -547,6 +564,13 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         # Parent totals already include the response that failed validation.
         usage_complete=parent_manifest['usage']['all_requests_have_usage']
         elapsed_before=parent_manifest['usage']['agent_phase_seconds']
+    if context_source is not None:
+        usage=parent_manifest['usage']
+        request_count=usage['model_requests_including_parent']
+        tool_count=usage['tool_calls_including_parent']
+        token_count=usage['known_total_tokens_including_parent']
+        usage_complete=usage['all_requests_have_usage']
+        elapsed_before=usage['agent_phase_seconds']
     deadline=started+max(0,config['budget']['wall_time_seconds']-elapsed_before)
     external_remaining=None
     remaining_seconds=getattr(request_limiter,'remaining_seconds',None)
@@ -711,6 +735,13 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 'source_evidence_index':journal.ref('lineage/source_evidence_index.json'),
                 'source_manifest':journal.ref('lineage/source_manifest.json'),
                 'source_trajectory':journal.ref('lineage/source_trajectory.jsonl')})
+        if context_source is not None:
+            if model.request(conversation,tools_for_config(config)) != context_source['failed_request']:
+                raise EvidenceError('Context checkpoint request differs from frozen failed request')
+            for relative in sorted(context_source['files'] | {'evidence_index.json'}):
+                copy_file(parent/relative,output,'lineage/context_source/'+relative)
+            journal.emit('context_overflow.carried',lineage['context_overflow'])
+            journal.emit('config.upgraded',{'upgrade':lineage['config_upgrade']})
         runtime_info=runtime.preflight()
         if parent_cp and runtime_info.get('image_id')!=parent_cp['qualification']['image_id']:
             raise EvidenceError('Restored runtime image does not match checkpoint')
@@ -727,6 +758,11 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         parent_iv = previous_config.get('agent', {}).get('intervention') if parent_cp is not None else None
         if iv_cfg and iv_cfg != parent_iv and request_count == iv_cfg['at_request'] - 1:
             conversation = _inject_user_intervention(conversation, iv_cfg['message'])
+        if context_source is not None:
+            conversation, comp_receipt = _maybe_compact_pi_conversation(
+                conversation,config['agent']['compaction'],context_source['binding']['last_success_prompt_tokens'],
+                request_count,usage_messages=context_source['usage_messages'],usage_kind='prompt_tokens')
+            if comp_receipt is not None: journal.emit('session.compacted',comp_receipt)
         checkpoint()
         while request_count<config['budget']['max_model_requests']:
             remaining=deadline-time.monotonic()
@@ -894,6 +930,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                 validation=None; execution_call=call
                 if native_policy:
                     tool_count+=1
+                    if context_source is not None:
+                        journal.emit('tool.charged',{'call_id':call.call_id,'tool_calls_including_parent':tool_count},
+                            links={'call':call_events[call.call_id]['event_id']})
                     try:
                         validation=native_validator.validate(call.name,call.arguments,call_id=call.native_id or call.call_id,
                             deadline_monotonic=deadline)

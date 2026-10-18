@@ -65,7 +65,7 @@ def bound_checkpoints(root, events):
         nxt = min(following, key=lambda e: e['seq']) if following else None
         used = cp['budget_used']['model_requests']
         if used != len([e for e in requests if e['seq'] < event['seq']]):
-            raise ValueError('checkpoint request counter mismatch (root episodes only)')
+            raise ValueError('checkpoint request counter mismatch')
         compactions = [e for e in events if e['kind'] == 'session.compacted' and e['seq'] < event['seq']]
         saved_compactions = cp['conversation'].get('_pi_compaction', [])
         if [e['data'] for e in compactions] != saved_compactions:
@@ -123,14 +123,47 @@ def replay_workspace(root, snapshot, config, temp_parent=None):
             'content_sha256': snapshot['content_sha256'], 'status': 'byte_and_mode_equal'}
 
 
+def validate_c0_lineage(root, manifest):
+    """Permit only the bound zero-request restore; never invent a prior prefix."""
+    lineage = manifest.get('lineage')
+    if not lineage:
+        return {'scope': 'root_episode'}
+    parent_path = root / 'lineage/parent_checkpoint.json'
+    parent = read_json(parent_path)
+    if (lineage.get('parent_checkpoint_id') != 'cp000000'
+            or parent.get('checkpoint_id') != 'cp000000'
+            or parent.get('episode_id') != lineage.get('parent_episode_id')
+            or file_digest(parent_path) != lineage.get('parent_checkpoint_sha256')
+            or parent.get('budget_used', {}).get('model_requests') != 0
+            or parent.get('budget_used', {}).get('tool_calls') != 0
+            or parent.get('pending_observations') != []
+            or parent.get('pending_calls') != []
+            or parent.get('qualification', {}).get('eligible') is not True):
+        raise ValueError('only a hash-bound qualified plain c0 parent is supported')
+    child = read_json(root / 'checkpoints/cp000000.json')
+    snapshot = read_json(root / 'lineage/parent_snapshot.json')
+    child_snapshot = read_json(root / ('states/snapshots/' + child['snapshot_id'] + '.json'))
+    if (snapshot['snapshot_id'] != parent['snapshot_id']
+            or child['conversation'] != parent['conversation']
+            or child['budget_used']['model_requests'] != 0
+            or any(snapshot[key] != child_snapshot[key]
+                   for key in ('files', 'directories', 'total_bytes', 'content_sha256'))):
+        raise ValueError('child c0 differs from supplied parent restore state')
+    return {'scope': 'c0_child', 'parent_checkpoint_sha256': file_digest(parent_path),
+            'parent_index_sha256': lineage['parent_index_sha256'],
+            'parent_snapshot_content_sha256': snapshot['content_sha256'],
+            'assurance': 'saved_lineage_consistency; historical_parent_authenticity_not_attested'}
+
+
 def audit_package(root, temp_parent=None):
     index_sha = file_digest(root / 'evidence_index.json')
     verified = verify_package(root, expected_index_sha256=index_sha)
     if not verified['verified']:
         raise ValueError('package integrity verification failed: ' + repr(verified['errors']))
     pkg = L1Package(root)
-    if pkg.manifest.get('lineage') or pkg.task_id not in DEV:
-        raise ValueError('expected a DEV root package')
+    if pkg.task_id not in DEV:
+        raise ValueError('expected a frozen DEV package')
+    lineage = validate_c0_lineage(root, pkg.manifest)
     if not pkg.outcome()['valid']:
         return {'slot': root.name, 'status': 'study_invalid_preserved', 'parent_index_sha256': index_sha}
     config = read_json(root / 'raw/resolved_config.json')
@@ -146,6 +179,7 @@ def audit_package(root, temp_parent=None):
                        'remaining_model_requests': config['budget']['max_model_requests'] - cp['budget_used']['model_requests'],
                        'pending_observations_sha256': digest(cp['pending_observations']),
                        'compaction_state': cp['conversation'].get('_pi_compaction', []),
+                       'context_usage_state': cp['conversation'].get('_pi_context_usage'),
                        'request': reconstruct_request(root, config, row),
                        'workspace': replay_workspace(root, row['snapshot'], config, temp_parent)})
     if file_digest(root / 'evidence_index.json') != index_sha:
@@ -154,6 +188,7 @@ def audit_package(root, temp_parent=None):
     if not verify_package(root, expected_index_sha256=index_sha)['verified']:
         raise ValueError('parent inventory changed during audit')
     return {'slot': root.name, 'status': 'mechanical_pass', 'parent_index_sha256': index_sha,
+            'lineage_check': lineage,
             'config_sha256': digest(config), 'model_config': config['model'],
             'budget_config': config['budget'], 'compaction_config': config['agent'].get('compaction'),
             'checkpoints_examined': len(rows), 'checks': checks,
@@ -164,11 +199,12 @@ def audit_package(root, temp_parent=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runs', type=Path, default=RUNS)
+    parser.add_argument('--package', type=Path, action='append', help='Explicit DEV root or plain c0 child packages')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--temp-parent', type=Path)
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
-    roots = [args.runs / f'{task}.r{rep:02d}' for task in DEV for rep in range(5)]
+    roots = args.package or [args.runs / f'{task}.r{rep:02d}' for task in DEV for rep in range(5)]
     report = {'schema': 'g1_offline_mechanics_v1', 'created_at': utc_now(),
               'actor_requests': 0, 'official_scorer_calls': 0, 'docker_calls': 0,
               'network_calls': 0, 'mode': 'execute' if args.execute else 'inventory_only',

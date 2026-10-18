@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from ..core.contracts import VERSION, EvidenceError, ProtocolError
+from ..core.contracts import VERSION, EvidenceError, ProtocolError, L1Error
 from ..storage import canonical, digest, file_digest, regular_file, read_json, write_json, write_bytes, confined, utc_now
 
 
@@ -185,6 +185,182 @@ def _verify_response_consumption(root,manifest,events,requests,responses):
         raise EvidenceError('Consumed prefix budget accounting mismatch')
 
 
+def context_overflow_source(root, checkpoint_id, request_id):
+    """Validate a final context rejection from original indexed source files.
+
+    Works on the full parent or the child's minimal indexed source proof.
+    """
+    import re
+    index=read_json(root/'evidence_index.json'); validate('index',index)
+    rows={row['path']:row for row in index['files']}; used=set()
+    def load(path, binary=False):
+        p=confined(root,path); row=rows.get(path)
+        if row is None or file_digest(p)!=row['sha256'] or p.stat().st_size!=row['size_bytes']:
+            raise EvidenceError('Context source differs from original index: '+path)
+        used.add(path)
+        return p.read_bytes() if binary else read_json(p)
+    manifest=load('manifest.json'); cp=load('checkpoints/'+checkpoint_id+'.json')
+    config=load('raw/resolved_config.json')
+    load('trajectory.jsonl',True); history=scan(root/'trajectory.jsonl')
+    events=history['events']
+    if (not history['complete'] or len(events)!=index['event_count'] or not events or
+            events[-1]['sha256']!=index['trajectory_head_sha256'] or
+            manifest['episode_id']!=index['episode_id'] or
+            any(e['episode_id']!=manifest['episode_id'] for e in events)):
+        raise EvidenceError('Context source trajectory/index mismatch')
+    if (not re.fullmatch(r'r\d{6}',request_id) or manifest['recording_mode']!='live' or
+            manifest['status']['termination']!='model_transport_error' or
+            manifest['status']['evidence_completeness']!='complete' or
+            cp['qualification']['eligible'] is not True or cp.get('pending_calls') or
+            cp['budget_used']['model_requests']!=int(request_id[1:]) or
+            manifest['usage']['model_requests_including_parent']!=int(request_id[1:])+1):
+        raise EvidenceError('Context resume requires final spent request immediately after qualified checkpoint')
+    requests=[e for e in events if e['kind']=='model.request']
+    if not requests or requests[-1]['data']['request_id'].split(':')[-1]!=request_id:
+        raise EvidenceError('Context resume must target final request')
+    request=requests[-1]; rid=request['data']['request_id']
+    replies=[e for e in events if e['kind']=='model.response' and e['data']['request_id']==rid]
+    if len(replies)!=1 or any(e['kind'] in ('model.parsed','tool.call') and e['data'].get('request_id')==rid for e in events):
+        raise EvidenceError('Context rejection cannot have assistant candidates or tool calls')
+    response=replies[0]; metadata=load(response['data']['http']['path'])
+    body=load(response['data']['body']['path']); error=body.get('error',{})
+    if (response['data']['status_code']!=400 or metadata.get('status_code')!=400 or
+            metadata.get('body_truncated') or metadata.get('transport_error') or body.get('choices') or
+            body.get('candidates') or error.get('type')!='BadRequestError' or
+            error.get('param')!='input_tokens' or error.get('code')!=400 or
+            'maximum context length' not in error.get('message','').lower()):
+        raise EvidenceError('Context resume requires complete HTTP400 input_tokens maximum-context BadRequestError')
+    failed_request=load(request['data']['body']['path'])
+    if (cp['checkpoint_id']!=checkpoint_id or cp['config_sha256']!=manifest['config_sha256'] or
+            digest(config)!=manifest['config_sha256'] or
+            cp['budget_used']['tool_calls']!=manifest['usage']['tool_calls_including_parent'] or
+            cp['budget_used']['known_total_tokens']!=manifest['usage']['known_total_tokens_including_parent']):
+        raise EvidenceError('Context source checkpoint config or spent budget mismatch')
+    from ..models.native import OpenAICompatibleBackend
+    from ..runtime.tools import tools_for_config
+    if (config['model']['adapter']!='openai-compatible' or
+            OpenAICompatibleBackend(config['model']).request(cp['conversation'],tools_for_config(config))!=failed_request):
+        raise EvidenceError('Context source checkpoint differs from rejected native request')
+    parsed=[e for e in events if e['kind']=='model.parsed' and e['seq']<request['seq']]
+    if not parsed: raise EvidenceError('Context resume lacks successful prompt usage')
+    success=parsed[-1]; success_id=success['data']['request_id']
+    if int(success_id.rsplit(':r',1)[1])!=int(request_id[1:])-1:
+        raise EvidenceError('Context resume requires prompt usage from immediately preceding request')
+    success_request=next(e for e in requests if e['data']['request_id']==success_id)
+    success_response=next(e for e in events if e['kind']=='model.response' and e['data']['request_id']==success_id)
+    success_http=load(success_response['data']['http']['path'])
+    success_body=load(success_response['data']['body']['path'])
+    usage=success_body.get('usage',{}); prompt_tokens=usage.get('prompt_tokens')
+    if (success_response['data']['status_code']!=200 or success_http.get('body_truncated') or
+            success_http.get('transport_error') or type(prompt_tokens) is not int or prompt_tokens<=0 or
+            prompt_tokens!=success['data'].get('usage',{}).get('prompt_tokens')):
+        raise EvidenceError('Context resume lacks complete successful prompt usage receipt')
+    usage_messages=load(success_request['data']['body']['path']).get('messages')
+    if not isinstance(usage_messages,list): raise EvidenceError('Context resume requires native messages')
+    snapshot=load('states/snapshots/'+cp['snapshot_id']+'.json')
+    final_event=[e for e in events if e['kind']=='state.snapshot'][-1]
+    final=load(final_event['data']['snapshot']['path'])
+    if any(snapshot.get(k)!=final.get(k) for k in ('content_sha256','files','directories')):
+        raise EvidenceError('Context checkpoint workspace differs from final workspace')
+    binding={'source_request_id':rid,'last_success_request_id':success_id,
+             'last_success_prompt_tokens':prompt_tokens,'usage_messages_sha256':digest(usage_messages),
+             'source_request_sha256':digest(failed_request), 'new_http_attempts_during_carry':0}
+    return dict(binding=binding, files=used, manifest=manifest, checkpoint=cp, config=config,
+                failed_request=failed_request, usage_messages=usage_messages, snapshot=snapshot)
+
+
+def _verify_context_overflow(root,manifest,events,requests):
+    lineage=manifest.get('lineage') or {}; binding=lineage.get('context_overflow')
+    if binding is None: return
+    source=root/'lineage/context_source'
+    if file_digest(source/'evidence_index.json')!=lineage['parent_index_sha256']:
+        raise EvidenceError('Context source index digest mismatch')
+    proof=context_overflow_source(source,lineage['parent_checkpoint_id'],binding['source_request_id'].split(':')[-1])
+    if proof['binding']!=binding or proof['manifest']['episode_id']!=lineage['parent_episode_id']:
+        raise EvidenceError('Context source lineage mismatch')
+    from ..core.orchestrator import _check_context_upgrade, _maybe_compact_pi_conversation
+    config=read_json(root/'raw/resolved_config.json')
+    if not _check_context_upgrade(proof['config'],config): raise EvidenceError('Invalid context config upgrade')
+    usage=proof['manifest']['usage']
+    upgrade=lineage.get('config_upgrade',{})
+    if (upgrade.get('mode')!='context_overflow' or upgrade.get('applied') is not True or
+            upgrade.get('source_config_sha256')!=digest(proof['config']) or
+            upgrade.get('target_config_sha256')!=digest(config)):
+        raise EvidenceError('Context config upgrade lineage mismatch')
+    carried=[e for e in events if e['kind']=='context_overflow.carried']
+    if len(carried)!=1 or carried[0]['data']!=binding: raise EvidenceError('Missing context carry receipt')
+    child_usage=manifest['usage']
+    charged=set(); calls={}; request_count=usage['model_requests_including_parent']
+    token_count=usage['known_total_tokens_including_parent']; checkpoint_seconds=usage['agent_phase_seconds']
+    inherited_tools=usage['tool_calls_including_parent']
+    for event in events:
+        kind=event['kind']; data=event['data']
+        if kind=='model.request':
+            if not data['request_id'].endswith(f':r{request_count:06d}'):
+                raise EvidenceError('Context continuation request budget sequence mismatch')
+            request_count+=1
+        elif kind=='model.parsed':
+            u=data.get('usage') or {}; total=u.get('total_tokens',u.get('totalTokenCount'))
+            if type(total) is int and total>=0: token_count+=total
+        elif kind=='tool.call': calls[data['call_id']]=event['event_id']
+        elif kind=='tool.charged':
+            cid=data.get('call_id')
+            if (cid not in calls or cid in charged or event['links'].get('call')!=calls[cid] or
+                    data.get('tool_calls_including_parent')!=inherited_tools+len(charged)+1):
+                raise EvidenceError('Context tool charge is duplicate, orphaned or miscounted')
+            charged.add(cid)
+            if inherited_tools+len(charged)>config['budget']['max_tool_calls']:
+                raise EvidenceError('Context tool charge exceeds inherited budget')
+        elif kind in ('tool.validation','tool.started','tool.error','tool.result'):
+            if data.get('call_id') not in charged:
+                raise EvidenceError('Context tool action lacks preceding budget charge')
+        elif kind=='checkpoint.created':
+            checkpoint=read_json(root/data['checkpoint']['path']); budget=checkpoint['budget_used']
+            if (budget['model_requests']!=request_count or budget['tool_calls']!=inherited_tools+len(charged) or
+                    budget['known_total_tokens']!=token_count or
+                    not checkpoint_seconds<=budget['agent_seconds']<=child_usage['agent_phase_seconds']):
+                raise EvidenceError('Context checkpoint spent budget differs from ordered evidence')
+            checkpoint_seconds=budget['agent_seconds']
+    if (child_usage['model_requests_including_parent']!=request_count or
+            child_usage['tool_calls_including_parent']!=inherited_tools+len(charged) or
+            child_usage['known_total_tokens_including_parent']!=token_count or
+            child_usage['agent_phase_seconds']<usage['agent_phase_seconds'] or
+            child_usage.get('saved_response_consumptions')!=0 or
+            (usage['all_requests_have_usage'] is False and child_usage['all_requests_have_usage'] is not False)):
+        raise EvidenceError('Context continuation cumulative spent budget or usage mismatch')
+    restored_events=[e for e in events if e['kind']=='state.snapshot']
+    if restored_events:
+        restored_snapshot=read_json(root/restored_events[0]['data']['snapshot']['path'])
+        if any(restored_snapshot.get(k)!=proof['snapshot'].get(k) for k in ('content_sha256','files','directories')):
+            raise EvidenceError('Context restored workspace differs from source checkpoint')
+    cp=proof['checkpoint']
+    try:
+        expected,receipt=_maybe_compact_pi_conversation(
+            cp['conversation'],config['agent']['compaction'],binding['last_success_prompt_tokens'],
+            proof['manifest']['usage']['model_requests_including_parent'],
+            usage_messages=proof['usage_messages'],usage_kind='prompt_tokens')
+    except L1Error as exc:
+        if (exc.code!='pi_context_unsatisfiable' or manifest['status']['termination']!=exc.code or requests):
+            raise EvidenceError('Context compaction failure differs from recorded stop') from exc
+        return
+    compacted=[e for e in events if e['kind']=='session.compacted' and (not requests or e['seq']<next(iter(requests.values()))['seq'])]
+    if receipt is not None and (len(compacted)!=1 or compacted[0]['data']!=receipt):
+        raise EvidenceError('Context pre-send compaction receipt mismatch')
+    first=next((e for e in events if e['kind']=='checkpoint.created'),None)
+    if first is not None:
+        restored=read_json(root/first['data']['checkpoint']['path'])
+        usage=proof['manifest']['usage']
+        if (restored['conversation']!=expected or restored['budget_used']['model_requests']!=usage['model_requests_including_parent'] or
+                restored['budget_used']['known_total_tokens']!=usage['known_total_tokens_including_parent']):
+            raise EvidenceError('Context restored conversation or budget mismatch')
+    fresh=list(requests.values())
+    offset=proof['manifest']['usage']['model_requests_including_parent']
+    if fresh and not fresh[0]['data']['request_id'].endswith(f':r{offset:06d}'):
+        raise EvidenceError('Context continuation reuses spent request')
+    if proof['manifest']['usage']['all_requests_have_usage'] is False and manifest['usage']['all_requests_have_usage'] is not False:
+        raise EvidenceError('Context continuation fabricated complete usage')
+
+
 def verify(root:Path,expected_index_sha256=None):
     root=Path(root); errors=[]; warnings=[]; manifest=None
     def error(code,detail): errors.append({'code':code,'detail':str(detail)})
@@ -262,6 +438,7 @@ def verify(root:Path,expected_index_sha256=None):
         config=read_json(root/'raw/resolved_config.json')
         if digest(config)!=manifest['config_sha256']: error('config_digest_mismatch','resolved config')
         _verify_response_consumption(root,manifest,events,requests,responses)
+        _verify_context_overflow(root,manifest,events,requests)
         backend=None
         from ..models.native import GeminiBackend, OpenAICompatibleBackend
         cls={'gemini':GeminiBackend,'openai-compatible':OpenAICompatibleBackend}.get(config['model']['adapter'])

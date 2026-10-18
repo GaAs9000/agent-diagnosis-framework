@@ -123,3 +123,56 @@ def test_inventory_default_never_executes_or_promotes_gate(tmp_path, monkeypatch
     assert report['applicable_configuration_verified'] is False
     assert report['live_g1_gate_pass'] is False
     assert len(report['slots']) == 45
+
+
+def c0_child_fixture(root):
+    snapshot, parent, _ = fixture(root)
+    parent.update(episode_id='ep_parent', pending_observations=[], pending_calls=[],
+                  budget_used={'model_requests': 0, 'tool_calls': 0})
+    save(root / 'lineage/parent_checkpoint.json', parent)
+    save(root / 'lineage/parent_snapshot.json', snapshot)
+    save(root / 'checkpoints/cp000000.json', parent)
+    save(root / ('states/snapshots/' + snapshot['snapshot_id'] + '.json'), snapshot)
+    return {'lineage': {'parent_checkpoint_id': 'cp000000', 'parent_episode_id': 'ep_parent',
+                       'parent_checkpoint_sha256': audit.file_digest(root / 'lineage/parent_checkpoint.json'),
+                       'parent_index_sha256': 'parent-index'}}
+
+
+def test_hash_bound_c0_child_is_accepted(tmp_path):
+    manifest = c0_child_fixture(tmp_path)
+    assert audit.validate_c0_lineage(tmp_path, manifest)['scope'] == 'c0_child'
+
+
+@pytest.mark.parametrize('change', ['hash', 'counter', 'qualification', 'conversation', 'workspace'])
+def test_child_lineage_requires_actual_zero_request_restore(tmp_path, change):
+    manifest = c0_child_fixture(tmp_path)
+    parent_path = tmp_path / 'lineage/parent_checkpoint.json'
+    parent = json.loads(parent_path.read_text())
+    if change == 'hash':
+        manifest['lineage']['parent_checkpoint_sha256'] = 'wrong'
+    elif change == 'counter':
+        parent['budget_used']['model_requests'] = 1
+    elif change == 'qualification':
+        parent['qualification']['eligible'] = False
+    elif change == 'conversation':
+        child_path = tmp_path / 'checkpoints/cp000000.json'
+        child = json.loads(child_path.read_text())
+        child['conversation']['messages'].append({'role': 'user', 'content': 'injected'})
+        save(child_path, child)
+    else:
+        path = tmp_path / 'lineage/parent_snapshot.json'
+        snapshot = json.loads(path.read_text())
+        snapshot['content_sha256'] = 'wrong'
+        save(path, snapshot)
+    if change in ('counter', 'qualification'):
+        save(parent_path, parent)
+        manifest['lineage']['parent_checkpoint_sha256'] = audit.file_digest(parent_path)
+    with pytest.raises(ValueError):
+        audit.validate_c0_lineage(tmp_path, manifest)
+
+
+def test_explicit_package_inventory_does_not_expand_cohort(tmp_path, monkeypatch):
+    output = tmp_path / 'report.json'
+    monkeypatch.setattr('sys.argv', [str(SCRIPT), '--package', str(tmp_path / 'one'), '--output', str(output)])
+    assert audit.main() == 0
+    assert [row['slot'] for row in json.loads(output.read_text())['slots']] == ['one']

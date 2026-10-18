@@ -65,6 +65,21 @@ def test_exact_full_requests_and_actual_observation_truncation():
     assert rows[0]['continuation_sources'][0]['delivered_observation_sha256']
 
 
+def test_native_checkpoint_metadata_is_audited_beyond_sent_messages():
+    config, public, events, store = fixture()
+    conversation = audit.initial_conversation(config, public)
+    store['checkpoint0'] = json.dumps({'conversation': conversation}).encode()
+    events.insert(0, {'kind': 'checkpoint.created', 'data': {'checkpoint': {'path': 'checkpoint0'}}})
+    rows = reconstruct(config, public, events[:2], store)
+    assert rows[0]['native_checkpoint_conversation']['status'] == 'verified'
+    # Private native metadata is absent from sent messages but controls future compaction.
+    conversation['_pi_context_usage'] = {'forged': True}
+    store['checkpoint0'] = json.dumps({'conversation': conversation}).encode()
+    rows = reconstruct(config, public, events[:2], store)
+    assert rows[0]['status'] == 'mismatch'
+    assert rows[0]['reason'] == 'native_checkpoint_conversation_or_metadata_differs_from_replay'
+
+
 @pytest.mark.parametrize('field', ['historical_message', 'tools', 'temperature', 'extra'])
 def test_changes_to_any_full_body_field_are_detected(field):
     config, public, events, store = fixture()
