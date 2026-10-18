@@ -1,0 +1,29 @@
+{
+  "status_at_recording": "authorized_waiting_for_batch_not_sent",
+  "user_approval": {
+    "approved_plan_sha256": "66b36b1b89936f5e99cdcac6dd416a80439aeb48bf8b15205086fb6a4f0231e0",
+    "exact_answer": "允许单次600秒诊断重放（推荐）",
+    "question_id": "call_5088bbd22d3f47a0b910240eb29270e3",
+    "internal_plan_reviewed": true,
+    "source": "direct human answer to async request in this chat on2026-10-18",
+    "scope": "one replay after entire batch and idle metrics; no retries/tools/scoring or formal data writes",
+    "recorded_at_utc": "2026-10-18T04:40:15.494392+00:00"
+  },
+  "plan_sha256": "66b36b1b89936f5e99cdcac6dd416a80439aeb48bf8b15205086fb6a4f0231e0",
+  "input_request_file_sha256": "eb43414a2a324f4cb48d6a9788ae21057dff9d417f011d8aecd4cf01f83b36a0",
+  "original_frozen_source_files_changed": 0,
+  "formal_config_changed": false,
+  "per_probe_timeout_seconds": 600,
+  "max_HTTP_attempts": 1,
+  "max_retries": 0,
+  "tools_executed": 0,
+  "formal_packages_written": false,
+  "remote_CPU_tests_passed": 66,
+  "actual_probe_outcome": "NOT_RUN",
+  "actual_probe_usage": "unknown_until_response",
+  "artifacts": {
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout_probe/plan.json": "f87dc89622ed931f948f0e2871fcf6a6baec35c901d4e9c088669f6c421a2fb7",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout_probe/approval.json": "0fec6c79ddaf51037589973abf49b5f3218f009dd5b87f08dcf6bcf29d2d7f9f",
+    "L2_Behavioral Event Localization/L2_Sandbox/validation/d0_20261018/timeout_probe/remote_tests.log": "720914d4ff4a6bb74a1c76f0b4b269f7e66de7cc0e5dabbaa674d8fefecb1d75"
+  }
+}
