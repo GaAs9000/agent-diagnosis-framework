@@ -1,0 +1,60 @@
+{
+  "schema_version": "d0-timeout-policy-t2-1",
+  "t2_transport_policy_id": "T-2-20261018-timeout600",
+  "d0_frozen": false,
+  "phase_authorized": true,
+  "authorization": {
+    "source": "/Users/jiashen/.codex/attachments/5721a7ba-2cf5-4b76-a540-5848d43e4a8a/已粘贴的文本.txt",
+    "sha256": "3baef757b7189ec2a71b0a09cc45c99ba6b543bd7c386ce90a9e2915d23aa4eb",
+    "exact_text": "以下针对**（一）修复后处理同步超时**与**（二）新协议 `T-2`（`timeout_seconds = 600`）下的新旧配置隔离、`050.r04` 补齐与 `G2` 执行**给出具体方案供 Codex 落地。"
+  },
+  "base_config_path": "L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.qwen36.pi.t1.json",
+  "revised_config_path": "L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.qwen36.pi.t1.timeout600.json",
+  "base_config_sha256": "daf71f6ee910fedfe65a59aca24db037cc4e5131ba4e76354ae7d69a9b6267c1",
+  "revised_config_sha256": "2621e117e1986543a41515af2e4546bcd9547a483048146dc8e1b93deefae90a",
+  "allowed_config_delta": {
+    "model.timeout_seconds": {
+      "from": 300,
+      "to": 600
+    }
+  },
+  "parent_timeout_seconds": [
+    300,
+    600
+  ],
+  "continuation_timeout_seconds": 600,
+  "repair_label": "officeval_050.r04",
+  "max_attempts_per_slot": 1,
+  "replacement_concurrency": 1,
+  "g2_concurrency": 3,
+  "g2_checkpoint": "cp000000",
+  "aggregate_http_cap": 3360,
+  "prior_http_attempts": 134,
+  "new_http_cap": 2940,
+  "aggregate_active_wall_cap": 21600,
+  "service_stop_epoch": 1792314194.0,
+  "service_renewal_authorized": false,
+  "original_parents_immutable": true,
+  "replacement_storage": "new_independent_L1_run_tree",
+  "original_invalid_parent_immutable": true,
+  "cohort_description": "44_original_timeout300_plus_1_T2_timeout600_mixed_cohort",
+  "timeout_regimes": {
+    "300": "300s_frozen",
+    "600": "600s_revised"
+  },
+  "g2_estimand": "cross_regime_cold_resume_joint_effect",
+  "pure_restore_equivalence_eligible": false,
+  "execution_revision": {
+    "original_110_files_immutable": true,
+    "derivative": "hash_bound_single_guard_change",
+    "permitted_guard_delta": "allow exactly timeout300_to600 at cp000000; all other resolved config fields equal",
+    "generated_source_and_transform_must_be_saved_before_first_request": true
+  },
+  "evidence_boundaries": [
+    "First request byte equality must be measured, not assumed.",
+    "A cross-regime G2 pair includes restore plus timeout-policy effects.",
+    "One diagnostic sample does not estimate timeout rate or guarantee600s under concurrency3.",
+    "Existing pure-equivalence gate remains undecided; D1,D3,H are not authorized by this phase."
+  ],
+  "scientific_efficacy": "not_tested"
+}
