@@ -1,0 +1,253 @@
+{
+  "schema": "g2-execution-closeout-v1",
+  "date_HKT": "2026-10-18",
+  "execution_source_commit": "61880277978b13952f79ba6c082e57ed1a7b30e6",
+  "plan_sha256": "199d971202ca130e6439c1b93dc5969595d5f38ca63591d8f7502f6dfa719560",
+  "g2_status": "completed",
+  "completed_pairs": 20,
+  "valid_pairs": 20,
+  "new_actor_http_attempts": 397,
+  "cumulative_actor_http_attempts": 578,
+  "invalid_attempts": 0,
+  "active_wall_seconds": 4671.70094203949,
+  "statistics": {
+    "n_pairs": 20,
+    "n_families": 9,
+    "mean_difference": -0.0032570806100217856,
+    "interval95": [
+      -0.9086580911037682,
+      0.9021439298837245
+    ],
+    "hoeffding_radius": 0.9054010104937463,
+    "family_weights": {
+      "officeval_003": 0.1111111111111111,
+      "officeval_033": 0.1111111111111111,
+      "officeval_010": 0.1111111111111111,
+      "officeval_004": 0.1111111111111111,
+      "officeval_060": 0.1111111111111111,
+      "officeval_085": 0.1111111111111111,
+      "officeval_090": 0.1111111111111111,
+      "officeval_070": 0.1111111111111111,
+      "officeval_050": 0.1111111111111111
+    },
+    "gate": "undecided",
+    "comparison": "joint restore/timeout/harness comparison; not pure equivalence"
+  },
+  "research_status": {
+    "dev_valid": 44,
+    "dev_slots": 45,
+    "g1": "historical_unverified",
+    "g2": "undecided",
+    "g4": "historical_unverified",
+    "d0_frozen": false,
+    "d1": "NOT_RUN"
+  },
+  "resource": {
+    "original_automatic_cleanup": {
+      "status": "cleanup_unconfirmed",
+      "leader_pid": 625578,
+      "pgid": 625578,
+      "error": "PermissionError: [Errno 13] Permission denied: '/proc/634558/environ'",
+      "gpu4_memory_used_mib_readback": "83359"
+    },
+    "current_readback": {
+      "status": "confirmed_absent",
+      "original_pgid": 625578,
+      "remaining_group_pids": [],
+      "gpu_uuid": "GPU-6d3f754b-b139-9354-0cbc-42bf22208180",
+      "gpu4_memory_used_mib": 3,
+      "gpu4_compute_pids": [],
+      "remote_observed_epoch": 1792327835.5639596,
+      "signals_sent": 0,
+      "release_time_and_mechanism": "unknown; readback only",
+      "observed_HKT": "2026-10-18T20:54:44.748295+08:00"
+    },
+    "container_cleanup": {
+      "owner": "5a9e4eafbb49b7a7e8068dbf646c5726bfc877c7c29b6983ac97f9d6b55697df",
+      "status": "confirmed_empty",
+      "owned_ids": [],
+      "remaining_ids": []
+    }
+  },
+  "cleanup_followup": {
+    "scope": "post-run PermissionError compatibility only; execution source not rewritten",
+    "server_cpu_tests_passed": 68,
+    "live_validation": false,
+    "additional_actor_requests": 0
+  },
+  "artifact_hashes": {
+    "result.json": "15c50e64e9007997f25876345f77bcc86e9d3bb78f522482d5a7b9b5c775938d",
+    "score_inputs.json": "8c50c31c485c9b6989f4514c46a0da4d8c1ab3486161818aa8beedbee326a663",
+    "reports/summary.json": "241bce4d0be71d122992e69f49e812cad7f283a9f24181549cc7336b8f245614",
+    "reports/receipt.json": "bfe2e19709743d2e10a13126648d37493e65684ff1d6527a801e7e5616c4752d",
+    "supervisor_result.json": "173b3882f42507cbf5299b2429f6ce6727bbfca98a2af96b32652a759ae48b2e",
+    "service_current_readback.json": "d0a6bded1e51fa4a6f3ba7573cfbc9770d090d310f1aa6037b5a9b54209648ea"
+  },
+  "pairs": [
+    {
+      "label": "officeval_003.r00",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_033.r00",
+      "reference_score": 0.29411764705882354,
+      "restored_score": 0.35294117647058826,
+      "valid": true
+    },
+    {
+      "label": "officeval_010.r00",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_004.r00",
+      "reference_score": 0.6363636363636364,
+      "restored_score": 0.2727272727272727,
+      "valid": true
+    },
+    {
+      "label": "officeval_060.r00",
+      "reference_score": 0.5454545454545454,
+      "restored_score": 1.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_085.r00",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_090.r00",
+      "reference_score": 0.4,
+      "restored_score": 0.4,
+      "valid": true
+    },
+    {
+      "label": "officeval_003.r01",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_070.r00",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_004.r01",
+      "reference_score": 0.13636363636363635,
+      "restored_score": 0.36363636363636365,
+      "valid": true
+    },
+    {
+      "label": "officeval_033.r01",
+      "reference_score": 0.35294117647058826,
+      "restored_score": 0.058823529411764705,
+      "valid": true
+    },
+    {
+      "label": "officeval_050.r01",
+      "reference_score": 0.05,
+      "restored_score": 0.06,
+      "valid": true
+    },
+    {
+      "label": "officeval_060.r01",
+      "reference_score": 0.5454545454545454,
+      "restored_score": 1.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_050.r00",
+      "reference_score": 0.05,
+      "restored_score": 0.05,
+      "valid": true
+    },
+    {
+      "label": "officeval_010.r01",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_090.r01",
+      "reference_score": 0.4,
+      "restored_score": 0.4,
+      "valid": true
+    },
+    {
+      "label": "officeval_070.r01",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_085.r01",
+      "reference_score": 0.0,
+      "restored_score": 0.0,
+      "valid": true
+    },
+    {
+      "label": "officeval_090.r02",
+      "reference_score": 0.4,
+      "restored_score": 0.4,
+      "valid": true
+    },
+    {
+      "label": "officeval_060.r02",
+      "reference_score": 1.0,
+      "restored_score": 0.5454545454545454,
+      "valid": true
+    }
+  ],
+  "live_context_compaction_observations": {
+    "scope": "observed events only; not a G1 gate verdict",
+    "slots": [
+      {
+        "slot": "officeval_004.r00",
+        "compactions": 1,
+        "at_requests": [
+          22
+        ],
+        "estimated_after": [
+          34361
+        ]
+      },
+      {
+        "slot": "officeval_010.r00",
+        "compactions": 1,
+        "at_requests": [
+          9
+        ],
+        "estimated_after": [
+          22768
+        ]
+      },
+      {
+        "slot": "officeval_033.r00",
+        "compactions": 1,
+        "at_requests": [
+          26
+        ],
+        "estimated_after": [
+          34888
+        ]
+      },
+      {
+        "slot": "officeval_033.r01",
+        "compactions": 1,
+        "at_requests": [
+          9
+        ],
+        "estimated_after": [
+          42174
+        ]
+      }
+    ]
+  }
+}

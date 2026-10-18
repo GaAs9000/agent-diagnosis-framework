@@ -533,3 +533,53 @@ def test_archived_cleanup_accepts_explicit_api_birth_and_argv(archived_stop_runt
     f.receipt.update(api_pid=3527476,api_start_ticks=1001,leader_start_ticks=1000,
         api_argv=[v.decode() for v in (f.root/'3527476'/'cmdline').read_bytes().rstrip(b'\0').split(b'\0')])
     assert f.code.cleanup(f.receipt)['status']=='confirmed_absent'
+
+
+def deny_proc_reads(runtime, denied, filename='environ', error=PermissionError):
+    """Inject real open failures into the shipped STOP_CODE without OS operations."""
+    def proc_open(path, *args, **kwargs):
+        path=Path(path)
+        if path.name==filename and path.parent.name in {str(n) for n in denied}:
+            raise error('nondumpable proc file: '+str(path))
+        return open(path, *args, **kwargs)
+    runtime.code.open=proc_open
+
+
+def test_remote_stop_accepts_permission_denied_engine_environ(stop_runtime):
+    f=stop_runtime
+    deny_proc_reads(f,{103})
+    result=f.code.cleanup(f.receipt)
+    assert result['status']=='confirmed_absent', result
+    assert {n for n,sig in f.sent}=={100,101,102,103}
+    assert len(f.closed)==4
+
+
+@pytest.mark.parametrize('case', ['leader_denied', 'api_denied', 'tracker_denied',
+    'unknown_member', 'missing_gpu', 'foreign_gpu', 'foreign_uid', 'reparented',
+    'reused_pid', 'stat_denied', 'other_env_error'])
+def test_remote_stop_denied_environ_never_relaxes_ownership_proof(stop_runtime,case):
+    f=stop_runtime
+    denied={103}
+    if case=='leader_denied': denied.add(100)
+    elif case=='api_denied': denied.add(101)
+    elif case=='tracker_denied': denied.add(102)
+    elif case=='unknown_member': f.commands[103]=['unrelated-worker']; f.write(103)
+    elif case=='missing_gpu': f.rows.clear()
+    elif case=='foreign_gpu': f.rows[:]=[(103,'GPU-other')]
+    elif case=='foreign_uid': f.uids[103]=43
+    elif case=='reparented': f.parents[103]=1; f.write(103,tag=False)
+    elif case=='reused_pid': f.receipt['leader_start_ticks']=999
+    deny_proc_reads(f,denied)
+    if case=='stat_denied': deny_proc_reads(f,{103},filename='stat')
+    elif case=='other_env_error': deny_proc_reads(f,{103},error=OSError)
+    result=f.code.cleanup(f.receipt)
+    assert result['status']=='cleanup_unconfirmed'
+    assert 'error' in result
+    assert f.sent==[]
+
+
+def test_archived_cleanup_permission_denied_engine_still_checks_receipt_birth(archived_stop_runtime):
+    f=archived_stop_runtime
+    deny_proc_reads(f,{3527737})
+    f.receipt.update(api_pid=3527476,api_start_ticks=1001,leader_start_ticks=1000)
+    assert f.code.cleanup(f.receipt)['status']=='confirmed_absent'

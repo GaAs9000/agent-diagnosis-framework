@@ -152,7 +152,12 @@ def process(n):
     base=PROC_ROOT+'/'+str(n)
     with open(base+'/stat') as f: raw=f.read()
     fields=raw[raw.rindex(')')+2:].split()
-    with open(base+'/environ','rb') as f: env=f.read().split(b'\0')
+    try:
+        with open(base+'/environ','rb') as f: env=f.read().split(b'\0')
+    except PermissionError:
+        # A nondumpable EngineCore can hide environ. Keep its tag unavailable;
+        # prove() still requires readable owner tags for every other role.
+        env=None
     with open(base+'/cmdline','rb') as f: args=f.read().rstrip(b'\0').split(b'\0')
     return dict(pid=n, uid=os.stat(base).st_uid, ppid=int(fields[1]),
         pgid=int(fields[2]), start=int(fields[19]), state=fields[0], env=env, args=args)
@@ -207,7 +212,7 @@ def prove(s, group, gpu, uuid):
     api=[]
     for n,p in group.items():
         if p['uid']!=os.getuid(): raise ValueError('foreign UID')
-        tags=[v for v in p['env'] if v.startswith(b'C3_R22_SERVICE_OWNER=')]
+        tags=[v for v in (p['env'] or []) if v.startswith(b'C3_R22_SERVICE_OWNER=')]
         if tags and tags!=[owner]: raise ValueError('owner mismatch')
         args=p['args']; cmd=b' '.join(args)
         if n==pid:
