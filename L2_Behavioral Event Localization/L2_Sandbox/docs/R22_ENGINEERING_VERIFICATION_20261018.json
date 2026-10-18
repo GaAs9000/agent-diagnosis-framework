@@ -3,7 +3,6 @@
   "execution": "aml-b CPU4",
   "actor_requests": 0,
   "analyst_requests": 0,
-  "gpu_started": false,
   "live_continuations": "NOT_RUN",
   "g2": "NOT_RUN",
   "d0_frozen": false,
@@ -18,10 +17,9 @@
     },
     {
       "scope": "L2 tests",
-      "passed": 480,
+      "passed": 489,
       "skipped": 8,
-      "failed": 0,
-      "seconds": 22.73
+      "failed": 0
     }
   ],
   "native_audit": {
@@ -43,8 +41,11 @@
   "independent_review": {
     "core_and_driver": "GO",
     "supervisor": "GO",
-    "accepted_cleanup_findings": 2,
-    "resolved": 2
+    "accepted_cleanup_findings": 3,
+    "resolved": 3
   },
-  "limit": "Validation boundary only; no full native Pi harness or model/scientific efficacy claim"
+  "limit": "Validation boundary only; no full native Pi harness or model/scientific efficacy claim",
+  "record_scope": "CPU engineering acceptance before Actor launch; GPU initialization recorded separately",
+  "tests_gpu_usage": false,
+  "supervisor_tests_passed": 26
 }

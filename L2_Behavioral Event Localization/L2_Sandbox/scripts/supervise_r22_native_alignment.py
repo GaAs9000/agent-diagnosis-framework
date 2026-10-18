@@ -70,6 +70,30 @@ def validate(plan, freeze, service, now):
     started, hard_stop = service['started_epoch'], service['hard_stop_epoch']
     if not all(math.isfinite(x) for x in (started, hard_stop)) or not 0 < hard_stop-started <= 21600 or stop > hard_stop-600 or started > now:
         raise ValueError('service lease must be independent and bounded to six hours')
+    origin = plan.get('service_lease_origin')
+    if not isinstance(origin, dict) or any(service.get(key) != origin.get(key) for key in
+            ('started_epoch', 'hard_stop_epoch', 'service_stop_epoch')) or origin.get('service_stop_epoch') != stop:
+        raise ValueError('service receipt changed frozen original lease')
+    calibration = service.get('clock_calibration', {})
+    sent, received, remote = [calibration.get(key) for key in
+        ('local_sent_epoch', 'local_received_epoch', 'remote_epoch')]
+    launch, remote_stop = service.get('remote_launch_epoch'), service.get('remote_hard_stop_epoch')
+    values = (sent, received, remote, launch, remote_stop)
+    if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
+        raise ValueError('finite clock calibration and remote launch required')
+    if not 0 <= received-sent <= 10 or received > now or launch < remote:
+        raise ValueError('invalid or stale launch clock calibration')
+    offset_max = received-remote
+    if remote_stop != hard_stop-offset_max-60:
+        raise ValueError('remote deadline must derive from original lease and clock margin')
+    duration, grace = service.get('timeout_seconds'), service.get('kill_grace_seconds')
+    if (type(duration) is not int or not 645 < duration <= 21600 or grace != 30 or
+            duration != int(remote_stop-launch-30-5) or launch+duration+30 > remote_stop):
+        raise ValueError('actual timeout exceeds frozen lease or omits termination grace')
+    command = service.get('command')
+    if not isinstance(command, list) or len(command) < 5 or command[:4] != [
+            'timeout', '--signal=TERM', '--kill-after=30s', str(duration)+'s']:
+        raise ValueError('actual timeout command does not match bounded receipt')
 
 
 @contextmanager

@@ -23,6 +23,14 @@ def contract():
         internal_plan_reviewed=True, d0_frozen=False, user_authorization_record={'exact_text': 'approved', 'source': 'direct'})
     service = dict(remote_host='aml-b', device=4, owner_tag='a'*64, server_plan_hash='a'*64,
         service_stop_epoch=stop, leader_pid=1234, pgid=1234, started_epoch=now-10, hard_stop_epoch=stop+600)
+    plan['service_lease_origin'] = {key: service[key] for key in
+        ('started_epoch', 'hard_stop_epoch', 'service_stop_epoch')}
+    service['clock_calibration'] = dict(local_sent_epoch=now-2, local_received_epoch=now-1, remote_epoch=now-101)
+    service['remote_launch_epoch'] = now-100
+    service['remote_hard_stop_epoch'] = service['hard_stop_epoch']-100-60
+    service['timeout_seconds'] = int(service['remote_hard_stop_epoch']-service['remote_launch_epoch']-35)
+    service['kill_grace_seconds'] = 30
+    service['command'] = ['timeout', '--signal=TERM', '--kill-after=30s', str(service['timeout_seconds'])+'s', 'qwen-server']
     return now, plan, freeze, service
 
 
@@ -177,3 +185,29 @@ def test_release_uses_validated_receipt_despite_drift_or_cleanup_failure(tmp_pat
     assert state['service_cleanup']['status'] == 'confirmed_absent'
     assert state['startup_binding']['status'] == 'drift_detected'
     assert state['container_cleanup']['status'] == ('cleanup_unconfirmed' if cleanup_error else 'confirmed_empty')
+
+
+@pytest.mark.parametrize('change', ['stale_duration', 'full_six_hours', 'kill_grace', 'original_lease', 'original_start', 'clock_margin', 'command', 'rtt', 'nan_clock'])
+def test_actual_launcher_cannot_extend_original_frozen_lease(change):
+    now, plan, freeze, service = contract()
+    if change == 'stale_duration':
+        service['remote_launch_epoch'] += 60
+    elif change == 'full_six_hours':
+        service['timeout_seconds'] = 21600
+        service['command'][3] = '21600s'
+    elif change == 'kill_grace':
+        service['kill_grace_seconds'] = 0
+    elif change == 'original_lease':
+        service['hard_stop_epoch'] += 60
+    elif change == 'original_start':
+        service['started_epoch'] -= 60
+    elif change == 'clock_margin':
+        service['remote_hard_stop_epoch'] += 60
+    elif change == 'command':
+        service['command'][2] = '--kill-after=90s'
+    elif change == 'rtt':
+        service['clock_calibration']['local_sent_epoch'] -= 20
+    elif change == 'nan_clock':
+        service['clock_calibration']['remote_epoch'] = float('nan')
+    with pytest.raises(ValueError):
+        s.validate(plan, freeze, service, now)
