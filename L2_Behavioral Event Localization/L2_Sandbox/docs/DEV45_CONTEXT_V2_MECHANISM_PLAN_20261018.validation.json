@@ -1,0 +1,22 @@
+{
+  "status": "proposal_consistency_verified",
+  "proposal_sha256": "9f35c0fcca24c4535e3a68f7d3ad69ff7d4e71f7c750d2f36167902bd2e2d89e",
+  "config_sha256": "85a515f864eee02b7103010fc02cedd6a2c3125ce0a6f5133be6d34fefab99cc",
+  "execution": "aml-b CPU4; no runtime preflight",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "docker_calls": 0,
+  "gpu_calls": 0,
+  "counts": {
+    "slots": 45,
+    "logical_cap": 1575,
+    "http_cap": 6300,
+    "checkpoint_state_restore_cap": 1620,
+    "next_request_cap": 1575
+  },
+  "limitations": [
+    "not an executable freeze",
+    "no replay or provenance audit executed",
+    "no model service started"
+  ]
+}
