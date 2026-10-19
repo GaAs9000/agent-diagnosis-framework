@@ -50,8 +50,11 @@ def project_tool_history(messages):
         message=messages[index]
         if not isinstance(message,dict):
             raise ConfigurationError('History projection requires message objects')
-        if message.get('role') == 'tool' or _synthetic_image_id(message) is not None:
-            raise ConfigurationError('Unmatched tool result or image frame in chat history')
+        if message.get('role') == 'tool':
+            raise ConfigurationError('Unmatched tool result in chat history')
+        # Native compaction can retain an image user message after summarizing
+        # its original tool exchange. It is still a complete user message;
+        # preserve it verbatim rather than inventing a missing tool exchange.
         positions.append(index); index+=1
         calls=message.get('tool_calls') if message.get('role') == 'assistant' else None
         if not calls:

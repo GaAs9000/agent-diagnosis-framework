@@ -1,5 +1,8 @@
 """Lossless, opt-in projection of native interleaved tool image histories."""
 import copy
+import json
+import os
+from pathlib import Path
 import pytest
 
 from c3_sandbox.l1.core.contracts import ConfigurationError, HTTPResult
@@ -81,7 +84,7 @@ def test_already_grouped_history_is_byte_identical_noop(monkeypatch):
 @pytest.mark.parametrize('mutation',[
     'missing_result','duplicate_result','unmatched_result','unknown_user','unknown_user_image',
     'duplicate_call','missing_call_id','image_before_result','unmatched_image','malformed_image',
-    'orphan_result','orphan_image'])
+    'orphan_result'])
 def test_rejects_ambiguous_histories_before_http(monkeypatch,mutation):
     messages=history()
     if mutation=='missing_result': del messages[5:7]
@@ -95,11 +98,40 @@ def test_rejects_ambiguous_histories_before_http(monkeypatch,mutation):
     elif mutation=='unmatched_image': messages[4]['content'][0]['text']='Image returned by tool call unknown'
     elif mutation=='malformed_image': messages[4]['extra']='ambiguous'
     elif mutation=='orphan_result': messages.append(copy.deepcopy(messages[3]))
-    elif mutation=='orphan_image': messages.insert(0,copy.deepcopy(messages[4]))
     adapter=backend()
     def forbidden(*args,**kwargs): pytest.fail('Malformed history reached HTTP')
     monkeypatch.setattr(adapter.http,'post',forbidden)
     with pytest.raises(ConfigurationError): adapter.request({'messages':messages},[])
+
+
+def test_compacted_standalone_user_image_is_preserved_without_fake_tool_result():
+    standalone=image('summarized-old-call','data:image/png;base64,b2xk')
+    messages=[{'role':'system','content':'system'},
+              {'role':'user','content':'Previous tool exchange was summarized.'},
+              standalone,{'role':'assistant','content':'Continue.'}]
+    original=copy.deepcopy(messages)
+    wire,audit=project_tool_history(messages)
+    assert wire==messages==original
+    assert canonical(wire)==canonical(original)
+    assert audit['changed'] is False
+    assert not any(m['role']=='tool' for m in wire)
+
+
+def test_recorded_compacted_checkpoint_keeps_all_messages_and_images():
+    source=Path(os.environ.get('C3_OPENCODE_COMPACTED_CHECKPOINT',
+        Path(__file__).resolve().parents[4]/
+        'L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/'
+        'continuation_plan/execution/branches/'
+        '0e7103f515ff9749fd9c6d94f1893080481a5e645e586b0f22f97b984683ab93/'
+        'checkpoints/cp000024.json'))
+    if not source.is_file():
+        pytest.skip('Recorded compacted checkpoint unavailable')
+    messages=json.loads(source.read_text())['conversation']['messages']
+    assert messages[3]['role']=='user' and messages[3]['content'][0]['text'].startswith('Image returned by tool call ')
+    original=copy.deepcopy(messages)
+    wire,audit=project_tool_history(messages)
+    assert canonical(wire)==canonical(original)
+    assert messages==original and audit['changed'] is False
 
 
 def test_default_remains_unchanged_without_policy(monkeypatch):
