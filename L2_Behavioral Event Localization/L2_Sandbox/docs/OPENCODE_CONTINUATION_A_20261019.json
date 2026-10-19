@@ -1,0 +1,21 @@
+{
+  "schema": "opencode-option-a-launch-evidence-v1",
+  "state": "controller_started_initial_verification_in_progress",
+  "snapshot_at_hkt": "2026-10-19T23:00:12.703128+08:00",
+  "source_commit": "89d4c26",
+  "plan_sha256": "b42529ac22f8935181ecc4e9f77e23f1178897503d1b2f4fc12122bd8218de3a",
+  "phase_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03",
+  "files": {
+    "prelaunch_summary.json": "883f7a6efd9c6de7c714e10844ebd7df4348544310e33532850414e8db1ae694",
+    "launch_summary.json": "d9f38c3df3e19d8aba8767b7a291059932bd80049203c1a4c6cdb271b621d07e",
+    "external_storage_preflight.json": "901cb89df4285cdfca5f42fdce1617273ac321cb423a60adb3ce2a2cff541e75",
+    "supervisor.py": "33b167bf87bb5e5966a047c71ef58424bca35ac572d6b936a74eed368e3a5d78",
+    "integrity_preflight.json": "67ce0de3ddfd9a9b7f9e6f353e9e90e1e94efbb353605f8804cc5bfe2465b817",
+    "server_tests.json": "4cd4d18a0087d49ca62a7270b48fdcc425da3fa7833f81c3fcf182bd433ca7c5",
+    "budget_authorization.json": "5d1e2fb21e8b83809b7df51f608eddceba70dff9df3b0f1ca2b42973bd5db7f8",
+    "storage_guard_tests.json": "37ae8dc011997eb0c1059c97ca177add03b01bab0717bf5fa899631e1c58d2eb",
+    "launch_receipt.json": "72265b416f977221e3718247e1fb4b3fb5232935d88cabda2c9d66c05971dac7",
+    "storage_contract.json": "d08d70c71e8135ecdf541dadd8619bc33539d6d5e86674b42d12ed1a30a44c42",
+    "supervisor_started.json": "1262180bfae54730c425961a18095c1dfe7bfe3ba304f49777610b0b708aed7e"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "state": "prepared_not_launched",
+  "source_commit": "89d4c26",
+  "plan_sha256": "b42529ac22f8935181ecc4e9f77e23f1178897503d1b2f4fc12122bd8218de3a",
+  "phase_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03",
+  "branch_storage_root": "/Volumes/PNY/agent-diagnosis-framework/opencode_20261019/continuation_03/branches",
+  "carried_completed": 512,
+  "carried_invalid": 26,
+  "unstarted_jobs": 1744,
+  "aggregate_requests_before": 4698,
+  "aggregate_tokens_before": 188712698,
+  "aggregate_usage_equivalent_usd_before": 9.874267584000455,
+  "cumulative_limits": {
+    "max_requests": 22000,
+    "max_cost_usd": 50,
+    "max_tokens": 1000000000
+  },
+  "remaining_phase_limits": {
+    "max_requests": 17302,
+    "max_wall_seconds": 86400,
+    "max_cost_usd": 40.12573241599954,
+    "max_tokens": 811287302,
+    "max_tokens_per_request": 33562624,
+    "max_invalid_attempts": 1,
+    "input_usd_per_million": 0.3,
+    "cached_input_usd_per_million": 0.006,
+    "output_usd_per_million": 1.2
+  },
+  "deadline_epoch": 1792507635.4836779,
+  "no_resampling": true,
+  "automatic_d2": false,
+  "scientific_scope": "cross_actor_exploratory"
+}

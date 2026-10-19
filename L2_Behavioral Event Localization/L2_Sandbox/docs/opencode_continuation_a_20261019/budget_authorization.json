@@ -1,0 +1,21 @@
+{
+  "schema": "opencode-d1-budget-authorization-v1",
+  "execution_authorized": true,
+  "scope": "cross_actor_D1_budget_extension",
+  "source": "direct_user_message_20261019",
+  "exact_user_text": "A",
+  "option_text": "Continue untouched branches in continuation_03; cumulative 22000 HTTP attempts, 50 USD usage-equivalent; finite additional phase at most 24h.",
+  "option_source_attachment_sha256": "5189cc3a239ee64d7d61d12992c1a95970bb03e12585a90e52b1f3bd9fa2cfe9",
+  "predecessor_plan_sha256": "59a5d20253420c8b76e2af8a7e883cc1321d436bc75a0316f84673baa4dad4f4",
+  "cumulative_limits": {
+    "max_requests": 22000,
+    "max_tokens": 1000000000,
+    "max_cost_usd": 50.0
+  },
+  "phase_started_at_epoch": 1792421235.4836779,
+  "deadline_epoch": 1792507635.4836779,
+  "max_wall_seconds": 86400,
+  "no_resampling": true,
+  "automatic_d2": false,
+  "artifact_sha256": "0a8e30e8a7e2615edd7552bc7f4f2962509f0cdcd858059b96be583f1d08fb0b"
+}

@@ -1,0 +1,13 @@
+{
+  "server": "aml-b",
+  "environment": "agent-diagnosis-d0-py312",
+  "gpu_devices_used": 0,
+  "cpu_thread_cap": 4,
+  "passed": 110,
+  "skipped": 0,
+  "duration_seconds": 16.48,
+  "command": "python -m pytest tests/test_opencode_budget_authorization.py tests/test_opencode_multigeneration.py tests/test_opencode_d1_runtime.py tests/test_opencode_admission.py -q",
+  "stdout_tail": "110 passed in 16.48s",
+  "independent_review": "no material findings; external storage preflight required and recorded separately",
+  "source_commit": "89d4c26"
+}
