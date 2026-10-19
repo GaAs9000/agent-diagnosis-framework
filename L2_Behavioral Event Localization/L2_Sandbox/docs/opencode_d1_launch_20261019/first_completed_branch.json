@@ -1,0 +1,34 @@
+{
+  "valid_attempt": true,
+  "status": "completed",
+  "outcome_score": 0.0,
+  "branch_episode_id": "ep_fdc3740c2caa41b196a96552248c643e",
+  "package_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_d1_cross_actor_20261019/execution/branches/a27bfa77234cf81e028997ae67f9f9864b039b917a4a034e04c9a76e5eab47c3",
+  "package_index_sha256": "6b6ad8939501edfc6922565cdf957f52c8e96466da95d11b5f41812dbeca918c",
+  "official_grade_sha256": "afb8c9396b61882418487be0a00bd7208ea2f5d1a634a13535ab6f7978956ff5",
+  "model_transition_sha256": "cd53d1aecc7331557ca9a44eb89de0c7bccd94637f8a2f129a0b11f8676d828e",
+  "requests_used": 6,
+  "simulated_offline": false,
+  "plan_sha256": "08d86ad52ee6b886d1293b461b7a1355086d5b2be70cc13881db54e7ac524ee9",
+  "unit_id": "officeval_010.r01::ITEM::0",
+  "arm": "R_single",
+  "replicate": 0,
+  "anchor_k": 29,
+  "remaining_budget": 6,
+  "message_sha256": "7ef9208f87532a8a1665cc23a4ca70919da876472e2fd26501556133a4d0cf84",
+  "parent_identity": {
+    "parent_episode_id": "ep_37cb8770a9244cd38554c6a5e1cdf2e3",
+    "parent_index_sha256": "24f667e8fa8c179fd1c248938db6fa89d09abcb10b184464a540666718034d3a",
+    "checkpoint_sha256": "4a6b6f54d82a54bbec263645667481eca5b0c95bf62d2331d85ac7c57b3e85a5",
+    "config_sha256": "3fdcc4021d6cbce7e01f135c5b829f6132b48b563b835e62e54bf1d4ccaa503f",
+    "manifest_sha256": "9de7e5ccaa4145ad8617ed20bb9b1a8a88ba2e424ea8aca213d1f767d0056fd5"
+  },
+  "endpoint": {
+    "unit_level": "rubric_item",
+    "defect_name": "“技术路线图”文本位于页面顶端，距离页面上边距 1.8-2.5cm"
+  },
+  "passing_control": false,
+  "target_model_sha256": "9507f0266dac60a1667c3d720889b3006fca619b2db4e1a46218e05262c94616",
+  "branch_id": "a27bfa77234cf81e028997ae67f9f9864b039b917a4a034e04c9a76e5eab47c3",
+  "artifact_sha256": "12ed7b47f1b94116fd547e9beed1373922853988926a07db1ea680ebb8bb3961"
+}

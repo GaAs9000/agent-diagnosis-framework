@@ -1,0 +1,10 @@
+{
+  "actual_execution_plan_sha256": "08d86ad52ee6b886d1293b461b7a1355086d5b2be70cc13881db54e7ac524ee9",
+  "path_mapping_for_CPU_validation_only": true,
+  "validated_job_count": 2282,
+  "validated_distinct_unit_arm_configs": 163,
+  "actor_requests": 0,
+  "tool_calls": 0,
+  "all_parent_checkpoint_config_and_inherited_budget_checks": true,
+  "artifact_sha256": "7612711fa5bc5016bf4482cc2010b0bb0683299147f8a667360e9d6168b29c5a"
+}

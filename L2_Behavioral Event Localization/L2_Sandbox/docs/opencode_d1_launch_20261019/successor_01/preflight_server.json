@@ -1,0 +1,14 @@
+{
+  "actual_execution_plan_sha256": "24962056b95b231005e303c346922eae36b71deef406fbbaf0530ed43ac96dd1",
+  "path_mapping_for_CPU_validation_only": true,
+  "validated_job_count": 2282,
+  "validated_distinct_unit_arm_configs": 163,
+  "actor_requests": 0,
+  "tool_calls": 0,
+  "all_parent_checkpoint_config_and_inherited_budget_checks": true,
+  "projection_changed_unit_arm_configs": 85,
+  "reused_predecessor_completed": 3,
+  "retained_predecessor_invalid": 3,
+  "predecessor_wire_requests_proven_unchanged": 18,
+  "artifact_sha256": "706c49d8617b9a282870ab1a84a40f6bfb4ffcd267f03556dfe0bde5952fb2f7"
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "cross-actor-d1-execution-result-v1",
+  "plan_sha256": "08d86ad52ee6b886d1293b461b7a1355086d5b2be70cc13881db54e7ac524ee9",
+  "status": "incomplete",
+  "planned_branches": 2282,
+  "completed_branches": 3,
+  "invalid_or_incomplete_branches": 3,
+  "pending_branches": 2276,
+  "requests": 25,
+  "tokens": 1728388,
+  "cost_usd": 0.3745548960000008,
+  "invalid_attempts": 1,
+  "stop_reason": "invalid_attempt",
+  "http_send_count": 25,
+  "d2_gate_open": false,
+  "scientific_scope": "cross_actor_exploratory",
+  "simulated_offline": false,
+  "artifact_sha256": "9f3db75eef966107309b958a8a4f9aa9e2d0a8655ba05d13ad9245aafb1c8e43"
+}
