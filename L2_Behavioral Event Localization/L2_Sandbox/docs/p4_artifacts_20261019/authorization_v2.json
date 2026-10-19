@@ -1,0 +1,25 @@
+{
+  "schema": "bounded-mechanism-v2-adoption-authorization-v1",
+  "authorization_source": "direct_user_request_attachment",
+  "request_attachment": {
+    "path": "user_request.txt",
+    "sha256": "7e3ff9daf1555f10116258bfa6c945d41c68e34929f80440c7bb511ab623b89f"
+  },
+  "original_attachment_path": "/Users/jiashen/.codex/attachments/b04617f6-f407-408b-b9da-bb5dc8968024/已粘贴的文本.txt",
+  "standing_instruction": "你有推荐的方案就不需要我确认了",
+  "interpretation": "User supplied the attached request for v2 adoption, D0 freeze, and D1 plan-only. This records the requested operation and source; it does not fabricate a human signature or a preregistered v2 decision.",
+  "adoption_scope": {
+    "policy": "bounded-mechanism-contract-v2",
+    "post_hoc_forensic_extension": true,
+    "execution": "D0_freeze_and_D1_plan_only",
+    "actor_requests": 0,
+    "analyst_requests": 0
+  },
+  "contract": {
+    "path": "contract_v2.json",
+    "sha256": "27c96566495e0a4751a53ab8141a527e0df0a90003d228acdeb7a9b2deb13b71"
+  },
+  "preserve_v1_original_decision": true,
+  "statistical_equivalence": "not_established",
+  "outcome_distribution_equivalence": "not_established"
+}

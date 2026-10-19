@@ -1,0 +1,50 @@
+{
+  "schema": "bounded-mechanism-contract-policy-v2",
+  "policy": "bounded-mechanism-contract-v2",
+  "post_hoc_forensic_extension": true,
+  "derived_from_policy": "bounded-mechanism-contract-v1",
+  "preserve_v1_original_decision": true,
+  "v1_decision": "blocked_unexplained_difference",
+  "reuse_existing_evidence_only": true,
+  "requires_independent_raw_reaudit": true,
+  "additional_tool_replays": 0,
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "exemptions": {
+    "ls_runtime_metadata_v2": {
+      "allowed": [
+        "uid",
+        "gid",
+        "mtime",
+        "directory_total_allocated_blocks"
+      ],
+      "exact": [
+        "entry_count",
+        "mode",
+        "links",
+        "logical_size",
+        "name"
+      ],
+      "requires_after_state_exact": true,
+      "requires_other_observation_fields_exact": true,
+      "forms": [
+        "directory_ls_la",
+        "single_file_ls_la",
+        "cd_then_ls_la",
+        "cp_then_ls_la"
+      ]
+    },
+    "python_object_repr_address_v1": {
+      "allowed": [
+        "hexadecimal_address_in_default_python_object_repr"
+      ],
+      "requires_after_state_exact": true,
+      "requires_full_stdout_stderr_and_other_observation_fields_exact_except_named_addresses": true
+    }
+  },
+  "inherit_v1_docx_zip_timestamp_exception_only": true,
+  "raw_tool_output_byte_equivalence": false,
+  "statistical_equivalence": "not_established",
+  "outcome_distribution_equivalence": "not_established",
+  "current_execution_scope": "D0_freeze_and_D1_plan_only"
+}

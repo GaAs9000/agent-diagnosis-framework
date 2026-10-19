@@ -1,0 +1,111 @@
+{
+  "binding": {
+    "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/p4_contract_v2_20261019/measurement_readiness_v2.json",
+    "sha256": "051397db07cdb3afc584cd0ca937960f1e355b056297814a0b653eb2ddf76981",
+    "passed": true,
+    "gates": {
+      "V3-G1": true,
+      "V3-G2": true,
+      "V3-G3": true,
+      "V3-G4": true
+    },
+    "schema": "prospective_measurement_readiness_v2",
+    "policy": "bounded-mechanism-contract-v2",
+    "post_hoc_forensic_extension": true,
+    "statistical_equivalence": "not_established",
+    "outcome_distribution_equivalence": "not_established",
+    "raw_tool_byte_equivalence": false,
+    "measurement_readiness": true,
+    "execution_authorized": false,
+    "execution_readiness": false,
+    "current_execution_scope": "D0_freeze_and_D1_plan_only",
+    "evidence_coverage": {
+      "slots": 45,
+      "requests": 965,
+      "scope": "bounded-mechanism-contract-v2"
+    },
+    "refs": {
+      "collection_plan": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/execution/executed_plan.json",
+        "sha256": "298bcd4f98fdde206021ad94bd50c690f360665bc7e429beb48f4113606861f9"
+      },
+      "prospective_freeze": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/prospective_freeze.json",
+        "sha256": "77a63041dff3f327ef3d32d89c71f1b4476312d2ddc6dbebe748affa314e84fc"
+      },
+      "cohort": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/cohort.json",
+        "sha256": "aa6633d9663f98a5bd654ad9d20c4526dd138b7d7096fe0e57aa7a6531436680"
+      },
+      "g1": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/p3_recovery_formal_20261019/g1_census.json",
+        "sha256": "d500752aa6dda3f9c9099d5d3e06a23c47f097f8090945f5b608b336653dc316"
+      },
+      "g2": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_tool_replays_shared_validator/result.json",
+        "sha256": "1fd03926f0b98ea35a9d4c862e9b18115810d3e182201cdd66e8933ce52e3e75"
+      },
+      "g2_plan": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_shared_validator_plan.json",
+        "sha256": "afbfe008944b9a936eef2281ebc616c12835b8b28eb8b574dc2e06b47fc5e028"
+      },
+      "g4": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/p3_g4_post_audit_20261019/result.json",
+        "sha256": "32922718dc39ffbf170191073c2eb65a02991dfc514a507c819b6b6820628872"
+      },
+      "e1_manifest": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/e1/manifest.json",
+        "sha256": "cd5feed43ac87441b16c54fe7c6b8c592944a0aafb4ae54bb6dd67a0d8765a0e"
+      },
+      "e1_verification": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/e1_verification_20261019.json",
+        "sha256": "87d8d7cfed8fece0a0145a2348273db1f36edb51181f4048668b850e51480bf6"
+      },
+      "authorization": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/mini_contract_authorization.json",
+        "sha256": "f99d1bfa2cfbeaa5fbd48ca2ac7372de41795581155cf9458520c8a839da56e4"
+      },
+      "v2_contract": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/p4_contract_v2_20261019/contract_v2.json",
+        "sha256": "27c96566495e0a4751a53ab8141a527e0df0a90003d228acdeb7a9b2deb13b71"
+      },
+      "v2_authorization": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/p4_contract_v2_20261019/authorization_v2.json",
+        "sha256": "cace7eb16871c6bc6e2c615b00a923834859bf7bd89b8c5fbf9b1d42777279fe"
+      },
+      "g2_v2": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/p4_contract_v2_20261019/v2_reaudit.json",
+        "sha256": "a21bfeee803b8cc8c427de42e3a4ae042ebca27a1ab179069cfb290cc445eb94"
+      },
+      "g2_forensics": {
+        "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_runtime_variance_forensics_final_20261019.json",
+        "sha256": "c92268436f5d70800a3c06654d2f6301ecbd881eb1f8a7345883750f2de6bf41"
+      }
+    },
+    "request_attachment": {
+      "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/p4_contract_v2_20261019/user_request.txt",
+      "sha256": "7e3ff9daf1555f10116258bfa6c945d41c68e34929f80440c7bb511ab623b89f"
+    },
+    "human_review_policy": "waived_by_user",
+    "human_review_status": "waived_by_user",
+    "human_review_authorization": {
+      "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/configs/human_review_policy_20261018.json",
+      "sha256": "54bed32a112cb01e6a907f63dde914103fd930c2bee13468cd5520116ce53942"
+    },
+    "g2_v2_verifier": {
+      "path": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/scripts/reclassify_prospective_v2.py",
+      "sha256": "b6342335a02b36869dd9b2193246b30505388add825b59b8a4e0986610ab5434"
+    },
+    "g2_v2_recomputed": {
+      "tool_attempts": 102,
+      "unexplained": 0,
+      "classification_counts": {
+        "exact": 56,
+        "declared_runtime_variance_v1": 24,
+        "ls_runtime_metadata_v2": 20,
+        "python_object_repr_address_v1": 2
+      }
+    }
+  },
+  "errors": []
+}

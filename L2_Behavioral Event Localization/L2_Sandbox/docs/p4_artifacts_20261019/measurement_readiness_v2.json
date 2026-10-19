@@ -1,0 +1,87 @@
+{
+  "schema": "prospective_measurement_readiness_v2",
+  "policy": "bounded-mechanism-contract-v2",
+  "refs": {
+    "collection_plan": {
+      "path": "../a_plus_i_execute_20261018/dev45_batch/execution/executed_plan.json",
+      "sha256": "298bcd4f98fdde206021ad94bd50c690f360665bc7e429beb48f4113606861f9"
+    },
+    "prospective_freeze": {
+      "path": "../a_plus_i_execute_20261018/prospective_freeze.json",
+      "sha256": "77a63041dff3f327ef3d32d89c71f1b4476312d2ddc6dbebe748affa314e84fc"
+    },
+    "cohort": {
+      "path": "../a_plus_i_execute_20261018/dev45_batch/cohort.json",
+      "sha256": "aa6633d9663f98a5bd654ad9d20c4526dd138b7d7096fe0e57aa7a6531436680"
+    },
+    "g1": {
+      "path": "../a_plus_i_execute_20261018/p3/p3_recovery_formal_20261019/g1_census.json",
+      "sha256": "d500752aa6dda3f9c9099d5d3e06a23c47f097f8090945f5b608b336653dc316"
+    },
+    "g2": {
+      "path": "../a_plus_i_execute_20261018/p3/g2_tool_replays_shared_validator/result.json",
+      "sha256": "1fd03926f0b98ea35a9d4c862e9b18115810d3e182201cdd66e8933ce52e3e75"
+    },
+    "g2_plan": {
+      "path": "../a_plus_i_execute_20261018/p3/g2_shared_validator_plan.json",
+      "sha256": "afbfe008944b9a936eef2281ebc616c12835b8b28eb8b574dc2e06b47fc5e028"
+    },
+    "g4": {
+      "path": "../a_plus_i_execute_20261018/p3/p3_g4_post_audit_20261019/result.json",
+      "sha256": "32922718dc39ffbf170191073c2eb65a02991dfc514a507c819b6b6820628872"
+    },
+    "e1_manifest": {
+      "path": "../a_plus_i_execute_20261018/p3/e1/manifest.json",
+      "sha256": "cd5feed43ac87441b16c54fe7c6b8c592944a0aafb4ae54bb6dd67a0d8765a0e"
+    },
+    "e1_verification": {
+      "path": "../a_plus_i_execute_20261018/p3/e1_verification_20261019.json",
+      "sha256": "87d8d7cfed8fece0a0145a2348273db1f36edb51181f4048668b850e51480bf6"
+    },
+    "authorization": {
+      "path": "../a_plus_i_execute_20261018/mini_contract_authorization.json",
+      "sha256": "f99d1bfa2cfbeaa5fbd48ca2ac7372de41795581155cf9458520c8a839da56e4"
+    },
+    "g2_reclassification": {
+      "path": "../a_plus_i_execute_20261018/p3/g2_tool_replays_shared_validator/reclassification_sidecar.json",
+      "sha256": "a423267fc437269d1782ccd7c8c52c84a4896463396028377f5d79f9ca542256"
+    },
+    "v2_contract": {
+      "path": "contract_v2.json",
+      "sha256": "27c96566495e0a4751a53ab8141a527e0df0a90003d228acdeb7a9b2deb13b71"
+    },
+    "v2_authorization": {
+      "path": "authorization_v2.json",
+      "sha256": "cace7eb16871c6bc6e2c615b00a923834859bf7bd89b8c5fbf9b1d42777279fe"
+    },
+    "g2_v2": {
+      "path": "v2_reaudit.json",
+      "sha256": "a21bfeee803b8cc8c427de42e3a4ae042ebca27a1ab179069cfb290cc445eb94"
+    },
+    "g2_forensics": {
+      "path": "../a_plus_i_execute_20261018/p3/g2_runtime_variance_forensics_final_20261019.json",
+      "sha256": "c92268436f5d70800a3c06654d2f6301ecbd881eb1f8a7345883750f2de6bf41"
+    }
+  },
+  "human_review_policy": "waived_by_user",
+  "human_review_authorization": {
+    "path": "../../configs/human_review_policy_20261018.json",
+    "sha256": "54bed32a112cb01e6a907f63dde914103fd930c2bee13468cd5520116ce53942"
+  },
+  "stage": "P4 versioned post-hoc metadata contract; D0 freeze and D1 plan-only",
+  "forensic_evidence": {
+    "path": "g2_runtime_variance_forensics_final_20261019.json",
+    "sha256": "c92268436f5d70800a3c06654d2f6301ecbd881eb1f8a7345883750f2de6bf41"
+  },
+  "post_hoc_forensic_extension": true,
+  "statistical_equivalence": "not_established",
+  "outcome_distribution_equivalence": "not_established",
+  "original_v1_audit": {
+    "path": "../a_plus_i_execute_20261018/p3/measurement_readiness_final.json",
+    "sha256": "54e435c03958b74102d1f99ce4a50692d273bb95c9f20317b27dddc350483c59"
+  },
+  "original_v1_binding": {
+    "path": "../a_plus_i_execute_20261018/p3/measurement_binding_final.json",
+    "sha256": "1bf49f6532316024d76ffe00487f7fe46060e5006aa13e384a27a47d83370a59"
+  }
+}
