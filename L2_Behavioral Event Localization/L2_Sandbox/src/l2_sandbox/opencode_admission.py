@@ -77,7 +77,8 @@ class Admission:
                               expected_model=expected_model, started_at=time.time(),
                               absolute_deadline=absolute_deadline,
                               accounting_mode='usage_equivalent_peak_rates_not_billed_cash',
-                              requests=0, tokens=0, cost_usd=0.0, invalid_attempts=0, sends=[])
+                              requests=0, tokens=0, cost_usd=0.0, invalid_attempts=0,
+                              branch_invalid=0, fatal_invalid=0, failures=[], sends=[])
         if (absolute_deadline is not None
                 and absolute_deadline > self.state['started_at'] + 86400):
             raise ValueError('absolute deadline exceeds batch hard wall limit')
@@ -228,10 +229,26 @@ class Admission:
             self._thread.pending = None
             self._save()
 
-    def invalid(self):
+    def invalid(self, *, failure_scope='global', source='unclassified', phase='execution'):
+        # Fixed codes only; exception/response text must never enter the ledger.
+        if failure_scope not in ('branch', 'global'):
+            raise ValueError('unknown failure scope')
+        if source not in ('unclassified', 'model_protocol', 'model_transport', 'scorer', 'branch_wall_time',
+                          'integrity_or_unclassified', 'global_admission'):
+            raise ValueError('unknown failure source')
+        if phase not in ('admission', 'execution', 'verification', 'scoring'):
+            raise ValueError('unknown failure phase')
         with self._lock:
-            self.state['invalid_attempts'] += 1
-            self._stop('invalid_attempt')
+            existing_reason = self.exhaustion_reason()
+            key = 'branch_invalid' if failure_scope == 'branch' else 'fatal_invalid'
+            self.state[key] = self.state.get(key, 0) + 1
+            self.state.setdefault('failures', []).append(dict(
+                failure_scope=failure_scope, error_source=source, failure_phase=phase))
+            if failure_scope == 'global':
+                self.state['invalid_attempts'] += 1
+                self._stop(existing_reason or 'invalid_attempt')
+            else:
+                self._save()
 
 
 @contextmanager

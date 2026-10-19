@@ -31,7 +31,7 @@ def logical(path):
     return str(LOGICAL / Path(path).resolve().relative_to(ROOT))
 
 
-def build(phase: Path, predecessor: Path | None = None):
+def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_tools: bool = False):
     from l2_sandbox.opencode_admission import DEFAULT_CAPS
     phase = phase.resolve()
     old = L2 / 'validation/p4_contract_v2_20261019'
@@ -73,6 +73,8 @@ def build(phase: Path, predecessor: Path | None = None):
     model['max_response_bytes'] = 16777216
     if predecessor is not None:
         model.setdefault('options', {})['history_projection_policy']='group_tool_results_before_images_v1'
+    if recover_truncated_tools:
+        model.setdefault('options', {})['truncated_tool_call_policy']='output_limit_error_feedback_v1'
     if (model['adapter'], model['provider'], model['model']) != ('opencode-chat','opencode-go','deepseek-v4.1-flash'):
         raise ValueError('unexpected continuation actor')
     bound[logical(model_template)] = file_digest(model_template)
@@ -120,6 +122,26 @@ def build(phase: Path, predecessor: Path | None = None):
         archive_previous=phase/'historical_predecessor_sources.tar'
         bound[logical(archive_previous)]=file_digest(archive_previous)
         code_substitutions={}
+        # Preserve all ancestor evidence and archived source identities. Active
+        # code is allowed to differ only when exact historical source bytes are
+        # present in one of the separately bound archives.
+        for name, expected in previous['bound_files'].items():
+            current=mapped(name)
+            if not current.is_file() or current.is_symlink():
+                raise ValueError('missing predecessor bound input: '+str(current))
+            if file_digest(current)!=expected:
+                relative=current.relative_to(ROOT)
+                if not any(relative.is_relative_to(prefix) for prefix in (
+                    Path('L1_sandbox/C3_Experimental_Sandbox/src'),
+                    Path('L2_Behavioral Event Localization/L2_Sandbox/src'),
+                    Path('L2_Behavioral Event Localization/L2_Sandbox/scripts'),Path('scripts'))):
+                    raise ValueError('predecessor evidence changed: '+str(current))
+                candidates=[phase/'historical_predecessor_sources'/relative,historical/relative]
+                current=next((p for p in candidates if p.is_file() and not p.is_symlink()
+                              and file_digest(p)==expected),None)
+                if current is None:
+                    raise ValueError('predecessor historical source unavailable: '+str(relative))
+            bound[logical(current)]=expected
         for name, expected in previous['source_files'].items():
             current=mapped(name)
             if file_digest(current)!=expected:
@@ -130,7 +152,7 @@ def build(phase: Path, predecessor: Path | None = None):
                 current=prior
             bound[logical(current)]=expected
         predecessor_doc={**refs,'receipt_directory':logical(receipt_dir),
-                         'source_commit':'56d2de1fe37e8058b7af59b526587639ea843bc3',
+                         'source_commit':read_json(predecessor/'supervisor_started.json')['source_commit'],
                          'source_substitutions':code_substitutions}
     payload={
         'schema':'cross-actor-d1-execution-v1',
@@ -152,6 +174,7 @@ def build(phase: Path, predecessor: Path | None = None):
         'invalid_policy':'stop first invalid attempt; never replace parent or branch sample',
         'execution_location':'remote OpenCode inference and aml-b native validation; existing local ARM64 Docker runtime exception',
         'automatic_d2':False,
+        'branch_failure_policy':'verified_branch_errors_are_local_v1',
     }
     if predecessor_doc is not None:
         payload.update(predecessor=predecessor_doc,deadline_epoch=deadline,
@@ -193,10 +216,27 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase',type=Path,required=True)
     parser.add_argument('--execute',action='store_true')
+    parser.add_argument('--check-plan',action='store_true',help='Verify frozen inputs and retained attempts without admission or model calls')
     parser.add_argument('--predecessor',type=Path)
+    parser.add_argument('--recover-truncated-tools',action='store_true')
     args=parser.parse_args()
+    if args.execute and args.check_plan:
+        parser.error('choose --execute or --check-plan')
+    if args.check_plan:
+        from l2_sandbox.opencode_d1_runtime import _jobs, _predecessor_seeds
+        plan=read_json(args.phase/'execution_plan.json')
+        jobs=_jobs(plan,args.phase/'execution')
+        retained=_predecessor_seeds(plan,jobs,False)
+        write_json(args.phase/'integrity_preflight.json',seal({
+            'schema':'opencode-d1-integrity-preflight-v1','plan_sha256':plan['artifact_sha256'],
+            'planned_jobs':len(jobs),'retained':retained,
+            'unstarted_jobs':sum('predecessor_seed' not in job for job in jobs),
+            'actor_requests':0,'tool_calls':0,'scorer_invocations':0,
+            'check_scope':'readonly source/package/receipt and already-recorded score integrity; no experiment execution'}))
+        print(json.dumps({'planned_jobs':len(jobs),'retained':retained},ensure_ascii=False))
+        return
     if not args.execute:
-        build(args.phase,args.predecessor)
+        build(args.phase,args.predecessor,recover_truncated_tools=args.recover_truncated_tools)
         return
     from l2_sandbox.opencode_d1_runtime import execute
     plan=read_json(args.phase / 'execution_plan.json')

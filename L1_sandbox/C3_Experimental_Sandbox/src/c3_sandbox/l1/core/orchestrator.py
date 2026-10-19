@@ -21,7 +21,12 @@ from .config import validate
 from ..storage import canonical, digest, file_digest, regular_file, read_json, write_json, write_bytes, confined, utc_now, copy_file
 from ..recording.state import StateStore, restore
 from ..evidence.live import Journal, seal, verify, validate_snapshot
-from ..runtime.tools import PI_TOOLS, TOOLS, active_harness, tools_for_config, validate_call
+from ..runtime.tools import PI_TOOLS, TOOLS, active_harness, tools_for_config, validate_call, _tool_error_result
+
+OUTPUT_LIMIT_FEEDBACK = (
+    'Model output reached its token limit. The response may be incomplete; '
+    'no tool from that response was executed. Submit smaller, complete tool calls.'
+)
 
 SYSTEM = '''You are the tested agent in an execution-and-evidence sandbox. Complete the user's task using the supplied native tools. Original input files are in /workspace/input. Put ONLY final deliverables in /workspace/submission. Preserve required filenames unless the task says otherwise. Do not put reference inputs into submission unless requested. You may use /workspace for scripts and intermediate files. Shell calls run in fresh Linux containers without network. Only /workspace persists; working directory, environment variables, /tmp and background processes do not persist. Do not claim to have run a tool in text: use actual native tool calls. No scoring rubrics or grader are accessible to you.'''
 
@@ -965,6 +970,12 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     'assurance':'request_body_accepted_by_endpoint_not_attestation_of_attention'},
                     links={'request':request_event['event_id'],'result':observation['result_event_id']})
             pending=[]
+            output_feedback_delivered=conversation.pop('_output_limit_feedback_pending',[])
+            for feedback in output_feedback_delivered:
+                journal.emit('model.output_limit_feedback_delivered',{
+                    'request_id':rid,'source':feedback,
+                    'assurance':'request_body_accepted_by_endpoint_not_attestation_of_attention'},
+                    links={'request':request_event['event_id']})
             reply=model.parse(receipt.body,rid)
             journal.emit('model.parsed',{'request_id':rid,'usage':reply.usage,'reported_model_version':reply.model_version,
                 'finish_reason':reply.finish_reason,'text':reply.text},links={'response':response_event['event_id']})
@@ -978,7 +989,23 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     raise EvidenceError('Consumed response cumulative request/token budget differs from parent')
                 journal.emit('response.prefix_accounted',{'model_requests':request_count,'known_total_tokens':token_count,
                     'source_call_id':lineage['response_use']['source_call_id'],'new_http_attempts':0})
-            if not reply.calls:
+            output_limited=(reply.finish_reason=='length' and native_policy
+                and config['model']['adapter']=='opencode-chat'
+                and config['model'].get('options',{}).get('truncated_tool_call_policy')=='output_limit_error_feedback_v1')
+            if output_feedback_delivered:
+                journal.emit('model.response_after_output_limit',{'request_id':rid,
+                    'prior_feedback':output_feedback_delivered,'finish_reason':reply.finish_reason,
+                    'subsequent_calls':[{'name':c.name,'arguments':c.arguments} for c in reply.calls],
+                    'interpretation':'observed_sequence_only_no_causal_attribution'},
+                    links={'response':response_event['event_id']})
+            if output_limited:
+                limit_event=journal.emit('model.output_limit_feedback_created',{
+                    'request_id':rid,'finish_reason':reply.finish_reason,
+                    'policy':'output_limit_error_feedback_v1','feedback':OUTPUT_LIMIT_FEEDBACK,
+                    'call_ids':[c.call_id for c in reply.calls],
+                    'execution_policy':'reject_all_calls_in_length_response_without_repair'},
+                    links={'response':response_event['event_id']})
+            if not reply.calls and not output_limited:
                 conversation=model.accept(conversation,reply,[])
                 status['termination']='assistant_finished'; break
             if validation_errors_pending:
@@ -1000,7 +1027,12 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                         journal.emit('tool.skipped',{'call_id':skipped.call_id,'reason':reason},links={'call':call_events[skipped.call_id]['event_id']})
                     status['termination']=reason; interrupted_batch=True; break
                 validation=None; execution_call=call
-                if native_policy:
+                if output_limited:
+                    tool_count+=1
+                    journal.emit('tool.output_limit_rejected',{'call_id':call.call_id,
+                        'policy':'output_limit_error_feedback_v1','arguments_unchanged':True,
+                        'tool_executed':False},links={'call':call_events[call.call_id]['event_id']})
+                elif native_policy:
                     tool_count+=1
                     if context_source is not None:
                         journal.emit('tool.charged',{'call_id':call.call_id,'tool_calls_including_parent':tool_count},
@@ -1031,16 +1063,18 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
                     if validation['ok']:
                         execution_call=NativeValidatedCall(call.call_id,call.name,validation['validated_arguments'],call.native_id)
                 try:
-                    if not native_policy: validate_call(call,config['model']['supports_images'],harness=active_harness(config))
+                    if not native_policy and not output_limited: validate_call(call,config['model']['supports_images'],harness=active_harness(config))
                 except ProtocolError:
                     for rejected in reply.calls[index:]:
                         journal.emit('tool.rejected',{'call_id':rejected.call_id,'reason':'protocol_error'},links={'call':call_events[rejected.call_id]['event_id']})
                     raise
-                if not native_policy: tool_count+=1
-                if validation is None or validation['ok']:
+                if not native_policy and not output_limited: tool_count+=1
+                if not output_limited and (validation is None or validation['ok']):
                     journal.emit('tool.started',{'call_id':call.call_id,'before_snapshot_id':last_snapshot['snapshot_id']},links={'call':call_events[call.call_id]['event_id']})
                 try:
-                    if validation is not None and not validation['ok']:
+                    if output_limited:
+                        actual=_tool_error_result(OUTPUT_LIMIT_FEEDBACK,'opencode_output_limit_v1',utc_now())
+                    elif validation is not None and not validation['ok']:
                         actual=Result(copy.deepcopy(validation['native_result']),
                             provenance={'pi_native_validation_error':True, 'validation':validation['provenance'], 'quiescent':True})
                     else:
@@ -1079,6 +1113,14 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             if interrupted_batch: break
             usage_messages = conversation.get('messages')
             conversation=model.accept(conversation,reply,results)
+            if output_limited:
+                if not reply.calls:
+                    conversation=_inject_user_intervention(conversation,OUTPUT_LIMIT_FEEDBACK)
+                conversation.setdefault('_output_limit_feedback_pending',[]).append({
+                    'source_request_id':rid,'source_event_id':limit_event['event_id'],
+                    'feedback_sha256':digest(OUTPUT_LIMIT_FEEDBACK),
+                    'delivery_role':'tool' if reply.calls else 'user',
+                    'call_ids':[c.call_id for c in reply.calls]})
             context_usage = usage.get('prompt_tokens', usage.get('promptTokenCount'))
             context_usage_kind = 'prompt_tokens'
             if type(context_usage) is not int or context_usage <= 0:

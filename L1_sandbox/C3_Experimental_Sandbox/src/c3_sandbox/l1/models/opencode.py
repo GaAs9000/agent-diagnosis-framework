@@ -17,6 +17,7 @@ from ..storage import digest
 
 
 HISTORY_PROJECTION_POLICY = 'group_tool_results_before_images_v1'
+TRUNCATED_TOOL_CALL_POLICY = 'output_limit_error_feedback_v1'
 
 
 def _synthetic_image_id(message):
@@ -136,6 +137,8 @@ class OpenCodeChatBackend:
         policy=config.get('history_projection_policy')
         if policy is not None and policy != HISTORY_PROJECTION_POLICY:
             raise ConfigurationError('Unknown OpenCode chat history_projection_policy')
+        if config.get('truncated_tool_call_policy') not in (None, TRUNCATED_TOOL_CALL_POLICY):
+            raise ConfigurationError('Unknown OpenCode chat truncated_tool_call_policy')
 
     def identity(self):
         return {
@@ -195,6 +198,21 @@ class OpenCodeChatBackend:
         ), self.config.get('expected_reported_model'))
         if projection is not None:
             result.metadata['history_projection']=copy.deepcopy(projection)
+        if result.status is not None and 200 <= result.status < 300:
+            try:
+                reply = self.parse(result.body, 'metadata')
+            except ProtocolError:
+                pass
+            else:
+                result.metadata['native_finish_reason'] = reply.finish_reason
+                if reply.finish_reason == 'length':
+                    result.metadata['truncated_tool_call_feedback'] = {
+                        'policy': TRUNCATED_TOOL_CALL_POLICY,
+                        'raw_arguments_retained_call_ids': [call.native_id for call, raw in
+                            zip(reply.calls, reply.native_message.get('tool_calls') or [])
+                            if isinstance(call.arguments, str)
+                            and call.arguments == raw['function'].get('arguments')],
+                    }
         return result
 
     def parse(self, body, request_id):
@@ -209,6 +227,10 @@ class OpenCodeChatBackend:
         message = c.get('message')
         if not isinstance(message, dict) or message.get('role') != 'assistant':
             raise ProtocolError('Missing assistant message')
+        finish = c.get('finish_reason')
+        length_feedback = (finish == 'length'
+            and self.config.get('truncated_tool_call_policy') == TRUNCATED_TOOL_CALL_POLICY
+            and getattr(self, 'native_pi_validation', False) is True)
         calls = []
         seen = set()
         raw_calls = message.get('tool_calls') or []
@@ -222,14 +244,21 @@ class OpenCodeChatBackend:
             if not isinstance(native_id, str) or not native_id or native_id in seen:
                 raise ProtocolError('Missing/duplicate tool_call_id')
             seen.add(native_id)
-            if not isinstance(fn.get('name'), str):
+            if not isinstance(fn.get('name'), str) or not fn['name']:
                 raise ProtocolError('Invalid function name')
             raw_args = fn.get('arguments', '{}')
-            args = (parse_json(raw_args.encode('utf-8'), require_object=not getattr(self, 'native_pi_validation', False)) if isinstance(raw_args, str)
-                    else _arguments(raw_args, allow_any=getattr(self, 'native_pi_validation', False)))
+            try:
+                args = (parse_json(raw_args.encode('utf-8'), require_object=not getattr(self, 'native_pi_validation', False)) if isinstance(raw_args, str)
+                        else _arguments(raw_args, allow_any=getattr(self, 'native_pi_validation', False)))
+            except ProtocolError:
+                if not length_feedback or not isinstance(raw_args, str):
+                    raise
+                # Preserve the exact incomplete wire string. The orchestrator
+                # supplies output-limit feedback without executing length-stop
+                # calls; never repair JSON or decode an executable prefix.
+                args = raw_args
             calls.append(Call(f'{request_id}:c{index}', fn['name'], args, native_id))
-        finish = c.get('finish_reason')
-        if finish not in ('stop', 'tool_calls'):
+        if finish not in ('stop', 'tool_calls') and not length_feedback:
             raise ProtocolError('Non-complete chat choice: ' + str(finish))
         if not calls and finish == 'tool_calls':
             raise ProtocolError('tool_calls/finish_reason mismatch')

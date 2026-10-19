@@ -179,6 +179,9 @@ def test_cap_stops_new_admission_and_preserves_inflight_charges(plan, tmp_path, 
     assert result['invalid_attempts'] == 0
     assert result['status'] == 'incomplete'
     assert result['tokens'] == 4 * (1_048_576 + 8192)
+    assert result['stop_reason'] == 'http_attempt_cap'
+    assert result['execution_finished'] is True
+    assert result['schedule_complete'] is False
 
 
 def test_uncertain_package_never_retried(plan, tmp_path, monkeypatch):
@@ -348,3 +351,190 @@ def test_successor_rejects_unclosed_predecessor_controller(successor, tmp_path, 
     with pytest.raises(ValueError, match='must have exited'):
         runtime.execute(altered, output, branch_adapter=lambda *a, **kw: pytest.fail('overlapping batch admitted'))
     assert not (output / 'admission.json').exists()
+
+
+@pytest.mark.parametrize('source,phase', [('model_protocol', 'execution'),
+    ('model_transport', 'execution'), ('scorer', 'scoring'),
+    ('branch_wall_time', 'execution')])
+def test_known_branch_failure_continues_frozen_jobs_without_replacement(plan, tmp_path, monkeypatch, source, phase):
+    output = tmp_path / 'out'
+    jobs = subset(monkeypatch, plan, output, 7)
+    calls = []
+    def adapter(unit, *args, **kwargs):
+        calls.append(unit['unit_id'])
+        if len(calls) == 1:
+            raise runtime.BranchFailure(source, phase)
+        return completed()
+    result = runtime.execute(plan, output, branch_adapter=adapter)
+    assert sorted(calls) == sorted(j['unit']['unit_id'] for j in jobs)
+    assert result['completed_branches'] == 6
+    assert result['invalid_or_incomplete_branches'] == 1
+    assert result['pending_branches'] == 0
+    assert result['branch_invalid'] == result['aggregate_branch_invalid'] == 1
+    assert result['invalid_attempts'] == result['fatal_invalid'] == 0
+    assert result['stop_reason'] is None
+    assert result['execution_finished'] is result['process_finished'] is result['schedule_complete'] is True
+    invalid = read_json(jobs[0]['path'])
+    assert invalid['failure_scope'] == 'branch'
+    assert invalid['error_source'] == source
+    assert invalid['failure_phase'] == phase
+    assert invalid['testable'] is False
+    assert invalid['no_sample_replacement'] is True
+    assert invalid['no_resampling'] is True
+    assert 'outcome_score' not in invalid
+    with pytest.raises(ValueError, match='incomplete'):
+        runtime.execute(plan, output, branch_adapter=completed)
+
+
+def test_parallel_branch_failure_does_not_cancel_other_active_jobs(plan, tmp_path, monkeypatch):
+    output = tmp_path / 'out'
+    jobs = subset(monkeypatch, plan, output, 7)
+    barrier = threading.Barrier(3)
+    calls = []
+    lock = threading.Lock()
+    def adapter(unit, *args, **kwargs):
+        with lock:
+            index = len(calls)
+            calls.append(unit['unit_id'])
+        if index in (1, 2, 3):
+            barrier.wait(timeout=10)
+            if index == 1:
+                raise runtime.BranchFailure('model_protocol')
+            time.sleep(.02)
+        return completed()
+    result = runtime.execute(plan, output, branch_adapter=adapter)
+    assert len(calls) == len(jobs)
+    assert result['completed_branches'] == 6
+    assert result['branch_invalid'] == 1
+    assert result['stop_reason'] is None
+
+
+@pytest.mark.parametrize('fault', ['integrity', 'provider'])
+def test_global_failure_stops_admission_and_marks_process_finished(plan, tmp_path, monkeypatch, fault):
+    output = tmp_path / 'out'
+    jobs = subset(monkeypatch, plan, output, 5)
+    calls = []
+    def adapter(*args, limiter, **kwargs):
+        calls.append(1)
+        if fault == 'provider':
+            import json
+            from types import SimpleNamespace
+            assert limiter.acquire(5)
+            limiter.observe(SimpleNamespace(status=429, body=json.dumps({'error': 'SECRET quota'}).encode()))
+            limiter.reconcile(5, None)
+            raise runtime.BranchFailure('model_transport')
+        raise ValueError('SECRET source/provenance mismatch')
+    result = runtime.execute(plan, output, branch_adapter=adapter)
+    assert calls == [1]
+    assert result['completed_branches'] == 0
+    assert result['pending_branches'] == 4
+    assert result['fatal_invalid'] == 1
+    assert result['branch_invalid'] == 0
+    assert result['stop_reason'] == ('provider_status_429' if fault == 'provider' else 'invalid_attempt')
+    assert result['execution_finished'] is result['process_finished'] is True
+    assert result['schedule_complete'] is False
+    assert 'SECRET' not in jobs[0]['path'].read_text()
+    assert read_json(jobs[0]['path'])['failure_scope'] == 'global'
+
+
+@pytest.mark.parametrize('termination,protocol,source', [
+    ('protocol_error', 'invalid', 'model_protocol'),
+    ('model_transport_error', 'valid', 'model_transport')])
+def test_verified_manifest_classifies_only_known_model_failures(tmp_path, termination, protocol, source):
+    manifest = dict(episode_id='episode', recording_mode='live', runtime=dict(adapter='docker-cold'),
+        status=dict(termination=termination, protocol_validity=protocol,
+                    execution_validity='invalid', evidence_completeness='complete'))
+    with pytest.raises(runtime.BranchFailure) as caught:
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))
+    assert caught.value.source == source
+    assert caught.value.evidence['termination'] == termination
+    manifest['status']['evidence_completeness'] = 'incomplete'
+    with pytest.raises(ValueError, match='provenance'):
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))
+
+
+def test_verified_score_preserves_delivery_zero_and_scoring_failures(tmp_path, monkeypatch):
+    from c3_sandbox.l1.evaluation import study
+    manifest = dict(episode_id='episode', recording_mode='live', runtime=dict(adapter='docker-cold'),
+        status=dict(termination='assistant_finished', execution_validity='valid',
+                    evaluation_validity='invalid', evidence_completeness='complete'))
+    monkeypatch.setattr(study, 'study_outcome', lambda *a, **kw: dict(study_valid=True, study_outcome_y=0))
+    monkeypatch.setattr(runtime, 'item_score', lambda *a, **kw: 0.0)
+    assert runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64)) == 0
+    monkeypatch.setattr(study, 'study_outcome', lambda *a, **kw: dict(study_valid=False, study_classification='infrastructure_failure'))
+    with pytest.raises(runtime.BranchFailure) as caught:
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))
+    assert caught.value.source == 'scorer'
+    monkeypatch.setattr(study, 'study_outcome', lambda *a, **kw: dict(study_valid=False, study_classification='raw_projection_mismatch'))
+    with pytest.raises(ValueError, match='unrecognized'):
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))
+
+
+@pytest.mark.parametrize('global_wall_expired', [False, True])
+def test_branch_wall_budget_is_local_until_global_deadline(plan, tmp_path, monkeypatch, global_wall_expired):
+    output = tmp_path / 'out'
+    jobs = subset(monkeypatch, plan, output, 5)
+    calls = []
+    def adapter(*args, limiter, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            if global_wall_expired:
+                # Expire the global ledger clock while this branch is running.
+                monkeypatch.setattr('l2_sandbox.opencode_admission.time.time',
+                    lambda: limiter.snapshot()['started_at'] + limiter.caps['max_wall_seconds'])
+            manifest = dict(episode_id='episode', recording_mode='live', runtime=dict(adapter='docker-cold'),
+                status=dict(termination='wall_time_budget', execution_validity='invalid', evidence_completeness='complete'))
+            runtime._verified_branch_score(output, {}, manifest, dict(index_sha256='a'*64),
+                global_stop_reason=limiter.exhaustion_reason())
+        return completed()
+    result = runtime.execute(plan, output, branch_adapter=adapter)
+    invalid = read_json(jobs[0]['path'])
+    assert invalid['testable'] is False
+    assert 'outcome_score' not in invalid
+    if global_wall_expired:
+        assert calls == [1]
+        assert result['stop_reason'] == 'wall_cap'
+        assert result['completed_branches'] == 0
+        assert invalid['failure_scope'] == 'global'
+        assert result['schedule_complete'] is False
+    else:
+        assert len(calls) == 5
+        assert result['stop_reason'] is None
+        assert result['completed_branches'] == 4
+        assert invalid['failure_scope'] == 'branch'
+        assert invalid['error_source'] == 'branch_wall_time'
+        assert result['schedule_complete'] is True
+    assert result['process_finished'] is True
+
+
+def test_real_study_grading_receipts_preserve_delivery_zero_and_classify_infra(tmp_path, monkeypatch):
+    from c3_sandbox.l1 import package
+    from c3_sandbox.l1.evaluation.officeval import interpret
+    from c3_sandbox.l1.evaluation.study import study_outcome
+    manifest = dict(episode_id='episode', recording_mode='live', runtime=dict(adapter='docker-cold'),
+        task=dict(benchmark='officeval', task_id='officeval_003'),
+        status=dict(termination='assistant_finished', execution_validity='valid',
+                    evaluation_validity='invalid', evidence_completeness='complete'))
+    raw = dict(id='003', file_name='', status='error', error='FileNotFoundError: no docx',
+        dim1_pass=False, dim1_reason='', dim2_items=[], total_score=0, max_score=0)
+    grade = dict(official_raw=raw, projection=interpret(raw, 'officeval_003'),
+        process=dict(container_exit_code=0, stop_reason=None))
+    write_json(tmp_path / 'manifest.json', manifest)
+    write_json(tmp_path / 'official_grade.json', grade)
+    write_json(tmp_path / 'grading/worker-output/worker.json', dict(official_returned=True, exception=None))
+    monkeypatch.setattr(package, 'verify_package', lambda *a, **kw: dict(verified=True))
+    outcome = study_outcome(tmp_path, verify_evidence=True)
+    assert outcome['study_classification'] == 'valid_zero'
+    assert outcome['zero_reason'] == 'missing_or_damaged_delivery'
+    assert runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64)) == 0
+    grade.update(status='infra_error', error_kind='infrastructure')
+    write_json(tmp_path / 'official_grade.json', grade)
+    assert study_outcome(tmp_path, verify_evidence=True)['study_classification'] == 'infrastructure_failure'
+    with pytest.raises(runtime.BranchFailure) as caught:
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))
+    assert caught.value.source == 'scorer'
+    assert caught.value.phase == 'scoring'
+    # A bad package cannot qualify as a branch-local scorer failure.
+    monkeypatch.setattr(package, 'verify_package', lambda *a, **kw: dict(verified=False))
+    with pytest.raises(ValueError, match='unrecognized'):
+        runtime._verified_branch_score(tmp_path, {}, manifest, dict(index_sha256='a'*64))

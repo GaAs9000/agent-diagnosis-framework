@@ -92,7 +92,7 @@ def _verify_plan(plan):
     if not Path(plan.get('runs_dir', '')).is_absolute():
         raise ValueError('absolute runs directory required')
     if plan.get('limits', {}).get('max_invalid_attempts') != 1:
-        raise ValueError('one invalid attempt hard stop required')
+        raise ValueError('one fatal invalid attempt hard stop required')
     return scientific
 
 
@@ -150,6 +150,50 @@ def _scheduled_jobs(plan, output):
     return jobs
 
 
+class BranchFailure(RuntimeError):
+    """Known branch-local failure, after evidence and source verification."""
+
+    def __init__(self, source, phase='execution', *, evidence=None):
+        if source not in ('model_protocol', 'model_transport', 'scorer', 'branch_wall_time'):
+            raise ValueError('unknown branch failure source')
+        if phase not in ('execution', 'scoring'):
+            raise ValueError('unknown branch failure phase')
+        super().__init__(source)
+        self.source = source
+        self.phase = phase
+        self.evidence = evidence or {}
+
+
+def _verified_branch_score(output, unit, manifest, verified, *, global_stop_reason=None):
+    """Classify sealed branch evidence; unknown validity errors remain fatal."""
+    from c3_sandbox.l1.evaluation.study import study_outcome
+    status = manifest.get('status') or {}
+    if (manifest.get('recording_mode') != 'live'
+            or status.get('evidence_completeness') != 'complete'
+            or (manifest.get('runtime') or {}).get('adapter') != 'docker-cold'):
+        raise ValueError('branch provenance or evidence completeness differs')
+    evidence = dict(package_path=str(output), package_index_sha256=verified['index_sha256'],
+                    branch_episode_id=manifest['episode_id'],
+                    termination=status.get('termination'))
+    termination = status.get('termination')
+    if termination == 'wall_time_budget':
+        if global_stop_reason:
+            raise RuntimeError('global admission budget exhausted')
+        raise BranchFailure('branch_wall_time', evidence=evidence)
+    if termination == 'protocol_error' and status.get('protocol_validity') == 'invalid':
+        raise BranchFailure('model_protocol', evidence=evidence)
+    if termination == 'model_transport_error' and status.get('execution_validity') == 'invalid':
+        raise BranchFailure('model_transport', evidence=evidence)
+    # Preserve valid study zeros, including recognized missing/damaged deliveries.
+    outcome = study_outcome(output, verify_evidence=True)
+    if not outcome.get('study_valid'):
+        if outcome.get('study_classification') in {
+                'infrastructure_failure', 'unhealthy_grader_process', 'unhealthy_grader_worker'}:
+            raise BranchFailure('scorer', 'scoring', evidence=evidence)
+        raise ValueError('unrecognized invalid study evidence')
+    return item_score(output, unit)
+
+
 def _native_branch(unit, branch, message, *, output, limiter, plan):
     from c3_sandbox.l1.core.config import validate
     from c3_sandbox.l1.core.orchestrator import build_execution_contract_prompt, run
@@ -199,10 +243,10 @@ def _native_branch(unit, branch, message, *, output, limiter, plan):
     verified = verify_package(output)
     if not verified.get('verified') or not result.get('verification', {}).get('verified'):
         raise ValueError('branch package verification failed')
-    score = item_score(output, unit)
+    _verify_plan(plan)
     manifest = read_json(output / 'manifest.json')
-    if (manifest.get('status') or {}).get('termination') == 'wall_time_budget':
-        raise RuntimeError('branch wall budget exhausted')
+    score = _verified_branch_score(output, unit, manifest, verified,
+                                   global_stop_reason=limiter.exhaustion_reason())
     return dict(valid_attempt=True, status='completed', outcome_score=score,
         branch_episode_id=manifest['episode_id'], package_path=str(output),
         package_index_sha256=verified['index_sha256'],
@@ -262,20 +306,39 @@ def _wire_compatibility(receipt, old_model, new_model):
                 or audit['source_messages_sha256'] != audit['wire_messages_sha256']
                 or body.get('model') != old_model['model']):
             raise ValueError('predecessor wire history would change under successor projection')
-        proof.append(dict(request=dict(path=str(path), sha256=file_digest(path)),
-                          wire_body_sha256=digest(body), projection=audit))
+        entry = dict(request=dict(path=str(path), sha256=file_digest(path)),
+                     wire_body_sha256=digest(body), projection=audit)
+        if new_model.get('options', {}).get('truncated_tool_call_policy') is not None:
+            response_path = path.with_name('response.bin')
+            response = read_json(response_path)
+            choices = response.get('choices')
+            if (not isinstance(choices, list) or len(choices) != 1
+                    or choices[0].get('finish_reason') not in ('stop', 'tool_calls', 'length')):
+                raise ValueError('complete predecessor raw response required')
+            finish = choices[0]['finish_reason']
+            if (old_model.get('options', {}).get('truncated_tool_call_policy') is None
+                    and finish == 'length'):
+                raise ValueError('predecessor length response would activate successor recovery')
+            entry.update(response=dict(path=str(response_path), sha256=file_digest(response_path)),
+                         finish_reason=finish)
+        proof.append(entry)
     return dict(schema='cross-actor-predecessor-wire-compatibility-v1',
                 policy='group_tool_results_before_images_v1',
                 source_model_sha256=digest(old_model), target_model_sha256=digest(new_model),
                 all_bodies_unchanged=True, requests=proof)
 
 
-def _predecessor_seeds(plan, jobs, injected):
+def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     """Read a closed predecessor without editing or rerunning any old attempt."""
     prior = plan.get('predecessor')
     if prior is None:
         return dict(requests=0, tokens=0, cost_usd=0.0, http_send_count=0,
-                    invalid_attempts=0, completed=0, infrastructure_invalid=0)
+                    invalid_attempts=0, completed=0, infrastructure_invalid=0,
+                    branch_invalid=0, fatal_invalid=0)
+    node = (str(Path(prior['plan']['path']).resolve()), prior['plan']['sha256'])
+    if (len(_chain) >= 8 or any(node[0] == p or node[1] == sha for p, sha in _chain)
+            or node[1] == digest(plan)):
+        raise ValueError('predecessor chain cycle or depth limit exceeded')
     old_plan = read_json(_bound_reference(plan, prior['plan']))
     old_result = read_json(_bound_reference(plan, prior['result']))
     old_admission = read_json(_bound_reference(plan, prior['admission']))
@@ -286,7 +349,6 @@ def _predecessor_seeds(plan, jobs, injected):
     for artifact in (old_plan, old_result, old_admission):
         verify_seal(artifact)
     if (old_plan.get('schema') != 'cross-actor-d1-execution-v1'
-            or old_plan.get('predecessor') is not None
             or old_plan.get('authorization', {}).get('scope') != 'cross_actor_D1'
             or old_plan.get('authorization', {}).get('execution_authorized') is not True
             or old_plan['scientific_plan'] != plan['scientific_plan']
@@ -301,14 +363,23 @@ def _predecessor_seeds(plan, jobs, injected):
             or old_result.get('simulated_offline') is not injected):
         raise ValueError('closed predecessor plan/result/admission binding differs')
     expected_model = copy.deepcopy(old_plan['model'])
-    if 'history_projection_policy' in expected_model.get('options', {}):
-        raise ValueError('predecessor already has a projection policy')
-    expected_model.setdefault('options', {})['history_projection_policy'] = 'group_tool_results_before_images_v1'
+    policies = dict(history_projection_policy='group_tool_results_before_images_v1',
+                    truncated_tool_call_policy='output_limit_error_feedback_v1')
+    old_options = expected_model.get('options', {})
+    new_options = plan['model'].get('options', {})
+    for key, supported in policies.items():
+        if key in old_options and old_options[key] != supported:
+            raise ValueError('unsupported predecessor internal policy')
+        if key in new_options:
+            if new_options[key] != supported:
+                raise ValueError('unsupported successor internal policy')
+            expected_model.setdefault('options', {})[key] = supported
     if expected_model != plan['model']:
-        raise ValueError('successor may change only the internal history projection policy')
+        raise ValueError('successor may only add or retain supported internal policies')
     deadline = supervisor.get('deadline_epoch')
     if (type(deadline) not in (int, float) or not math.isfinite(deadline)
             or plan.get('deadline_epoch') != deadline
+            or (old_plan.get('deadline_epoch') is not None and old_plan['deadline_epoch'] != deadline)
             or deadline > supervisor['started_at_epoch'] + old_plan['limits']['max_wall_seconds']):
         raise ValueError('successor must preserve predecessor absolute deadline')
     for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
@@ -317,14 +388,17 @@ def _predecessor_seeds(plan, jobs, injected):
                 or old_result.get(count) != used
                 or plan['limits'][cap] + used > old_plan['limits'][cap] + 1e-12):
             raise ValueError('successor limits must carry all predecessor usage')
-    if plan['limits']['max_wall_seconds'] > old_plan['limits']['max_wall_seconds']:
+    if not 0 < plan['limits']['max_wall_seconds'] <= old_plan['limits']['max_wall_seconds'] <= 86400:
         raise ValueError('successor wall budget exceeds original cap')
     directory = Path(prior['receipt_directory'])
     if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
         raise ValueError('absolute predecessor receipt directory required')
     old_jobs = _scheduled_jobs(old_plan, directory.parent)
+    carried = _predecessor_seeds(old_plan, old_jobs, injected, _chain=(*_chain, node))
     old_by_id = {j['binding']['branch_id']: j for j in old_jobs}
     current_by_key = {digest(_logical_binding(j['binding'])): j for j in jobs}
+    if len(current_by_key) != len(jobs) or len(old_by_id) != len(old_jobs):
+        raise ValueError('duplicate logical branch identity')
     counts = dict(completed=0, infrastructure_invalid=0)
     paths = sorted(directory.glob('*.json'))
     retained_ids = {p.stem for p in paths}
@@ -345,6 +419,8 @@ def _predecessor_seeds(plan, jobs, injected):
         current = current_by_key.get(digest(_logical_binding(old_job['binding'])))
         if current is None or 'predecessor_seed' in current:
             raise ValueError('missing or duplicate successor logical branch')
+        if 'predecessor_seed' in old_job:
+            _verify_receipt(receipt, old_job, injected)
         if receipt.get('status') == 'completed':
             _verify_receipt(receipt, old_job, injected)
             proof = _wire_compatibility(receipt, old_plan['model'], plan['model'])
@@ -352,15 +428,26 @@ def _predecessor_seeds(plan, jobs, injected):
                          'predecessor_target_model_sha256': receipt['target_model_sha256'],
                          'wire_compatibility_proof': proof})
             counts['completed'] += 1
-        elif receipt.get('status') == 'incomplete' and receipt.get('valid_attempt') is False:
+        elif (receipt.get('status') in ('incomplete', 'infrastructure_invalid', 'branch_invalid')
+              and receipt.get('valid_attempt') is False):
             if receipt.get('simulated_offline') is not injected:
                 raise ValueError('predecessor attempt execution mode differs')
+            if 'outcome_score' in receipt:
+                raise ValueError('invalid predecessor attempt cannot have an outcome score')
             seed = seal(dict(current['binding'], predecessor_receipt_ref=ref,
                 predecessor_target_model_sha256=receipt['target_model_sha256'],
-                status='infrastructure_invalid', valid_attempt=False,
+                status=('branch_invalid' if receipt['status'] == 'branch_invalid'
+                        or receipt.get('failure_scope') == 'branch' else 'infrastructure_invalid'),
+                valid_attempt=False,
                 simulated_offline=injected,
                 attempt_package_path=receipt.get('attempt_package_path'),
-                error_type=receipt.get('error_type'), no_resampling=True))
+                error_type=receipt.get('error_type'), no_resampling=True,
+                **({key: receipt[key] for key in (
+                    'failure_scope', 'error_source', 'failure_phase', 'global_stop_reason',
+                    'testable', 'no_sample_replacement', 'package_path', 'package_index_sha256',
+                    'branch_episode_id', 'termination') if key in receipt}
+                   if receipt['status'] == 'branch_invalid' or receipt.get('failure_scope') == 'branch'
+                   else {})))
             counts['infrastructure_invalid'] += 1
         else:
             raise ValueError('uncertain predecessor attempt cannot be resumed')
@@ -371,12 +458,35 @@ def _predecessor_seeds(plan, jobs, injected):
             or old_result['planned_branches'] != len(old_jobs)
             or old_result['pending_branches'] != len(old_jobs) - len(paths)):
         raise ValueError('predecessor receipt census differs from closed result')
+    if any('predecessor_seed' in j and j['binding']['branch_id'] not in retained_ids for j in old_jobs):
+        raise ValueError('missing carried predecessor receipt')
+    if (not isinstance(old_admission.get('sends'), list)
+            or any(s.get('status') == 'inflight' or s.get('state') == 'inflight'
+                   for s in old_admission['sends'])):
+        raise ValueError('uncertain predecessor admission sends')
     http_count = sum(bool(s.get('transport_started')) for s in old_admission['sends'])
     if old_result.get('http_send_count') != http_count:
         raise ValueError('predecessor HTTP accounting differs')
-    return dict(requests=old_admission['requests'], tokens=old_admission['tokens'],
-                cost_usd=old_admission['cost_usd'], http_send_count=http_count,
-                invalid_attempts=old_admission['invalid_attempts'], **counts)
+    own = dict(requests=old_admission['requests'], tokens=old_admission['tokens'],
+               cost_usd=old_admission['cost_usd'], http_send_count=http_count,
+               invalid_attempts=old_admission['invalid_attempts'],
+               branch_invalid=old_admission.get('branch_invalid', 0),
+               fatal_invalid=old_admission.get('fatal_invalid', old_admission['invalid_attempts']))
+    aggregate = {key: value + carried[key] for key, value in own.items()}
+    for key, value in aggregate.items():
+        field = 'aggregate_' + key
+        required = (old_plan.get('predecessor') is not None
+                    and (key not in ('branch_invalid', 'fatal_invalid') or key in old_admission))
+        if ((required or field in old_result)
+                and (type(old_result.get(field)) not in (int, float)
+                     or not math.isfinite(old_result[field])
+                     or not math.isclose(old_result[field], value, rel_tol=1e-12, abs_tol=1e-12))):
+            raise ValueError('predecessor aggregate accounting differs')
+    for key in ('branch_invalid', 'fatal_invalid'):
+        if key in old_result and old_result[key] != own[key]:
+            raise ValueError('predecessor invalid accounting differs')
+    return dict(aggregate, **counts)
+
 
 
 def execute(plan: dict, output: Path, branch_adapter=None):
@@ -419,6 +529,8 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                            caps=plan['limits'], expected_model=MODEL,
                            absolute_deadline=plan.get('deadline_epoch'))
 
+        process_finished = False
+
         def progress():
             state = ledger.snapshot()
             result = seal(dict(schema='cross-actor-d1-execution-result-v1',
@@ -427,7 +539,7 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                 planned_branches=len(jobs), completed_branches=len(completed),
                 invalid_or_incomplete_branches=len(failures), pending_branches=len(jobs)-len(completed)-len(failures),
                 requests=state['requests'], tokens=state['tokens'], cost_usd=state['cost_usd'],
-                invalid_attempts=state['invalid_attempts'], stop_reason=state.get('stop_reason'),
+                invalid_attempts=state['invalid_attempts'], stop_reason=ledger.exhaustion_reason(),
                 http_send_count=sum(bool(s.get('transport_started')) for s in state['sends']),
                 current_phase_completed_branches=len(completed)-carried['completed'],
                 carried_completed_branches=carried['completed'],
@@ -438,7 +550,14 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                 aggregate_http_send_count=sum(bool(s.get('transport_started')) for s in state['sends'])+carried['http_send_count'],
                 aggregate_invalid_attempts=state['invalid_attempts']+carried['invalid_attempts'],
                 aggregate_invalid_branches=len(failures),
-                execution_finished=len(completed)+len(failures) == len(jobs),
+                branch_invalid=state.get('branch_invalid', 0),
+                fatal_invalid=state.get('fatal_invalid', state['invalid_attempts']),
+                current_phase_branch_invalid=state.get('branch_invalid', 0),
+                current_phase_fatal_invalid=state.get('fatal_invalid', state['invalid_attempts']),
+                aggregate_branch_invalid=state.get('branch_invalid', 0)+carried.get('branch_invalid', 0),
+                aggregate_fatal_invalid=state.get('fatal_invalid', state['invalid_attempts'])+carried.get('fatal_invalid', carried['invalid_attempts']),
+                execution_finished=process_finished, process_finished=process_finished,
+                schedule_complete=len(completed)+len(failures) == len(jobs),
                 d2_gate_open=False, scientific_scope='cross_actor_exploratory',
                 simulated_offline=injected))
             write_json(output / 'result.json', result)
@@ -448,20 +567,31 @@ def execute(plan: dict, output: Path, branch_adapter=None):
             # Receipt reservation survives crashes even before L1 creates a package.
             write_json(job['path'], seal(dict(job['binding'], status='inflight',
                                             valid_attempt=False, simulated_offline=injected)))
+            phase = 'admission'
             try:
                 ledger.check()
+                phase = 'execution'
                 result = (branch_adapter or _native_branch)(job['unit'], job['branch'], job['message'],
                     output=job['package'], limiter=ledger, plan=plan)
                 receipt = seal({**result, **job['binding'], 'simulated_offline': injected})
+                phase = 'verification'
                 _verify_receipt(receipt, job, injected)
                 write_json(job['path'], receipt)
                 return receipt
             except Exception as exc:
-                if not ledger.exhaustion_reason():
-                    ledger.invalid()
+                reason = ledger.exhaustion_reason()
+                local = isinstance(exc, BranchFailure) and not reason
+                scope = 'branch' if local else 'global'
+                source = exc.source if local else ('global_admission' if reason else 'integrity_or_unclassified')
+                failure_phase = exc.phase if local else phase
+                ledger.invalid(failure_scope=scope, source=source, phase=failure_phase)
                 failed = seal(dict(job['binding'], status='incomplete', valid_attempt=False,
+                    testable=False, no_resampling=True, no_sample_replacement=True,
+                    failure_scope=scope, error_source=source, failure_phase=failure_phase,
+                    global_stop_reason=ledger.exhaustion_reason(),
                     error_type=type(exc).__name__, simulated_offline=injected,
-                    attempt_package_path=str(job['package'])))
+                    attempt_package_path=str(job['package']),
+                    **(exc.evidence if isinstance(exc, BranchFailure) else {})))
                 write_json(job['path'], failed)
                 return failed
 
@@ -500,4 +630,5 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                         collect(job, future.result())
         if len(completed) == len(jobs):
             ledger.close('completed')
+        process_finished = True
         return progress()

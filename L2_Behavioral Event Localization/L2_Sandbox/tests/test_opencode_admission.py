@@ -293,3 +293,23 @@ def test_invalid_absolute_deadline_creates_no_ledger(tmp_path, monkeypatch, dead
     with pytest.raises(ValueError, match='absolute deadline'):
         Admission(path, PLAN, absolute_deadline=deadline)
     assert not path.exists()
+
+
+def test_branch_invalid_does_not_consume_fatal_guard_or_refund(tmp_path):
+    path = tmp_path / 'ledger.json'
+    a = Admission(path, PLAN)
+    assert a.acquire(5)
+    a.reconcile(5, None)
+    charged = a.snapshot()['cost_usd']
+    a.invalid(failure_scope='branch', source='model_protocol')
+    assert a.exhaustion_reason() is None
+    assert a.snapshot()['invalid_attempts'] == 0
+    assert a.snapshot()['branch_invalid'] == 1
+    assert a.snapshot()['cost_usd'] == charged
+    b = Admission(path, PLAN)
+    assert b.exhaustion_reason() is None
+    assert b.snapshot()['branch_invalid'] == 1
+    b.invalid(source='integrity_or_unclassified', phase='verification')
+    assert b.snapshot()['fatal_invalid'] == 1
+    assert b.exhaustion_reason() == 'invalid_attempt'
+    assert not b.acquire(5)
