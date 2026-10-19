@@ -1,0 +1,207 @@
+{
+  "schema": "e1-lossless-parquet-views-v1",
+  "pyarrow_version": "25.0.1",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "grader_calls": 0,
+  "source_files": {
+    "officeval_003.r00": {
+      "grades_sha256": "d0def3cd1bbb0239de8fe8e04393173f75cde133c7a67c8439fd8c5022a6270e",
+      "defects_sha256": "b4624be46c5d0c4085281f02bc04f48e58d30402e585fa244d03a074b65bb89c"
+    },
+    "officeval_003.r01": {
+      "grades_sha256": "cca455095136cec67ef4b147a25a04bd258f28c62f00ad1932e5ee347ebe705f",
+      "defects_sha256": "56a96b8271cd979ff24fb56b8ea2a5b255f3ee09f20b1be6db1afd22eec83cf5"
+    },
+    "officeval_003.r02": {
+      "grades_sha256": "de0d9fa57929db4db2b2f1c20825d0969f9b76b31e50862b8fe75d080b3db66b",
+      "defects_sha256": "fca1cd07089bf1c01cd4224c61361ea5f8710bcf9b519ead2a92c7ff3d4445f7"
+    },
+    "officeval_003.r03": {
+      "grades_sha256": "367d59fea48700a27651a7356af02b78a18baae2a6ba68b3032b15c02fb9cfa3",
+      "defects_sha256": "c06e3dad8672489239412b88d7ad1fae23ffe9cdcb77445ec7d0e08785bf9daa"
+    },
+    "officeval_003.r04": {
+      "grades_sha256": "df7eb16c921dc96a67721b579c3359e221f0f3fc5c7004905c8e1dd87134bc09",
+      "defects_sha256": "db398391836ff4db3927dce2bcd014699462d05ec2c163ccab814f1e48fd721b"
+    },
+    "officeval_004.r00": {
+      "grades_sha256": "1af2b02a988bb7452c2bbcc66c6c50aadf0087f92cab982694d43a771bdbe223",
+      "defects_sha256": "32078f65af5f271d584099feb56b483ad77db968e097ecbdfb011b643093dae3"
+    },
+    "officeval_004.r01": {
+      "grades_sha256": "db826db9bb96487b52c42d0b736e415653274ac2beecb7a645e0dfb0f1f4e590",
+      "defects_sha256": "b5075a53289393a5fc53a9858266ed7b0fc7090f65309a653389ec02bc8384cc"
+    },
+    "officeval_004.r02": {
+      "grades_sha256": "b25742e406166133b45decb26542b5db1c511c0311d38216ca3ec9e4cbdaa8c7",
+      "defects_sha256": "697518594ac7a53ed8bb190024362583634eaf1e9dcc880b7f5638e8aad14fe8"
+    },
+    "officeval_004.r03": {
+      "grades_sha256": "beb730ae1f4a99cdec9b753d8dc6ab238bb0b7df969f49e5a495b2eb659d8ff0",
+      "defects_sha256": "902572195fcee66753e6c7f64042833e60c032ebb272245e5de3bd27801dde05"
+    },
+    "officeval_004.r04": {
+      "grades_sha256": "247cc3444e7b7c4f9b263c66df481f3d5200e9b4d8ca0069b8876a7713c4e978",
+      "defects_sha256": "621c55de9f04a45ca654e2d28b7e9444df694ef5c04afe9b474619bbf041a82a"
+    },
+    "officeval_010.r00": {
+      "grades_sha256": "5b144255e1775cf4f947b0130c6be54b905a11464f2206dac1f89f99b2304b72",
+      "defects_sha256": "8963f3222f01fc63d7d8f46086e6262e7c4770d69d35fd941aac851aa9eb807a"
+    },
+    "officeval_010.r01": {
+      "grades_sha256": "03676fbc9a4650c69050d378d9d84451a9ba4d8743aaaf47d1189413343061f1",
+      "defects_sha256": "a775c28d83c89fb876d9371da931a86d1c883f8151dbce29def90b7db6962111"
+    },
+    "officeval_010.r02": {
+      "grades_sha256": "9ec719c20694af8d06fab5bec9c16b18656758612cbd15bfe444d8dac7378136",
+      "defects_sha256": "eaecf4fb99674f6d347bfc58a3fe3312b22e5e7c647b42cf0c857e6079bb8cd6"
+    },
+    "officeval_010.r03": {
+      "grades_sha256": "29c4532a108defde4742d12dcb2eee35704504422e9f8f75fabbc87d123d1e5a",
+      "defects_sha256": "ae164c119d6a0b46a93e58c33c059fa8c7167a77e65a54b9ce8dda66f02abacc"
+    },
+    "officeval_010.r04": {
+      "grades_sha256": "956c339500862ff792da9687c97880e3771640dbea417172fae1224ad6f19736",
+      "defects_sha256": "4623d555708987f6b85a3a2024502a81c3feb35a3e96d6dbf0a2db2760d31dea"
+    },
+    "officeval_033.r00": {
+      "grades_sha256": "208d3d8c6149fe585b403f0f78809c18c681ce03823de812549b9744b2664837",
+      "defects_sha256": "af3012a2f76cbac2158c3b9ed2ebdd6b6b3be60a69e39ec42f12c5495c9ac503"
+    },
+    "officeval_033.r01": {
+      "grades_sha256": "ed3d182943c057a3266a4b9f6157615087c10efc15dd296da2c0eb7a67a29ab9",
+      "defects_sha256": "95083f2aa358918328a9fd6ec0c946712fa3d60578aac6f169251f01b1eb80ac"
+    },
+    "officeval_033.r02": {
+      "grades_sha256": "5f22d1def019c9dd5e360cba521e2cf9face4ad3326e143ceff839cbbd5b87ed",
+      "defects_sha256": "5ffa146e825855c10a32f50dd68478014382c2b6d5a86b39fcca4c232d427d47"
+    },
+    "officeval_033.r03": {
+      "grades_sha256": "1886f63628497325052c4670d6710ea6c6a22d3ac6a9989a7f75851cf0f7673b",
+      "defects_sha256": "af4a751ff4f3022679f052b01c43b0bcbbecd622d02df50128e07f0b15af517d"
+    },
+    "officeval_033.r04": {
+      "grades_sha256": "3a6012f547c607a5e97080d0b79490d1ba4261635b80422faf6866924ddf840b",
+      "defects_sha256": "3c4ac0c3a2f8acbacbf85f1a01e863ab13c65a19c428265d84586d58c6dc7990"
+    },
+    "officeval_050.r00": {
+      "grades_sha256": "0a1b3dbc4daf531c0699fb3bbb3c482d39f07944d4e202105a0d1e87aee09e8a",
+      "defects_sha256": "6cdb7428deeeeacd698225db1237cf6a081ac553457f6f4de59ae205a6fe989b"
+    },
+    "officeval_050.r01": {
+      "grades_sha256": "175791644634ff7b27d755b98c35211b8e6cdd356a8b18f80bd33dce3464f926",
+      "defects_sha256": "df820e4333e81f621efd9da6b223cd706bcfc9ecc87219ad0016cff90fd92f36"
+    },
+    "officeval_050.r02": {
+      "grades_sha256": "6e73be6f1694e6374bd394d9823954dbb83d1491bbc90f22935b6fe215a2a6ee",
+      "defects_sha256": "241660cf46de6060385fca392972f01de5d0452659baea4086515b90c2887b5a"
+    },
+    "officeval_050.r03": {
+      "grades_sha256": "30c2370b6ebe92f8c4d53460e8cad67bf156da4e8e3e911fc1fedb5fcf3f050c",
+      "defects_sha256": "426d5840efeb37c1699491868e0239cebd6525bc78a313cc3fc85662220d5c34"
+    },
+    "officeval_050.r04": {
+      "grades_sha256": "88f9d3fb11e3e2d2245a54a518443d951fcea3bc7ceea7ebecdab9fff5bd72ee",
+      "defects_sha256": "67b491fa1c4c7ce5b9711970ccf3dba50901c85cfee70919d1d847000a7c5796"
+    },
+    "officeval_060.r00": {
+      "grades_sha256": "b6ac19460cc8abbf415f3ba187c792627445323cd199be16c9b1cd8dd45e52e7",
+      "defects_sha256": "10ada8b194ef3d80621c4bfe2f56a745dcc3a11a4b6b7989cdc119210cadd0a6"
+    },
+    "officeval_060.r01": {
+      "grades_sha256": "2c211a10cbe52060e745e922dabefe6382e06f355d594e5eb3619a0bc21f598d",
+      "defects_sha256": "1bf4479b42af8e1ce646ca38120e27d1bc78b56d4468e1eb807555c43b9ceb7f"
+    },
+    "officeval_060.r02": {
+      "grades_sha256": "4cb93fab733796ce37ad1b841195655ffed3b53cc8a13fde163aca6a026eae55",
+      "defects_sha256": "0c11ceba7ff79b68c9f74d70978710ea1654c7987a771e6471480869a5bb8156"
+    },
+    "officeval_060.r03": {
+      "grades_sha256": "ec1a968518a61c50dbc4ad36f711ac9122ee3e58413f825fb70400916bb4ac74",
+      "defects_sha256": "e5e61e05567a30bf8108304371d003798a6e4bbea139b99d06287cf9f209d696"
+    },
+    "officeval_060.r04": {
+      "grades_sha256": "5bec27a325fc184b3697c5e40a1923f6a35f20c9fd4b27d1680ed2685816961d",
+      "defects_sha256": "a5b92d8e3637637af416a503ee345f3ddb144bd5ed0ab3d2d1e4d3c8edab0112"
+    },
+    "officeval_070.r00": {
+      "grades_sha256": "ad201506f7045a802b922cdaade3c69221507bb875ea02b9fc08ba3f65797a68",
+      "defects_sha256": "11c50c1c2636569f0fd4c22de7c02eb9e6002fb5aed4276dbf3b9402d57a44ae"
+    },
+    "officeval_070.r01": {
+      "grades_sha256": "d47211025fabb3db1abb8e373ab870a4bd85d8ab2ffa3ee9fcfd8b30324f7a51",
+      "defects_sha256": "40a3f3a29d7349735745fa4926e7b66684303c04b18853d85950a9fb038ca021"
+    },
+    "officeval_070.r02": {
+      "grades_sha256": "e71502b9f4a5e13fff45db9385fcee1bc4c789c8f5dda301152843aff06459ca",
+      "defects_sha256": "ffc324cf67d98e40088a421e9936a678792429bcbc752d699976f067a903ebab"
+    },
+    "officeval_070.r03": {
+      "grades_sha256": "73b4134e26cca97a0bcbe554417840a2567859d3f4af24d176a7c5acc5584c20",
+      "defects_sha256": "fe80c728f7b13337f4ac515dc99fc9e7f54128ec520fe703fda2d892da5dc7bb"
+    },
+    "officeval_070.r04": {
+      "grades_sha256": "1c1315baa20fb44cb62bb0e164049451d49929bb9fa5731d61286ceb503294c1",
+      "defects_sha256": "10355a362fea4abaf2a99dd6c6a1e2b95da1315af8370daed1866b8c86a59db7"
+    },
+    "officeval_085.r00": {
+      "grades_sha256": "6f50289cb8e10f9788e9b62662d62ed748abe1640cbb7c6c02d237329bfae87b",
+      "defects_sha256": "d75fe3f9322707b31551a4694873c7353e2fb3dedead757ce4cad01ca0cf5bba"
+    },
+    "officeval_085.r01": {
+      "grades_sha256": "70cb7ed098c6d0a1bff88becd3ca64eade4b0da657bee714feec467423297655",
+      "defects_sha256": "5d29908c778a6676e850c4e931d0c13e61db2117579930c3a938f217e62b0422"
+    },
+    "officeval_085.r02": {
+      "grades_sha256": "5270390855a06ff749af9a14510683d015e6b35fc2674b8bc0280b1f4c4f82b0",
+      "defects_sha256": "831e01cebec0527f8436e3120ca7efab34676c0fa9b11935267fd26aed877fba"
+    },
+    "officeval_085.r03": {
+      "grades_sha256": "8910f7f40d059fe476373b2e5a4564a2dccb8247baf031dea196e05ba98ac380",
+      "defects_sha256": "ce4989efa5e4ebd15a00383e45b17638ea092a3cb45d799180dfd0e695acb985"
+    },
+    "officeval_085.r04": {
+      "grades_sha256": "45328c9058d93b16ac29747257cfae239e8654da06fafeb67b6cef610d7c73e9",
+      "defects_sha256": "e3bc0a8aad0d7bcd8df7853f3371aea06ec1b7e1dbf47327cdaba19c411b59f8"
+    },
+    "officeval_090.r00": {
+      "grades_sha256": "52695a3dc564153d32e5e1da947d59dbc446cfa085c0b12efbc9e551a99b65f4",
+      "defects_sha256": "3e19eff7b762217daa6350cd586b5866da214901f5269320a82702e6f66e9bd9"
+    },
+    "officeval_090.r01": {
+      "grades_sha256": "d706a433fd99da53055290853f37fe4e823f6ee442c8389d7b117c19e8d5f912",
+      "defects_sha256": "33431de728507df325be9bec7e53912d9f50af737dab17af5f70aea1abac0b60"
+    },
+    "officeval_090.r02": {
+      "grades_sha256": "056ddffa26759b6f403ac86c62f2f31b6baf77198ea527f8e2d5188b1683418d",
+      "defects_sha256": "46b3e79e5cd35d219923097263d03a776faaadbfd867414a3e03986b7092f115"
+    },
+    "officeval_090.r03": {
+      "grades_sha256": "4382e8035b6fe392b92fcef96371186e5d82de76cd2337bc82a29337727066fe",
+      "defects_sha256": "a97a8d550458d6e88ef5310c08bf7b5a7c1a34c0b16cc83f9cb8d4e7a19c4f28"
+    },
+    "officeval_090.r04": {
+      "grades_sha256": "c73a54ef72f047aae86ec4de7a97e8640908c4dba98e2f70bf1d52da64b8a38b",
+      "defects_sha256": "9a90ad385dae405845fc4b8614a1e49df0191b6f80822b594d5479acfe62a57b"
+    }
+  },
+  "outputs": {
+    "checkpoint_grades": {
+      "rows": 1010,
+      "sha256": "7fb68306b8611dd8f600a02ddde95712e84570980106bb93c8bfe6b8ee6ff107",
+      "roundtrip_equal": true
+    },
+    "terminal_grades": {
+      "rows": 45,
+      "sha256": "5902b8bab62c14c5665a542256523ca1b7c5308e20d463e2153cf0fe93ba0176",
+      "roundtrip_equal": true
+    },
+    "defect_table": {
+      "rows": 545,
+      "sha256": "e5214a2c2acff5debff775f2153991c85ce944057dc74150461e0b699260a86a",
+      "roundtrip_equal": true
+    }
+  },
+  "note": "JSON/JSONL remains canonical. row_json retains every source field; scalar columns are query views."
+}

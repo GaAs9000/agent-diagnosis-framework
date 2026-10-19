@@ -1,0 +1,154 @@
+{
+  "schema": "prospective-p3-final-report-v1",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "d0_frozen": false,
+  "d1_execution": false,
+  "gates": {
+    "V3-G1": true,
+    "V3-G2": false,
+    "V3-G3": true,
+    "V3-G4": true
+  },
+  "execution_readiness": false,
+  "statistical_equivalence": "not_established",
+  "outcome_distribution_equivalence": "not_established",
+  "e1_summary": {
+    "actual_checkpoint_rows": 972,
+    "defect_count_by_kind": {
+      "broken": 5,
+      "never": 540,
+      "undelivered": 0
+    },
+    "defect_rows": 545,
+    "eligible_anchor_rows": 965,
+    "eligible_k_star_slots": 45,
+    "facts_rows": 3405,
+    "grade_rows": 1055,
+    "synthetic_terminal_rows": 38,
+    "terminal_submission_rows": 45
+  },
+  "e1_deductions": {
+    "broken": 0.998217468806,
+    "never": 33.968360071305,
+    "sum_1_minus_y": 34.96657754010695,
+    "total_deduction": 34.966577540111004,
+    "undelivered": 0.0
+  },
+  "official_scorer_invocations": 92,
+  "g2_accounting": {
+    "completed_batches": 67,
+    "total_calls": 102,
+    "selected_first_execution_calls": 74,
+    "diagnostic_second_execution_calls": 28,
+    "carried_calls": 67,
+    "new_physical_calls": 35,
+    "runtime_executions": 101,
+    "native_feedback_only": 1,
+    "raw_classifications": {
+      "exact": 56,
+      "declared_runtime_variance": 20,
+      "unexplained": 26
+    },
+    "effective_classifications_after_explicit_4_sidecars": {
+      "exact": 56,
+      "declared_runtime_variance": 24,
+      "unexplained": 22
+    },
+    "after_state_exact": {
+      "True": 96,
+      "False": 6
+    },
+    "raw_streams_exact": {
+      "True": 62,
+      "False": 40
+    },
+    "unknown_comparisons_effective": 22,
+    "unknown_unique_calls": 11
+  },
+  "forensic_counts": {
+    "proven_ls_runtime_metadata_only": 20,
+    "proven_python_repr_memory_address_only": 2
+  },
+  "g2_status": "blocked_unexplained_difference",
+  "test_result": {
+    "status": "passed",
+    "execution": "aml-b CPU4",
+    "pytest_result": "268 passed in 5.04s",
+    "passed": 268,
+    "actor_requests": 0,
+    "analyst_requests": 0,
+    "source_sha256": {
+      "scripts/build_d0_census.py": "2216812dcc426c7a65b2e23ee4add2f12c758aea874f806b90a216fe200c21ce",
+      "scripts/audit_prospective_recovery.py": "9482572259b5577562728a6263583a9114716baf5d996c884e0104a3be70569f",
+      "scripts/audit_g4_prospective.py": "986811a5d7575cb558c47b7d105b43952a428b8666fbb08975d9f4cab89def74",
+      "scripts/replay_prospective_tools.py": "0934862142e8a1992b48e086e4a97e6186c3a5b06d0cf93c348ed87834c53d32",
+      "src/l2_sandbox/measurement_gates.py": "3fd97f36d26923347e22acc332280f853ea698a7aab4a77de4834c5522144db6"
+    },
+    "note": "Recorded from the completed parent-run pytest output; actual replay source is separately retained in frozen G2 plans/archives."
+  },
+  "artifacts": {
+    "measurement_readiness_final.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/measurement_readiness_final.json",
+      "sha256": "54e435c03958b74102d1f99ce4a50692d273bb95c9f20317b27dddc350483c59"
+    },
+    "measurement_binding_final.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/measurement_binding_final.json",
+      "sha256": "1bf49f6532316024d76ffe00487f7fe46060e5006aa13e384a27a47d83370a59"
+    },
+    "e1_verification_20261019.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/e1_verification_20261019.json",
+      "sha256": "87d8d7cfed8fece0a0145a2348273db1f36edb51181f4048668b850e51480bf6"
+    },
+    "p3_recovery_formal_20261019/g1_census.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/p3_recovery_formal_20261019/g1_census.json",
+      "sha256": "d500752aa6dda3f9c9099d5d3e06a23c47f097f8090945f5b608b336653dc316"
+    },
+    "p3_g4_post_audit_20261019/result.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/p3_g4_post_audit_20261019/result.json",
+      "sha256": "32922718dc39ffbf170191073c2eb65a02991dfc514a507c819b6b6820628872"
+    },
+    "g2_shared_validator_plan.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_shared_validator_plan.json",
+      "sha256": "afbfe008944b9a936eef2281ebc616c12835b8b28eb8b574dc2e06b47fc5e028"
+    },
+    "g2_tool_replays_shared_validator/result.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_tool_replays_shared_validator/result.json",
+      "sha256": "1fd03926f0b98ea35a9d4c862e9b18115810d3e182201cdd66e8933ce52e3e75"
+    },
+    "g2_runtime_variance_forensics_final_20261019.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_runtime_variance_forensics_final_20261019.json",
+      "sha256": "c92268436f5d70800a3c06654d2f6301ecbd881eb1f8a7345883750f2de6bf41"
+    },
+    "e1_supervisor_result.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/e1_supervisor_result.json",
+      "sha256": "923287c027da69ae05c13babc1479b558ce5ce4122398652c0857c392ca6bef2"
+    },
+    "g2_shared_validator_result.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/g2_shared_validator_result.json",
+      "sha256": "d6ccb79ca41cb70c8df03ef9f329d1e09bfe71837de100fe1efdbd4627966d1b"
+    },
+    "test_receipt.json": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/p3/test_receipt.json",
+      "sha256": "69667fe7db0a90999b62764c88de9d8a55c00900cadc43ec0f713cf75152871c"
+    }
+  },
+  "strict_gate_retroactively_upgraded": false,
+  "parquet_views": {
+    "checkpoint_grades": {
+      "rows": 1010,
+      "sha256": "7fb68306b8611dd8f600a02ddde95712e84570980106bb93c8bfe6b8ee6ff107",
+      "roundtrip_equal": true
+    },
+    "terminal_grades": {
+      "rows": 45,
+      "sha256": "5902b8bab62c14c5665a542256523ca1b7c5308e20d463e2153cf0fe93ba0176",
+      "roundtrip_equal": true
+    },
+    "defect_table": {
+      "rows": 545,
+      "sha256": "e5214a2c2acff5debff775f2153991c85ce944057dc74150461e0b699260a86a",
+      "roundtrip_equal": true
+    }
+  }
+}
