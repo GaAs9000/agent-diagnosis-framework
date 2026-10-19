@@ -121,6 +121,42 @@
     "live_length_recovery.json": {
       "sha256": "bd1a33752f674b8723b0e5df45a1a3e4ba83882106761edb734bcc980ac8080e",
       "bytes": 1318
+    },
+    "continuation_02/admission_snapshot.json": {
+      "sha256": "30bd3da09c4508e37df144b9da9229b1399ee3d8dfedb2b4c823113bd438c5fb",
+      "bytes": 5720
+    },
+    "continuation_02/execution_plan.json": {
+      "sha256": "7fd98a5dd0fab2727aaed41c0b208de77391ea7bccb65ca6d6162d3e5f2a0f6f",
+      "bytes": 2549284
+    },
+    "continuation_02/first_actor_http.json": {
+      "sha256": "5931409ffdc4d8f8f092c52c9927adb91bed07a771b88250c88700ff6d29ac0f",
+      "bytes": 2920
+    },
+    "continuation_02/integrity_preflight.json": {
+      "sha256": "2f4dfa131b90667e6f73409e23b4a68bca2646d31ee469320cdb7d6cdb391c86",
+      "bytes": 718
+    },
+    "continuation_02/launch_receipt.json": {
+      "sha256": "145566d4006a4694a91781b9d7b976ec49f51a1ee1e2576aafa03356dc46f5fc",
+      "bytes": 379
+    },
+    "continuation_02/result_snapshot.json": {
+      "sha256": "62bb8bf958e8bc6e03f199a5478be2d72e6566af6690a84ef18e715be7387522",
+      "bytes": 1234
+    },
+    "continuation_02/supervisor.py": {
+      "sha256": "8febc12da4b799d543a810254029339bf83b1ab1639d836cb9d1367e0b410f0c",
+      "bytes": 2301
+    },
+    "continuation_02/supervisor_started.json": {
+      "sha256": "8801495d6cbb8b52bd73b0b5b8b738669dbc8db002416c6e2d67b4b6171b81ed",
+      "bytes": 307
+    },
+    "continuation_02/tests_compaction_final.log": {
+      "sha256": "9ff016987f65ed213de44f30e15fcc1c4b7845734c9674d71ff200646c979614",
+      "bytes": 661
     }
   },
   "live_output_limit_recovery_verified": {
@@ -151,5 +187,53 @@
       "trajectory.jsonl": "717dfd8d5ccb9c2201974de7c02e4296535754a48d7e8b03c5d9c3800f3dc1f6",
       "receipt.json": "eb40d464541845601133ddf8efc21487b3b19a70590a0be177639d75a9017fce"
     }
+  },
+  "latest_continuation": {
+    "source_commit": "ec4a612dbaabbeb73ead7b89e4a5a67f6774fea9",
+    "plan_sha256": "59a5d20253420c8b76e2af8a7e883cc1321d436bc75a0316f84673baa4dad4f4",
+    "server_tests_passed": 525,
+    "server_tests_skipped": 0,
+    "retained": {
+      "requests": 170,
+      "tokens": 6925554,
+      "cost_usd": 0.7868393400000033,
+      "http_send_count": 170,
+      "invalid_attempts": 5,
+      "branch_invalid": 0,
+      "fatal_invalid": 5,
+      "completed": 15,
+      "infrastructure_invalid": 9
+    },
+    "remaining_jobs": 2258,
+    "limits": {
+      "max_requests": 14830,
+      "max_wall_seconds": 86400,
+      "max_cost_usd": 11.213160659999996,
+      "max_tokens": 993074446,
+      "max_tokens_per_request": 33562624,
+      "max_invalid_attempts": 1,
+      "input_usd_per_million": 0.3,
+      "cached_input_usd_per_million": 0.006,
+      "output_usd_per_million": 1.2
+    },
+    "original_deadline": 1792473352.757362,
+    "standalone_image_preserved_verbatim": true,
+    "no_synthetic_tool_exchange_created": true,
+    "recorded_compacted_checkpoint": {
+      "path": "L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_plan/execution/branches/0e7103f515ff9749fd9c6d94f1893080481a5e645e586b0f22f97b984683ab93/checkpoints/cp000024.json",
+      "sha256": "f33e650e8bf5b094adef4397ba6f17f9cb80108c059ba5f9a2048c1d8d945caf"
+    },
+    "new_actor_http_200": true,
+    "launch": {
+      "started_at_epoch": 1792391918.859251,
+      "deadline_epoch": 1792473352.757362,
+      "max_wall_seconds": 81433.89811086655,
+      "min_free_disk_bytes": 8589934592,
+      "source_commit": "ec4a612dbaabbeb73ead7b89e4a5a67f6774fea9",
+      "supervisor_pid": 79914,
+      "restart_or_renew": false,
+      "controller_pid": 79918
+    },
+    "current_work_directory": "L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_02"
   }
 }

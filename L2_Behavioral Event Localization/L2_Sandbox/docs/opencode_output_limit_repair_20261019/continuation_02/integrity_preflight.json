@@ -1,0 +1,22 @@
+{
+  "schema": "opencode-d1-integrity-preflight-v1",
+  "plan_sha256": "59a5d20253420c8b76e2af8a7e883cc1321d436bc75a0316f84673baa4dad4f4",
+  "planned_jobs": 2282,
+  "retained": {
+    "requests": 170,
+    "tokens": 6925554,
+    "cost_usd": 0.7868393400000033,
+    "http_send_count": 170,
+    "invalid_attempts": 5,
+    "branch_invalid": 0,
+    "fatal_invalid": 5,
+    "completed": 15,
+    "infrastructure_invalid": 9
+  },
+  "unstarted_jobs": 2258,
+  "actor_requests": 0,
+  "tool_calls": 0,
+  "scorer_invocations": 0,
+  "check_scope": "readonly source/package/receipt and already-recorded score integrity; no experiment execution",
+  "artifact_sha256": "2932eef48b671fc970fd83a975e9be165abc610e85a2f707545cb413b255fa1e"
+}

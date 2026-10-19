@@ -1,0 +1,10 @@
+{
+  "started_at_epoch": 1792391918.859251,
+  "deadline_epoch": 1792473352.757362,
+  "max_wall_seconds": 81433.89811086655,
+  "min_free_disk_bytes": 8589934592,
+  "source_commit": "ec4a612dbaabbeb73ead7b89e4a5a67f6774fea9",
+  "supervisor_pid": 79914,
+  "restart_or_renew": false,
+  "controller_pid": 79918
+}

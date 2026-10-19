@@ -1,0 +1,7 @@
+{
+  "supervisor_pid": 79914,
+  "source_commit": "ec4a612dbaabbeb73ead7b89e4a5a67f6774fea9",
+  "supervisor_sha256": "8febc12da4b799d543a810254029339bf83b1ab1639d836cb9d1367e0b410f0c",
+  "plan_file_sha256": "7fd98a5dd0fab2727aaed41c0b208de77391ea7bccb65ca6d6162d3e5f2a0f6f",
+  "integrity_preflight_file_sha256": "2f4dfa131b90667e6f73409e23b4a68bca2646d31ee469320cdb7d6cdb391c86"
+}
