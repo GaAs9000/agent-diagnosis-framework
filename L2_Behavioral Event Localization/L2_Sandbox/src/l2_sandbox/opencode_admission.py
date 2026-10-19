@@ -32,15 +32,44 @@ def _cost(prompt, completion, cached=0):
     return ((prompt - cached) * 0.30 + cached * 0.006 + completion * 1.20) / 1_000_000
 
 
+def validate_budget_authorization(authorization, predecessor_sha256):
+    """Validate the separately sealed, finite Option A cumulative grant."""
+    verify_seal(authorization)
+    if (authorization.get('schema') != 'opencode-d1-budget-authorization-v1'
+            or authorization.get('execution_authorized') is not True
+            or authorization.get('scope') != 'cross_actor_D1_budget_extension'
+            or authorization.get('source') != 'direct_user_message_20261019'
+            or not isinstance(authorization.get('exact_user_text'), str)
+            or not authorization['exact_user_text'].strip()
+            or authorization.get('predecessor_plan_sha256') != predecessor_sha256
+            or authorization.get('cumulative_limits') != dict(
+                max_requests=22000, max_tokens=1_000_000_000, max_cost_usd=50.0)):
+        raise ValueError('explicit predecessor-bound Option A budget authorization required')
+    start, deadline, wall = (authorization.get(k) for k in
+                            ('phase_started_at_epoch', 'deadline_epoch', 'max_wall_seconds'))
+    if (any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0
+            for v in (start, deadline, wall)) or not 0 < deadline - start <= wall <= 86400):
+        raise ValueError('budget authorization requires a finite phase deadline within 24 hours')
+    return authorization
+
+
 class Admission:
     """L1 request_limiter interface, with reservations persisted before HTTP."""
 
     def __init__(self, path: Path, plan_hash: str, caps: dict | None = None, *,
                  expected_model: str = 'deepseek-v4.1-flash',
-                 absolute_deadline: float | None = None):
+                 absolute_deadline: float | None = None,
+                 budget_authorization: dict | None = None):
         self.path = Path(path)
         self._lock = threading.RLock()
         self._thread = threading.local()
+        hard_caps = dict(DEFAULT_CAPS)
+        if budget_authorization is not None:
+            grant = validate_budget_authorization(
+                budget_authorization, budget_authorization.get('predecessor_plan_sha256'))
+            hard_caps.update(grant['cumulative_limits'])
+            if absolute_deadline is None or absolute_deadline > grant['deadline_epoch']:
+                raise ValueError('admission deadline exceeds budget authorization')
         self.caps = dict(DEFAULT_CAPS)
         for name, value in (caps or {}).items():
             if name not in DEFAULT_CAPS:
@@ -50,7 +79,7 @@ class Admission:
             if name.endswith('usd_per_million'):
                 if value != DEFAULT_CAPS[name]:
                     raise ValueError('peak accounting rates are fixed')
-            elif value > DEFAULT_CAPS[name]:
+            elif value > hard_caps[name]:
                 raise ValueError('admission cap exceeds batch hard limit')
             if name in ('max_requests', 'max_tokens', 'max_tokens_per_request', 'max_invalid_attempts') and type(value) is not int:
                 raise ValueError('count caps must be integers')

@@ -31,8 +31,11 @@ def logical(path):
     return str(LOGICAL / Path(path).resolve().relative_to(ROOT))
 
 
-def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_tools: bool = False):
+def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_tools: bool = False,
+          budget_authorization: Path | None = None, branch_storage_root: Path | None = None):
     from l2_sandbox.opencode_admission import DEFAULT_CAPS
+    if budget_authorization is not None and predecessor is None:
+        raise ValueError('budget authorization requires a predecessor')
     phase = phase.resolve()
     old = L2 / 'validation/p4_contract_v2_20261019'
     plan_path, freeze_path = old / 'd1_plan.json', old / 'd0_scientific_freeze_v2.json'
@@ -92,6 +95,7 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
         paths.update(directory.glob('*.py'))
     sources = {logical(p):file_digest(p) for p in sorted(paths)}
     predecessor_doc=None
+    authorization_ref=None
     caps=copy.deepcopy(DEFAULT_CAPS)
     deadline=None
     if predecessor is not None:
@@ -117,6 +121,20 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
                     max_tokens=state['limits']['max_tokens']-state['tokens'],
                     max_cost_usd=state['limits']['max_cost_usd']-state['cost_usd'],
                     max_wall_seconds=state['limits']['max_wall_seconds'])
+        if budget_authorization is not None:
+            from l2_sandbox.opencode_admission import validate_budget_authorization
+            if budget_authorization.is_symlink() or not budget_authorization.is_file():
+                raise ValueError('regular budget authorization file required')
+            authorization_path=budget_authorization.resolve()
+            grant=validate_budget_authorization(read_json(authorization_path),previous['artifact_sha256'])
+            for cap, count in (('max_requests','requests'),('max_tokens','tokens'),('max_cost_usd','cost_usd')):
+                result=read_json(predecessor/'execution/result.json'); verify_seal(result)
+                field='aggregate_'+count if previous.get('predecessor') is not None else count
+                caps[cap]=grant['cumulative_limits'][cap]-result[field]
+            caps['max_wall_seconds']=grant['max_wall_seconds']
+            deadline=grant['deadline_epoch']
+            authorization_ref={'path':logical(authorization_path),'sha256':file_digest(authorization_path)}
+            bound[authorization_ref['path']]=authorization_ref['sha256']
         if deadline<=time.time() or any(caps[k]<=0 for k in ('max_requests','max_tokens','max_cost_usd','max_wall_seconds')):
             raise ValueError('original batch budget or deadline exhausted')
         archive_previous=phase/'historical_predecessor_sources.tar'
@@ -179,6 +197,13 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
     if predecessor_doc is not None:
         payload.update(predecessor=predecessor_doc,deadline_epoch=deadline,
                        continuation_policy='preserve completed equivalent wire histories and retain invalid attempts; run only untouched jobs')
+    if branch_storage_root is not None:
+        from l2_sandbox.opencode_d1_runtime import _branch_storage_root
+        payload['branch_storage_root']=str(_branch_storage_root({'branch_storage_root':str(branch_storage_root)}))
+    if authorization_ref is not None:
+        payload.update(budget_authorization=authorization_ref,
+                       operational_limits_origin='explicit sealed Option A cumulative budget extension',
+                       cost_scope='50 USD cumulative upper-bound provider usage equivalent; Go quota/balance settings unchanged')
     output=seal(payload)
     path = phase / 'execution_plan.json'
     if path.exists() and read_json(path) != output:
@@ -219,6 +244,8 @@ def main():
     parser.add_argument('--check-plan',action='store_true',help='Verify frozen inputs and retained attempts without admission or model calls')
     parser.add_argument('--predecessor',type=Path)
     parser.add_argument('--recover-truncated-tools',action='store_true')
+    parser.add_argument('--budget-authorization',type=Path)
+    parser.add_argument('--branch-storage-root',type=Path)
     args=parser.parse_args()
     if args.execute and args.check_plan:
         parser.error('choose --execute or --check-plan')
@@ -236,7 +263,8 @@ def main():
         print(json.dumps({'planned_jobs':len(jobs),'retained':retained},ensure_ascii=False))
         return
     if not args.execute:
-        build(args.phase,args.predecessor,recover_truncated_tools=args.recover_truncated_tools)
+        build(args.phase,args.predecessor,recover_truncated_tools=args.recover_truncated_tools,
+              budget_authorization=args.budget_authorization, branch_storage_root=args.branch_storage_root)
         return
     from l2_sandbox.opencode_d1_runtime import execute
     plan=read_json(args.phase / 'execution_plan.json')

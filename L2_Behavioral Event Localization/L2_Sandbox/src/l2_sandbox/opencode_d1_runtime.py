@@ -11,7 +11,7 @@ import hashlib
 import math
 from pathlib import Path
 
-from .opencode_admission import Admission, transport_guard
+from .opencode_admission import Admission, transport_guard, validate_budget_authorization
 from .v05 import build_interleaved_arm_schedule
 from .v3_execution import (digest, exclusive, file_digest, identity, item_score,
                            read_json, seal, verify_branch, verify_seal, write_json)
@@ -91,6 +91,8 @@ def _verify_plan(plan):
         raise ValueError('original 24+6/n14 scientific configuration required')
     if not Path(plan.get('runs_dir', '')).is_absolute():
         raise ValueError('absolute runs directory required')
+    if 'branch_storage_root' in plan:
+        _branch_storage_root(plan)
     if plan.get('limits', {}).get('max_invalid_attempts') != 1:
         raise ValueError('one fatal invalid attempt hard stop required')
     return scientific
@@ -101,8 +103,19 @@ def _jobs(plan, output):
     return _scheduled_jobs(plan, output)
 
 
+def _branch_storage_root(plan):
+    name = plan.get('branch_storage_root')
+    if not isinstance(name, str) or not Path(name).is_absolute():
+        raise ValueError('absolute branch storage root required')
+    path = Path(name)
+    if '..' in path.parts or any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError('branch storage root cannot traverse symlinks or parent components')
+    return path
+
+
 def _scheduled_jobs(plan, output):
     """Reconstruct original bindings without executing obsolete source validators."""
+    package_root = _branch_storage_root(plan) if 'branch_storage_root' in plan else output / 'branches'
     scientific = plan['scientific_plan']
     failures = scientific.get('unit_schedules', [])
     controls = scientific.get('r12_passing_harm_check_plan', {}).get('sampled_passing_units', [])
@@ -142,7 +155,7 @@ def _scheduled_jobs(plan, output):
             binding['branch_id'] = digest(binding)
             group.append(dict(unit=unit, branch=branch, message=message, binding=binding,
                 path=output / 'receipts' / (binding['branch_id'] + '.json'),
-                package=output / 'branches' / binding['branch_id']))
+                package=package_root / binding['branch_id']))
         groups.append(group)
     jobs = [g[i] for i in range(max(map(len, groups))) for g in groups if i < len(g)]
     if len(jobs) != 2282 or len({j['binding']['branch_id'] for j in jobs}) != 2282:
@@ -332,6 +345,8 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     """Read a closed predecessor without editing or rerunning any old attempt."""
     prior = plan.get('predecessor')
     if prior is None:
+        if plan.get("budget_authorization") is not None:
+            raise ValueError("budget authorization requires a predecessor")
         return dict(requests=0, tokens=0, cost_usd=0.0, http_send_count=0,
                     invalid_attempts=0, completed=0, infrastructure_invalid=0,
                     branch_invalid=0, fatal_invalid=0)
@@ -376,20 +391,40 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
             expected_model.setdefault('options', {})[key] = supported
     if expected_model != plan['model']:
         raise ValueError('successor may only add or retain supported internal policies')
-    deadline = supervisor.get('deadline_epoch')
-    if (type(deadline) not in (int, float) or not math.isfinite(deadline)
-            or plan.get('deadline_epoch') != deadline
-            or (old_plan.get('deadline_epoch') is not None and old_plan['deadline_epoch'] != deadline)
-            or deadline > supervisor['started_at_epoch'] + old_plan['limits']['max_wall_seconds']):
-        raise ValueError('successor must preserve predecessor absolute deadline')
-    for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
+    for count in ('requests', 'tokens', 'cost_usd'):
         used = old_admission.get(count)
         if (type(used) not in (int, float) or not math.isfinite(used) or used < 0
-                or old_result.get(count) != used
-                or plan['limits'][cap] + used > old_plan['limits'][cap] + 1e-12):
+                or old_result.get(count) != used):
             raise ValueError('successor limits must carry all predecessor usage')
-    if not 0 < plan['limits']['max_wall_seconds'] <= old_plan['limits']['max_wall_seconds'] <= 86400:
-        raise ValueError('successor wall budget exceeds original cap')
+    prior_deadline = supervisor.get('deadline_epoch')
+    if (type(prior_deadline) not in (int, float) or not math.isfinite(prior_deadline)
+            or (old_plan.get('deadline_epoch') is not None and old_plan['deadline_epoch'] != prior_deadline)
+            or prior_deadline > supervisor['started_at_epoch'] + old_plan['limits']['max_wall_seconds']):
+        raise ValueError('invalid predecessor absolute deadline')
+    grant = None
+    if plan.get('budget_authorization') is not None:
+        grant = read_json(_bound_reference(plan, plan['budget_authorization']))
+        validate_budget_authorization(grant, old_plan['artifact_sha256'])
+        if (plan.get('deadline_epoch') != grant['deadline_epoch']
+                or plan['limits']['max_wall_seconds'] != grant['max_wall_seconds']
+                or plan['model'] != old_plan['model']):
+            raise ValueError('authorized extension must preserve the actor and finite phase deadline')
+    else:
+        deadline = supervisor.get('deadline_epoch')
+        if (type(deadline) not in (int, float) or not math.isfinite(deadline)
+                or plan.get('deadline_epoch') != deadline
+                or (old_plan.get('deadline_epoch') is not None and old_plan['deadline_epoch'] != deadline)
+                or deadline > supervisor['started_at_epoch'] + old_plan['limits']['max_wall_seconds']):
+            raise ValueError('successor must preserve predecessor absolute deadline')
+        for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
+            used = old_admission.get(count)
+            if (type(used) not in (int, float) or not math.isfinite(used) or used < 0
+                    or old_result.get(count) != used
+                    or plan['limits'][cap] + used > old_plan['limits'][cap] + 1e-12):
+                raise ValueError('successor limits must carry all predecessor usage')
+        if not 0 < plan['limits']['max_wall_seconds'] <= old_plan['limits']['max_wall_seconds'] <= 86400:
+            raise ValueError('successor wall budget exceeds original cap')
+
     directory = Path(prior['receipt_directory'])
     if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
         raise ValueError('absolute predecessor receipt directory required')
@@ -402,8 +437,11 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     counts = dict(completed=0, infrastructure_invalid=0)
     paths = sorted(directory.glob('*.json'))
     retained_ids = {p.stem for p in paths}
-    for name in ('branches', 'provenance'):
-        retained = directory.parent / name
+    retained_directories = {directory.parent / 'branches', directory.parent / 'provenance'}
+    if 'branch_storage_root' in old_plan:
+        storage = _branch_storage_root(old_plan)
+        retained_directories.update((storage, storage.parent / 'provenance'))
+    for retained in retained_directories:
         if retained.exists() and any(p.name not in retained_ids for p in retained.iterdir()):
             raise ValueError('uncertain predecessor branch without a bound receipt')
     for path in paths:
@@ -485,8 +523,24 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     for key in ('branch_invalid', 'fatal_invalid'):
         if key in old_result and old_result[key] != own[key]:
             raise ValueError('predecessor invalid accounting differs')
+    if grant is not None:
+        for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
+            remaining = grant['cumulative_limits'][cap] - aggregate[count]
+            value = plan['limits'][cap]
+            if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                    or not math.isclose(value, remaining, rel_tol=0, abs_tol=1e-12)):
+                raise ValueError('authorized extension must subtract all ancestor usage exactly once')
     return dict(aggregate, **counts)
 
+
+
+def _admission_authorization(plan):
+    """Called only after the entire predecessor chain has been verified."""
+    while plan.get('predecessor') is not None:
+        if plan.get('budget_authorization') is not None:
+            return read_json(_bound_reference(plan, plan['budget_authorization']))
+        plan = read_json(_bound_reference(plan, plan['predecessor']['plan']))
+    return None
 
 
 def execute(plan: dict, output: Path, branch_adapter=None):
@@ -513,7 +567,8 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                 else:
                     failures.append(receipt)
             elif 'predecessor_seed' in job:
-                if job['package'].exists() or (output / 'provenance' / job['binding']['branch_id']).exists():
+                if job['package'].exists() or any((root / 'provenance' / job['binding']['branch_id']).exists()
+                        for root in (output, job['package'].parent.parent)):
                     raise ValueError('carried branch has an uncertain successor attempt')
                 receipt = job['predecessor_seed']
                 write_json(job['path'], receipt)
@@ -521,13 +576,15 @@ def execute(plan: dict, output: Path, branch_adapter=None):
                     completed[job['binding']['branch_id']] = receipt
                 else:
                     failures.append(receipt)
-            elif job['package'].exists() or (output / 'provenance' / job['binding']['branch_id']).exists():
+            elif job['package'].exists() or any((root / 'provenance' / job['binding']['branch_id']).exists()
+                        for root in (output, job['package'].parent.parent)):
                 raise ValueError('uncertain existing branch; automatic retry forbidden')
             else:
                 missing.append(job)
         ledger = Admission(output / 'admission.json', plan['artifact_sha256'],
                            caps=plan['limits'], expected_model=MODEL,
-                           absolute_deadline=plan.get('deadline_epoch'))
+                           absolute_deadline=plan.get('deadline_epoch'),
+                           budget_authorization=_admission_authorization(plan))
 
         process_finished = False
 
