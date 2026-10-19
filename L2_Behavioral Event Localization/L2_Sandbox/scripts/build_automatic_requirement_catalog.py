@@ -91,7 +91,8 @@ def verifier_aliases(text: str) -> dict[str, list[dict]]:
     return found
 
 
-def build_catalog(root: Path = ROOT, *, validate_grades: bool = True) -> dict:
+def build_catalog(root: Path = ROOT, *, validate_grades: bool = True,
+                  grades_dir: Path | None = None) -> dict:
     def load(rel: Path) -> dict:
         return json.loads((root / rel).read_text())
 
@@ -211,19 +212,39 @@ def build_catalog(root: Path = ROOT, *, validate_grades: bool = True) -> dict:
                                       'verifier_static_alias_count': len(aliases), 'catalog_rule_count': len(entries)}
     # Observations cannot mutate the constructed catalog. Read every row, not only failures.
     if validate_grades:
-        diag = root / L2 / 'diagnoses/d0_20261018'
+        diag = Path(grades_dir) if grades_dir is not None else L2 / 'diagnoses/d0_20261018'
+        if not diag.is_absolute():
+            diag = root / diag
+        diag = diag.resolve()
+        metadata['grade_alias_validation_directory'] = str(diag)
         for task in DEV9:
             observed: set[str] = set()
             validation_sources = []
-            for path in sorted(diag.glob(f'{task}.r*/grades.jsonl')):
-                validation_sources.append({'path': str(path.relative_to(root)), 'sha256': sha(path)})
+            paths = sorted(diag.glob(f'{task}.r*/grades.jsonl'))
+            if not paths:
+                raise ValueError(f'{task}: missing grade validation files in {diag}')
+            grade_rows = 0
+            for path in paths:
+                try:
+                    source_path = str(path.relative_to(root))
+                except ValueError:
+                    source_path = str(path)
+                validation_sources.append({'path': source_path, 'sha256': sha(path)})
+                file_rows = 0
                 for line in path.read_text().splitlines():
                     row = json.loads(line)
+                    if not isinstance(row, dict):
+                        raise ValueError(f'{path}: grade row must be an object')
+                    file_rows += 1
                     observed.update(row.get('deductions', {}))
+                if not file_rows:
+                    raise ValueError(f'{path}: empty grade validation file')
+                grade_rows += file_rows
             missing = sorted(observed - set(output[task]) - {'dim1_gate'})
             metadata['coverage'][task]['observed_grade_alias_validation'] = {
                 'observed_distinct_aliases': sorted(observed), 'uncovered': missing,
                 'complete': not missing, 'used_for_construction': False, 'validation_sources': validation_sources,
+                'grade_row_count': grade_rows,
             }
         metadata['grade_alias_validation_complete'] = all(v['observed_grade_alias_validation']['complete'] for v in metadata['coverage'].values())
     metadata['effective_review_counts'] = {
@@ -238,8 +259,10 @@ def build_catalog(root: Path = ROOT, *, validate_grades: bool = True) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / DEFAULT_OUTPUT)
+    parser.add_argument('--grades-dir', type=Path,
+                        help='Grade alias validation directory; defaults to legacy diagnoses/d0_20261018.')
     args = parser.parse_args()
-    doc = build_catalog()
+    doc = build_catalog(grades_dir=args.grades_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'output': str(args.output), 'grade_alias_validation_complete': doc['metadata']['grade_alias_validation_complete'],

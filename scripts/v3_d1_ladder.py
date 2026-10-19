@@ -150,6 +150,122 @@ def _enrich_cp_rows_with_package_budgets(
     return enriched
 
 
+def _prospective_inputs(*, runs_dir, diag_dir, cohort_path, collection_plan_path,
+                        prospective_freeze_path, e1_verification_path, logical_root=None, physical_root=None):
+    """Bind the complete collected pool; never infer membership from directory order."""
+    paths = (cohort_path, collection_plan_path, prospective_freeze_path, e1_verification_path)
+    if any(p is None for p in paths):
+        raise ValueError("prospective planning requires cohort, collection plan, freeze and E1 verification")
+    cohort, collection, freeze, e1 = (read_json(Path(p)) for p in paths)
+    verify_seal(collection, "plan_sha256")
+    expected_tasks = {f"officeval_{n}" for n in ("003", "004", "010", "033", "050", "060", "070", "085", "090")}
+    expected = {f"{t}.r{r:02d}" for t in expected_tasks for r in range(5)}
+    slots = cohort.get("slots", {})
+    extra_episodes = [ep.name for ep in runs_dir.iterdir()
+                      if ep.is_dir() and (ep / "manifest.json").exists() and ep.name not in expected]
+    if extra_episodes:
+        raise ValueError(f"episodes outside frozen prospective cohort: {sorted(extra_episodes)}")
+    if set(slots) != expected or set(collection.get("slots", [])) != expected:
+        raise ValueError("prospective cohort must contain exactly DEV9 x five slots")
+    if cohort.get("plan_sha256") != collection.get("plan_sha256"):
+        raise ValueError("cohort collection plan mismatch")
+    if collection.get("prospective_freeze_sha256") != file_digest(Path(prospective_freeze_path)):
+        raise ValueError("prospective freeze mismatch")
+    cohort_sha = file_digest(Path(cohort_path))
+    if e1.get("full_45_ready") is not True or e1.get("cohort_sha256") != cohort_sha:
+        raise ValueError("E1 verification not ready or belongs to another cohort")
+    e1_rows = {r["slot"]: r for r in e1.get("slots", [])}
+    if set(e1_rows) != expected:
+        raise ValueError("E1 verification does not cover exact cohort")
+    refs = {}
+    if (logical_root is None) != (physical_root is None):
+        raise ValueError("logical and physical roots must be supplied together")
+    def mapped(path):
+        path = Path(path)
+        if logical_root is not None:
+            try:
+                return Path(physical_root) / path.relative_to(Path(logical_root))
+            except ValueError:
+                pass
+        return path
+    def bind(path, expected_sha=None):
+        path = mapped(path)
+        actual = file_digest(path)
+        if expected_sha is not None and actual != expected_sha:
+            raise ValueError(f"prospective input hash mismatch: {path}")
+        refs[str(path.resolve())] = actual
+        return actual
+    for p in paths:
+        bind(p)
+    task_configs = collection.get("configs", {})
+    if set(task_configs) != expected_tasks:
+        raise ValueError("collection plan requires all nine full task configurations")
+    for label, slot in slots.items():
+        ep = runs_dir / label
+        if slot.get("study_valid") is not True or slot.get("status") != "completed":
+            raise ValueError(f"invalid prospective slot: {label}")
+        if mapped(slot["path"]).resolve() != ep.resolve():
+            raise ValueError(f"slot path mismatch: {label}")
+        for rel, key in (("evidence_index.json", "index_file_sha256"), ("manifest.json", "manifest_sha256")):
+            bind(ep / rel, slot[key])
+        config_path = ep / "raw/resolved_config.json"
+        bind(config_path)  # Preserve exact bytes separately from the cohort's canonical JSON digest.
+        config = read_json(config_path)
+        if digest(config) != slot["config_sha256"]:
+            raise ValueError(f"prospective configuration hash mismatch: {label}")
+        if config != task_configs[slot["task_id"]]:
+            raise ValueError(f"full task configuration differs: {label}")
+        row = e1_rows[label]
+        binding = row.get("binding", {})
+        for key, slot_key in (("parent_index_sha256", "index_file_sha256"), ("manifest_sha256", "manifest_sha256"),
+                              ("config_sha256", "config_sha256"), ("episode_id", "episode_id")):
+            if binding.get(key) != slot[slot_key]:
+                raise ValueError(f"E1 parent binding differs: {label}:{key}")
+        if binding.get("cohort_sha256") != cohort_sha or not binding.get("source_sha256"):
+            raise ValueError(f"E1 cohort/source binding absent: {label}")
+        for name in ("facts.jsonl", "grades.jsonl", "defects.json"):
+            bind(diag_dir / label / name, row["outputs"][name])
+        for name in ("receipt.json", "grading_receipt.json"):
+            candidate = diag_dir / label / name
+            expected_receipt = row.get("receipt_sha256" if name == "receipt.json" else "grading_receipt_sha256")
+            if not expected_receipt:
+                raise ValueError(f"missing E1 receipt binding: {label}:{name}")
+            bind(candidate, expected_receipt)
+        for cp in sorted((ep / "checkpoints").glob("cp*.json")):
+            bind(cp)
+        bind(ep / "official_grade.json")
+    manifest_path = Path(e1_verification_path).parent / "e1/manifest.json"
+    bind(manifest_path, e1["manifest_sha256"])
+    runtime = collection.get("expected_service_identity", {}).get("identity_receipt", {})
+    if not runtime.get("path") or not runtime.get("sha256"):
+        raise ValueError("actual model runtime identity required")
+    bind(runtime["path"], runtime["sha256"])
+    # Collection analysis scripts may evolve; actual L1 execution code must remain identical.
+    # The immutable collection plan and archived source preserve the older analysis identity.
+    for rel, sha in collection.get("source_fingerprints", {}).items():
+        if rel.startswith("L1_sandbox/"):
+            bind(REPO_ROOT / rel, sha)
+    archive = Path(prospective_freeze_path).parent / "p1_controller_image_pin/controller_source.tar"
+    bind(archive)
+    for filename, sha in collection.get("bound_files", {}).items():
+        bind(filename, sha)
+    return {"dataset_id": f"{runs_dir.parent.name}:{cohort_sha}", "cohort_sha256": cohort_sha,
+            "collection_plan_sha256": collection["plan_sha256"], "full_task_configs": task_configs,
+            "runtime_identity": runtime, "inputs": refs, "slot_ids": sorted(expected),
+            "read_only_path_mapping": {"logical_root": str(logical_root) if logical_root else None,
+                                       "physical_root": str(physical_root) if physical_root else None}}
+
+
+def verify_prospective_plan_inputs(plan):
+    """Recheck data and source bytes without assuming the current Git HEAD."""
+    binding = plan.get("prospective_binding")
+    if not binding:
+        raise ValueError("missing prospective plan binding")
+    for filename, expected in binding["inputs"].items():
+        if file_digest(Path(filename)) != expected:
+            raise ValueError(f"prospective plan input changed: {filename}")
+
+
 def build_d1_units_and_plan(
     *,
     runs_dir: Path,
@@ -169,11 +285,26 @@ def build_d1_units_and_plan(
     ceiling_threshold: float = 0.05,
     gate_audit_path: Path | None = None,
     human_review_authorization_path: Path | None = None,
+    cohort_path: Path | None = None,
+    collection_plan_path: Path | None = None,
+    prospective_freeze_path: Path | None = None,
+    e1_verification_path: Path | None = None,
+    logical_root: Path | None = None,
+    physical_root: Path | None = None,
 ) -> dict[str, Any]:
     if not 0 < passing_harm_sample_size <= 6:
         raise ValueError("passing harm sample must be positive and capped at six")
     if target_failure_units <= 0 or n_per_arm <= 0:
         raise ValueError("positive failure-unit target and replication count required")
+    prospective = None
+    v2_requested = gate_audit_path is not None and gate_audit_path.exists() and read_json(gate_audit_path).get("policy") == "bounded-mechanism-contract-v2"
+    if v2_requested and not all(p is not None for p in (cohort_path, collection_plan_path, prospective_freeze_path, e1_verification_path)):
+        raise ValueError("v2 measurement contract requires complete prospective inputs")
+    if any(p is not None for p in (cohort_path, collection_plan_path, prospective_freeze_path, e1_verification_path)):
+        prospective = _prospective_inputs(runs_dir=runs_dir, diag_dir=diag_dir, cohort_path=cohort_path,
+            collection_plan_path=collection_plan_path, prospective_freeze_path=prospective_freeze_path,
+            e1_verification_path=e1_verification_path, logical_root=logical_root, physical_root=physical_root)
+    dataset_id = prospective["dataset_id"] if prospective else "v3_qwen36_pi_dev45_20261017"
     p0a = _load_json(p0a_catalog_path) if p0a_catalog_path.exists() else {}
     review_policy, review_authorization = _bind_requirement_review_policy(human_review_authorization_path)
     requirement_options = {"human_review_policy": review_policy["human_review_policy"],
@@ -197,6 +328,8 @@ def build_d1_units_and_plan(
         for ep_dir in sorted(runs_dir.iterdir()):
             if not ep_dir.is_dir() or not (ep_dir / "manifest.json").exists():
                 continue
+            if prospective and ep_dir.name not in prospective["slot_ids"]:
+                raise ValueError(f"episode outside frozen prospective cohort: {ep_dir.name}")
             st_out = study_outcome(ep_dir)
             if not st_out.get("study_valid"):
                 continue
@@ -397,13 +530,13 @@ def build_d1_units_and_plan(
                     )
 
     # Allocate the approved total across observed strata before drawing any units.
-    census = build_v3_stratified_sampling_frame(units, dataset_id="v3_qwen36_pi_dev45_20261017", target_sample_per_stratum=len(units))
+    census = build_v3_stratified_sampling_frame(units, dataset_id=dataset_id, target_sample_per_stratum=len(units))
     allocation = {sid: 0 for sid in census["strata"]}
     for _ in range(min(target_failure_units, census["total_eligible_never_units"])):
         available = [sid for sid, row in census["strata"].items() if allocation[sid] < row["population_count"]]
         sid = min(available, key=lambda sid: (allocation[sid], sid))
         allocation[sid] += 1
-    frame = build_v3_stratified_sampling_frame(units, dataset_id="v3_qwen36_pi_dev45_20261017", target_sample_per_stratum=allocation)
+    frame = build_v3_stratified_sampling_frame(units, dataset_id=dataset_id, target_sample_per_stratum=allocation)
     for sampled in frame["sampled_units"]:
         sampled["inclusion_prob"] = sampled["stratum_sample_size"] / sampled["stratum_population_size"]
     for sid, row in frame["strata"].items():
@@ -415,6 +548,8 @@ def build_d1_units_and_plan(
         readiness_errors.append("insufficient_failure_units_for_frozen_target")
     if len(scanned_episodes) != 45:
         readiness_errors.append("development_cohort_not_complete_45")
+    if prospective and set(scanned_episodes) != set(prospective["slot_ids"]):
+        readiness_errors.append("scanned_episode_membership_differs_from_frozen_cohort")
 
     chosen_passing = passing_candidates[:passing_harm_sample_size]
     if len(chosen_passing) < passing_harm_sample_size:
@@ -508,7 +643,7 @@ def build_d1_units_and_plan(
         ),
         "family_mapping": {"path": str(family_path), "sha256": file_digest(family_path), "semantics": family_doc.get("group_semantics")},
         "source_dataset": {
-            "dataset_id": "v3_qwen36_pi_dev45_20261017",
+            "dataset_id": dataset_id,
             "runs_dir": str(runs_dir),
             "scanned_valid_episodes": len(scanned_episodes),
             "episode_ids": scanned_episodes,
@@ -589,6 +724,8 @@ def build_d1_units_and_plan(
     gate_binding, gate_errors = measurement_gate_binding(
         gate_audit_path or L2_ROOT / "reports/v3_gates_g2_g3_g4_audit_20261017.json"
     )
+    if gate_binding.get("policy") == "bounded-mechanism-contract-v2" and not prospective:
+        raise ValueError("v2 measurement contract requires complete prospective inputs")
     plan_payload["measurement_gate_binding"] = gate_binding
     readiness_errors.extend(gate_errors)
     for unit in [*unit_schedules, *chosen_passing]:
@@ -598,10 +735,42 @@ def build_d1_units_and_plan(
         readiness_errors.append("missing_or_inconsistent_frozen_local_actor_identity")
     plan_payload["readiness_errors"] = sorted(set(readiness_errors))
     plan_payload["execution_ready"] = bool(unit_schedules and not readiness_errors)
+    if prospective:
+        for path in [p0a_catalog_path, family_path, Path(__file__),
+                     *sorted((L2_ROOT / "src/l2_sandbox").rglob("*.py"))]:
+            prospective["inputs"][str(path.resolve())] = file_digest(path)
+        if gate_audit_path is not None:
+            prospective["inputs"][str(gate_audit_path.resolve())] = file_digest(gate_audit_path)
+        plan_payload["prospective_binding"] = prospective
+        plan_payload["scientific_plan_ready"] = bool(unit_schedules and not readiness_errors)
+        plan_payload["execution_authorized"] = False
+        plan_payload["execution_ready"] = False
+        plan_payload["execution_blockers"] = ["prospective_runtime_observer_not_integrated",
+                                               "operational_execution_caps_not_frozen"]
+        plan_payload["canonical_unit_census"] = {
+            "all_failure_units": len(units), "eligible_never_units": census["total_eligible_never_units"],
+            "strata": census["strata"], "failure_sample": len(unit_schedules),
+            "failure_unique_parents": len({u["episode_id"] for u in unit_schedules}),
+            "failure_unique_families": len({u["family_id"] for u in unit_schedules}),
+            "control_sample": len(chosen_passing),
+            "control_unique_parents": len({u["episode_id"] for u in chosen_passing}),
+            "control_unique_families": len({u["family_id"] for u in chosen_passing}),
+            "control_selection": "first_six_canonical_candidates; items may share parents",
+            "independence_limit": "failure and control items are not independent parent trajectories or families",
+        }
+        plan_payload["budget_and_stop_conditions"]["full_schedule_within_http_cap"] = total_max_requests <= 15000
+        plan_payload["budget_and_stop_conditions"]["schedule_may_stop_incomplete"] = total_max_requests > 15000
+        plan_payload["budget_and_stop_conditions"]["stop_conditions"].append(
+            "Stop at 15000 total HTTP attempts or 86400 wall seconds; never redefine the frozen pool.")
+        verify_prospective_plan_inputs(plan_payload)
     return seal(plan_payload, "plan_sha256")
 
 
 def _execute_d1_locked(plan, *, runs_dir, receipts_dir, outcomes_out, freeze, branch_runner=None, simulate_offline=False):
+    if plan.get("prospective_binding") or (plan.get("measurement_gate_binding") or {}).get("policy") == "bounded-mechanism-contract-v2":
+        if plan.get("prospective_binding"):
+            verify_prospective_plan_inputs(plan)
+        raise ValueError("prospective D1 plan is plan-only; execution is not authorized or ready")
     if simulate_offline and branch_runner is None:
         raise ValueError('offline simulation requires an explicit injected adapter; native execution is forbidden')
     caps = approve(plan, freeze)
@@ -788,6 +957,12 @@ def execute_d1_plan(plan, *, runs_dir, receipts_dir, outcomes_out, freeze=None, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="V3 Stage D1 Ladder & R12 Harm Check (default: --plan-only)")
+    parser.add_argument("--logical-root", type=Path)
+    parser.add_argument("--physical-root", type=Path)
+    parser.add_argument("--cohort", type=Path)
+    parser.add_argument("--collection-plan", type=Path)
+    parser.add_argument("--prospective-freeze", type=Path)
+    parser.add_argument("--e1-verification", type=Path)
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_DEV45_RUNS_DIR)
     parser.add_argument("--diag-dir", type=Path, default=DEFAULT_DEV45_DIAG_DIR)
     parser.add_argument("--p0a-catalog", type=Path, default=DEFAULT_P0A_CATALOG)
@@ -821,6 +996,9 @@ def main() -> int:
         sys.stderr.write("BLOCKED: --execute requires --approved-plan and exact frozen approval.\n")
         return 2
     plan = read_json(args.approved_plan) if args.execute else build_d1_units_and_plan(
+        logical_root=args.logical_root, physical_root=args.physical_root,
+        cohort_path=args.cohort, collection_plan_path=args.collection_plan,
+        prospective_freeze_path=args.prospective_freeze, e1_verification_path=args.e1_verification,
         runs_dir=args.runs_dir,
         diag_dir=args.diag_dir,
         p0a_catalog_path=args.p0a_catalog,

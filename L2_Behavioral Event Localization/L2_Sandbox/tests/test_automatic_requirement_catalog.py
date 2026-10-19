@@ -99,3 +99,50 @@ def test_prior_approvals_are_applied_only_at_exact_saved_identity(catalog):
     assert info['visible_requirement'] == '横线样式和图片中的一样'
     assert '0.15cm' in info['exact_verifier_specification']
     assert catalog['metadata']['effective_review_counts']['human_approval_decisions'] == 10
+
+
+def _write_grade_pool(directory, catalog):
+    for task in module.DEV9:
+        path = directory / f'{task}.r00/grades.jsonl'
+        path.parent.mkdir(parents=True)
+        alias = next(iter(catalog[task]))
+        path.write_text(json.dumps({'deductions': {alias: 1}}) + '\n')
+
+
+def test_explicit_grade_pool_is_bound_without_changing_construction(tmp_path, catalog):
+    _write_grade_pool(tmp_path, catalog)
+    fresh = module.build_catalog(grades_dir=tmp_path)
+    assert fresh['metadata']['grade_alias_validation_complete']
+    assert fresh['metadata']['grade_alias_validation_directory'] == str(tmp_path.resolve())
+    assert fresh['metadata']['construction_sha256'] == catalog['metadata']['construction_sha256']
+    for task in module.DEV9:
+        validation = fresh['metadata']['coverage'][task]['observed_grade_alias_validation']
+        path = tmp_path / f'{task}.r00/grades.jsonl'
+        assert validation['validation_sources'] == [{'path': str(path), 'sha256': module.sha(path)}]
+        assert validation['grade_row_count'] == 1
+
+
+@pytest.mark.parametrize('empty_file', [False, True])
+def test_missing_or_empty_fresh_grades_fail_closed(tmp_path, catalog, empty_file):
+    _write_grade_pool(tmp_path, catalog)
+    path = tmp_path / f'{module.DEV9[-1]}.r00/grades.jsonl'
+    if empty_file:
+        path.write_text('')
+    else:
+        path.unlink()
+    with pytest.raises(ValueError, match='empty grade validation file|missing grade validation files'):
+        module.build_catalog(grades_dir=tmp_path)
+
+
+def test_changed_outcome_aliases_only_change_validation(tmp_path, catalog):
+    _write_grade_pool(tmp_path, catalog)
+    before = module.build_catalog(grades_dir=tmp_path)
+    path = tmp_path / f'{module.DEV9[0]}.r00/grades.jsonl'
+    path.write_text(json.dumps({'deductions': {'new outcome-only alias': 99}}) + '\n')
+    after = module.build_catalog(grades_dir=tmp_path)
+    assert not after['metadata']['grade_alias_validation_complete']
+    check = after['metadata']['coverage'][module.DEV9[0]]['observed_grade_alias_validation']
+    assert check['uncovered'] == ['new outcome-only alias']
+    assert check['validation_sources'][0]['sha256'] != before['metadata']['coverage'][module.DEV9[0]]['observed_grade_alias_validation']['validation_sources'][0]['sha256']
+    assert before['metadata']['construction_sha256'] == after['metadata']['construction_sha256']
+    assert {t: before[t] for t in module.DEV9} == {t: after[t] for t in module.DEV9}

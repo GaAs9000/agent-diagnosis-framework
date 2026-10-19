@@ -59,6 +59,8 @@ def measurement_gate_binding(path: Path) -> tuple[dict, list[str]]:
     binding["sha256"] = file_digest(path)
     try:
         audit = read_json(path)
+        if audit.get("schema") == "prospective_measurement_readiness_v2":
+            return _prospective_measurement_binding_v2(audit, path, binding)
         if audit.get("schema") == "prospective_measurement_readiness_v1":
             return _prospective_measurement_binding(audit, path, binding)
         policy, policy_errors = human_review_policy_binding(audit, path)
@@ -441,3 +443,192 @@ def _g2_reclassifications(g2: dict, plan: dict, sidecar: dict | None) -> dict:
         _require(key not in replacements, "g2_duplicate_reclassification")
         replacements[key] = after
     return replacements
+
+
+_PROSPECTIVE_POLICY_V2 = "bounded-mechanism-contract-v2"
+
+
+def _v2_references(audit: dict, path: Path) -> tuple[dict, dict]:
+    documents, bound = {}, {}
+    names = ("collection_plan", "prospective_freeze", "cohort", "g1", "g2", "g2_plan", "g4",
+             "e1_manifest", "e1_verification", "authorization", "v2_contract", "v2_authorization",
+             "g2_v2", "g2_forensics")
+    for key in names:
+        ref = audit["refs"][key]
+        target = Path(ref["path"])
+        if not target.is_absolute():
+            target = path.parent / target
+        target = target.resolve()
+        _require(target.is_file() and file_digest(target) == ref["sha256"], f"reference_changed:{key}")
+        documents[key] = read_json(target)
+        bound[key] = {"path": str(target), "sha256": ref["sha256"]}
+    return documents, bound
+
+
+def _v2_contract(policy: dict) -> None:
+    _require(policy.get("schema") == "bounded-mechanism-contract-policy-v2"
+             and policy.get("policy") == _PROSPECTIVE_POLICY_V2
+             and policy.get("derived_from_policy") == _PROSPECTIVE_POLICY
+             and policy.get("post_hoc_forensic_extension") is True
+             and policy.get("preserve_v1_original_decision") is True
+             and policy.get("v1_decision") == "blocked_unexplained_difference"
+             and policy.get("reuse_existing_evidence_only") is True
+             and policy.get("requires_independent_raw_reaudit") is True
+             and policy.get("inherit_v1_docx_zip_timestamp_exception_only") is True
+             and policy.get("raw_tool_output_byte_equivalence") is False
+             and policy.get("statistical_equivalence") == "not_established"
+             and policy.get("outcome_distribution_equivalence") == "not_established"
+             and policy.get("current_execution_scope") == "D0_freeze_and_D1_plan_only",
+             "v2_contract_scope")
+    for name in ("additional_tool_replays", "actor_requests", "analyst_requests"):
+        _require(type(policy.get(name)) is int and policy[name] == 0, "v2_contract_execution_scope")
+    _require(policy.get("exemptions") == {
+        "ls_runtime_metadata_v2": {
+            "allowed": ["uid", "gid", "mtime", "directory_total_allocated_blocks"],
+            "exact": ["entry_count", "mode", "links", "logical_size", "name"],
+            "requires_after_state_exact": True, "requires_other_observation_fields_exact": True,
+            "forms": ["directory_ls_la", "single_file_ls_la", "cd_then_ls_la", "cp_then_ls_la"],
+        },
+        "python_object_repr_address_v1": {
+            "allowed": ["hexadecimal_address_in_default_python_object_repr"],
+            "requires_after_state_exact": True,
+            "requires_full_stdout_stderr_and_other_observation_fields_exact_except_named_addresses": True,
+        },
+    }, "v2_contract_exemptions")
+
+
+def _v2_authorization(authorization: dict, authorization_path: Path) -> dict:
+    _require(authorization.get("authorization_source") == "direct_user_request_attachment",
+             "v2_authorization_source")
+    scope = authorization.get("adoption_scope", {})
+    _require(scope.get("policy") == _PROSPECTIVE_POLICY_V2
+             and scope.get("post_hoc_forensic_extension") is True
+             and scope.get("execution") == "D0_freeze_and_D1_plan_only"
+             and type(scope.get("actor_requests")) is int and scope["actor_requests"] == 0
+             and type(scope.get("analyst_requests")) is int and scope["analyst_requests"] == 0,
+             "v2_authorization_scope")
+    ref = authorization["request_attachment"]
+    source = Path(ref["path"])
+    if not source.is_absolute():
+        source = authorization_path.parent / source
+    source = source.resolve()
+    _require(source.is_file() and source.stat().st_size > 0
+             and file_digest(source) == ref["sha256"], "v2_authorization_attachment_changed")
+    return {"path": str(source), "sha256": ref["sha256"]}
+
+
+def _g2_v2_structure(g2: dict, plan: dict, refs: dict, slots: dict) -> None:
+    """Check original coverage/accounting without rewriting its blocked verdict."""
+    _require(plan.get("schema") == "prospective_tool_replay_v1", "g2_plan_schema")
+    for key, target in (("cohort", "cohort"), ("collection_plan", "collection_plan"), ("freeze", "prospective_freeze")):
+        _same_ref(plan, key, refs, target)
+    _require(g2.get("schema") == "prospective_tool_replay_result_v1"
+             and g2.get("status") == "blocked_unexplained_difference"
+             and g2.get("mechanism_gate_pass") is False
+             and g2.get("actor_requests") == 0 and g2.get("analyst_requests") == 0
+             and not g2.get("not_run") and not g2.get("error")
+             and g2.get("plan_sha256") == refs["g2_plan"]["sha256"], "g2_original_binding")
+    expected = {b["batch_id"]: b for b in plan["batches"]}
+    actual = {b["batch_id"]: b for b in g2["batches"]}
+    _require(len(expected) == len(plan["batches"]) == 67
+             and len(actual) == len(g2["batches"]) and set(actual) == set(expected), "g2_batch_coverage")
+    indices = plan["package_indices"]
+    _require(len(indices) == len(slots)
+             and {Path(package).name: sha for package, sha in indices.items()}
+             == {name: row["index_file_sha256"] for name, row in slots.items()}, "g2_package_indices")
+    _require(plan.get("limits") == {"actor_http_requests": 0, "replays_per_batch": 2,
+                                    "tool_calls": 6300, "wall_seconds": 21600, "workers": 1}, "g2_frozen_limits")
+    attempts = 0
+    for key, batch in actual.items():
+        selected = expected[key]
+        _require(selected["slot"] in slots
+                 and indices.get(selected["package"]) == slots[selected["slot"]]["index_file_sha256"]
+                 and Path(selected["package"]).name == selected["slot"], "g2_cohort_slot")
+        replays = batch["replays"]
+        _require(bool(replays), "g2_replay_coverage")
+        first_exact = all(call.get("exact") is True for call in replays[0]["calls"])
+        _require(len(replays) == (1 if first_exact else 2), "g2_replay_coverage")
+        for replay in replays:
+            _require(replay.get("status") == "complete" and replay.get("restore_exact") is True
+                     and replay.get("request_exact") == selected["request_exact"]
+                     and replay.get("cleanup", {}).get("confirmed") is True, "g2_restore_or_cleanup")
+            calls = replay["calls"]
+            attempts += len(calls)
+            _require(len(calls) == len(selected["calls"])
+                     and [c["call_id"] for c in calls] == [c["call"]["call_id"] for c in selected["calls"]],
+                     "g2_call_coverage")
+    runtime, feedback = g2.get("runtime_executions"), g2.get("native_feedback_only")
+    _require(type(runtime) is int and type(feedback) is int and runtime >= 0 and feedback >= 0
+             and attempts == g2.get("tool_attempts") == runtime + feedback == 102, "g2_attempt_accounting")
+
+
+def _prospective_measurement_binding_v2(audit: dict, path: Path, binding: dict) -> tuple[dict, list[str]]:
+    """Adopt a source-bound post-hoc contract; never upgrade the original v1 record."""
+    errors = []
+    binding.update(schema="prospective_measurement_readiness_v2", policy=audit.get("policy"),
+                   post_hoc_forensic_extension=True, statistical_equivalence="not_established",
+                   outcome_distribution_equivalence="not_established", raw_tool_byte_equivalence=False,
+                   measurement_readiness=False, execution_authorized=False, execution_readiness=False,
+                   current_execution_scope="D0_freeze_and_D1_plan_only", evidence_coverage={})
+    try:
+        _require(audit.get("policy") == _PROSPECTIVE_POLICY_V2
+                 and audit.get("post_hoc_forensic_extension") is True, "unsupported_v2_policy")
+        for name in ("statistical_equivalence", "outcome_distribution_equivalence"):
+            _require(audit.get(name, "not_established") == "not_established", "v2_equivalence_overclaim")
+        documents, refs = _v2_references(audit, path)
+        binding["refs"] = refs
+        _v2_contract(documents["v2_contract"])
+        binding["request_attachment"] = _v2_authorization(
+            documents["v2_authorization"], Path(refs["v2_authorization"]["path"]))
+        original_authorization = documents["authorization"]
+        _require(original_authorization.get("authorization_source") == "direct_user_reply"
+                 and original_authorization.get("exact_text") == "采用限定合同，披露变异并继续（推荐）"
+                 and original_authorization.get("policy") == _PROSPECTIVE_POLICY
+                 and original_authorization.get("allow_declared_runtime_variance") is True
+                 and original_authorization.get("allow_unexplained_differences") is False
+                 and "outcome-distribution equivalence" in original_authorization.get("scope", ""),
+                 "original_policy_authorization")
+        review, review_errors = human_review_policy_binding(audit, path)
+        binding.update(review)
+        errors.extend(review_errors)
+        _require(review.get("human_review_status") == "waived_by_user" and not review_errors,
+                 "human_review_policy")
+        slots, requests = _cohort_contract(documents["collection_plan"], documents["cohort"], refs)
+
+        def validate_g2():
+            _g2_v2_structure(documents["g2"], documents["g2_plan"], refs, slots)
+            # This verifier rereads and recomputes every classification from raw files;
+            # report-level pass booleans are never an admission authority.
+            import importlib.util
+            verifier_path = Path(__file__).resolve().parents[2] / "scripts/reclassify_prospective_v2.py"
+            spec = importlib.util.spec_from_file_location("_measurement_metadata_v2", verifier_path)
+            _require(spec is not None and spec.loader is not None, "g2_v2_verifier_unavailable")
+            verifier = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(verifier)
+            proof = verifier.verify_reaudit(Path(refs["g2_v2"]["path"]), expected_refs=refs)
+            binding["g2_v2_verifier"] = {"path": str(verifier_path), "sha256": file_digest(verifier_path)}
+            _require(proof.get("tool_attempts") == 102 and proof.get("unexplained") == 0,
+                     "g2_v2_recomputed_coverage")
+            binding["g2_v2_recomputed"] = proof
+
+        validators = {
+            "V3-G1": lambda: _g1_contract(documents["g1"], slots, requests, refs),
+            "V3-G2": validate_g2,
+            "V3-G3": lambda: _e1_contract(documents["e1_manifest"], documents["e1_verification"], slots,
+                                          refs, documents["prospective_freeze"]),
+            "V3-G4": lambda: _g4_contract(documents["g4"], slots, requests, refs),
+        }
+        for name, validate in validators.items():
+            try:
+                validate()
+                binding["gates"][name] = True
+            except (KeyError, IndexError, ImportError, OSError, ValueError, TypeError, AttributeError) as exc:
+                binding["gates"][name] = False
+                errors.append(f"measurement_gate_not_passed:{name}:{exc}")
+        binding["evidence_coverage"] = {"slots": len(slots), "requests": requests,
+                                        "scope": _PROSPECTIVE_POLICY_V2}
+        binding["passed"] = not errors and all(binding["gates"].values())
+        binding["measurement_readiness"] = binding["passed"]
+    except (KeyError, IndexError, OSError, ValueError, TypeError, AttributeError) as exc:
+        errors.append(f"prospective_measurement_gate_v2_invalid:{exc}")
+    return binding, errors
