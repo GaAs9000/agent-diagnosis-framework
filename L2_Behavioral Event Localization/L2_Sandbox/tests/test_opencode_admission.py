@@ -243,3 +243,53 @@ def test_tampered_ledger_rejected(tmp_path):
     path.write_text(json.dumps(value))
     with pytest.raises(ValueError, match='seal'):
         Admission(path, PLAN)
+
+
+def test_absolute_deadline_is_persisted_and_restart_cannot_renew(tmp_path, monkeypatch):
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1000)
+    path = tmp_path / 'ledger.json'
+    a = Admission(path, PLAN, absolute_deadline=1500)
+    assert a.snapshot()['absolute_deadline'] == 1500
+    assert a.remaining_seconds() == 500
+    assert a.acquire(5)
+    before = a.snapshot()
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1400)
+    b = Admission(path, PLAN, absolute_deadline=1500)
+    assert b.remaining_seconds() == 100
+    assert b.snapshot() == before  # Unknown inflight reservation remains charged.
+    for deadline in (None, 1501, 2000):
+        with pytest.raises(ValueError, match='binding'):
+            Admission(path, PLAN, absolute_deadline=deadline)
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1500)
+    c = Admission(path, PLAN, absolute_deadline=1500)
+    assert c.remaining_seconds() == 0
+    assert not c.acquire(5)
+    assert c.exhaustion_reason() == 'wall_cap'
+
+
+def test_already_past_absolute_deadline_blocks_new_successor(tmp_path, monkeypatch):
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1792473353)
+    a = Admission(tmp_path / 'ledger.json', PLAN, absolute_deadline=1792473352.757362)
+    assert a.remaining_seconds() == 0
+    assert not a.acquire(5)
+    with pytest.raises(RuntimeError, match='wall_cap'):
+        a.check()
+    assert a.snapshot()['requests'] == 0
+
+
+def test_absolute_deadline_never_extends_shorter_wall_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1000)
+    a = Admission(tmp_path / 'ledger.json', PLAN, dict(max_wall_seconds=100),
+                  absolute_deadline=1500)
+    assert a.remaining_seconds() == 100
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1100)
+    assert not a.acquire(5)
+
+
+@pytest.mark.parametrize('deadline', [True, '1500', float('nan'), float('inf'), 0, -1, 87401])
+def test_invalid_absolute_deadline_creates_no_ledger(tmp_path, monkeypatch, deadline):
+    monkeypatch.setattr('l2_sandbox.opencode_admission.time.time', lambda: 1000)
+    path = tmp_path / 'ledger.json'
+    with pytest.raises(ValueError, match='absolute deadline'):
+        Admission(path, PLAN, absolute_deadline=deadline)
+    assert not path.exists()

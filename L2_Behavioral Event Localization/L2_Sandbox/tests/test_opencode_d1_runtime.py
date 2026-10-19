@@ -101,7 +101,7 @@ def test_exact_original_interleaving_includes_all_controls(plan, tmp_path):
 
 def subset(monkeypatch, plan, output, count):
     jobs = runtime._jobs(plan, output)[:count]
-    monkeypatch.setattr(runtime, '_jobs', lambda p, o: jobs)
+    monkeypatch.setattr(runtime, '_jobs', lambda p, o: copy.deepcopy(jobs))
     return jobs
 
 
@@ -187,4 +187,164 @@ def test_uncertain_package_never_retried(plan, tmp_path, monkeypatch):
     jobs[0]['package'].mkdir(parents=True)
     with pytest.raises(ValueError, match='uncertain'):
         runtime.execute(plan, output, branch_adapter=lambda *a, **kw: pytest.fail('uncertain retry'))
+    assert not (output / 'admission.json').exists()
+
+
+@pytest.fixture
+def successor(plan, tmp_path):
+    """Six retained attempts: three complete no-op bodies and three failures."""
+    old_output = tmp_path / 'previous' / 'execution'
+    old_jobs = runtime._scheduled_jobs(plan, old_output)
+    for i, job in enumerate(old_jobs[:6]):
+        if i < 3:
+            package = job['package']
+            request = package / 'raw/model/r000002/request.json'
+            write_json(request, dict(model=runtime.MODEL, temperature=1, max_tokens=8192,
+                messages=[dict(role='user', content='Original task')]))
+            receipt = seal(dict(job['binding'], status='completed', valid_attempt=True,
+                simulated_offline=True, outcome_score=.5, package_path=str(package), requests_used=1))
+        else:
+            receipt = seal(dict(job['binding'], status='incomplete', valid_attempt=False,
+                simulated_offline=True, error_type='ValueError', attempt_package_path=str(job['package'])))
+        write_json(job['path'], receipt)
+    old_plan_path = tmp_path / 'previous/plan.json'
+    write_json(old_plan_path, plan)
+    old_admission_path = old_output / 'admission.json'
+    write_json(old_admission_path, seal(dict(plan_sha256=plan['artifact_sha256'], limits=plan['limits'],
+        requests=25, tokens=1728388, cost_usd=.374554896, invalid_attempts=1,
+        stop_reason='invalid_attempt', sends=[dict(transport_started=True) for _ in range(25)])))
+    old_result_path = old_output / 'result.json'
+    write_json(old_result_path, seal(dict(plan_sha256=plan['artifact_sha256'], status='incomplete',
+        d2_gate_open=False, simulated_offline=True, completed_branches=3,
+        invalid_or_incomplete_branches=3, planned_branches=2282, pending_branches=2276,
+        requests=25, tokens=1728388, cost_usd=.374554896, http_send_count=25)))
+    supervisor_path = tmp_path / 'previous/supervisor.json'
+    supervisor_result_path = tmp_path / 'previous/supervisor_result.json'
+    deadline = time.time() + 1000
+    write_json(supervisor_path, dict(deadline_epoch=deadline, started_at_epoch=deadline-86400))
+    write_json(supervisor_result_path, dict(controller_exit_code=0))
+    predecessor = {name: dict(path=str(path), sha256=file_digest(path)) for name, path in (
+        ('plan', old_plan_path), ('result', old_result_path), ('admission', old_admission_path),
+        ('supervisor', supervisor_path), ('supervisor_result', supervisor_result_path))}
+    predecessor['receipt_directory'] = str(old_output / 'receipts')
+    updated = copy.deepcopy(plan)
+    updated['predecessor'] = predecessor
+    updated['deadline_epoch'] = deadline
+    updated['model']['options']['history_projection_policy'] = 'group_tool_results_before_images_v1'
+    updated['limits'].update(max_requests=plan['limits']['max_requests']-25,
+        max_tokens=plan['limits']['max_tokens']-1728388,
+        max_cost_usd=plan['limits']['max_cost_usd']-.374554896, max_wall_seconds=1000)
+    for ref in predecessor.values():
+        if isinstance(ref, dict):
+            updated['bound_files'][ref['path']] = ref['sha256']
+    for job in old_jobs[:6]:
+        updated['bound_files'][str(job['path'])] = file_digest(job['path'])
+    return seal(updated), old_jobs
+
+
+def test_successor_carries_six_attempts_without_duplicate_calls(successor, tmp_path, monkeypatch):
+    plan, old_jobs = successor
+    output = tmp_path / 'successor'
+    jobs = subset(monkeypatch, plan, output, 8)
+    calls = []
+    def adapter(unit, *args, **kwargs):
+        calls.append(unit['unit_id'])
+        return completed()
+    result = runtime.execute(plan, output, branch_adapter=adapter)
+    assert calls == [j['unit']['unit_id'] for j in jobs[6:8]]
+    assert result['completed_branches'] == 5
+    assert result['carried_completed_branches'] == 3
+    assert result['carried_infrastructure_invalid_branches'] == 3
+    assert result['pending_branches'] == 0
+    assert result['execution_finished'] is True
+    assert result['status'] == 'incomplete'
+    assert result['requests'] == 0
+    assert result['aggregate_requests'] == result['aggregate_http_send_count'] == 25
+    assert result['aggregate_tokens'] == 1728388
+    assert result['aggregate_cost_usd'] == pytest.approx(.374554896)
+    assert result['invalid_attempts'] == 0
+    assert result['aggregate_invalid_branches'] == 3
+    assert result['aggregate_invalid_attempts'] == 1
+    assert result['d2_gate_open'] is False
+    carried = read_json(jobs[0]['path'])
+    assert carried['package_path'] == str(old_jobs[0]['package'])
+    assert carried['wire_compatibility_proof']['all_bodies_unchanged'] is True
+    assert carried['predecessor_target_model_sha256'] == old_jobs[0]['binding']['target_model_sha256']
+    invalid = read_json(jobs[3]['path'])
+    assert invalid['status'] == 'infrastructure_invalid'
+    assert invalid['valid_attempt'] is False
+    assert 'outcome_score' not in invalid
+    second = runtime.execute(plan, output, branch_adapter=lambda *a, **kw: pytest.fail('carried or cached branch reran'))
+    assert second['aggregate_requests'] == 25
+
+
+def test_successor_rejects_non_noop_wire_before_admission(successor, tmp_path, monkeypatch):
+    plan, old_jobs = successor
+    from c3_sandbox.l1.models.opencode import project_tool_history
+    request = old_jobs[0]['package'] / 'raw/model/r000002/request.json'
+    original = read_json(request)
+    original['messages'] = [
+        dict(role='assistant', tool_calls=[dict(id='a'), dict(id='b')]),
+        dict(role='tool', tool_call_id='a', content='image result'),
+        dict(role='user', content=[dict(type='text', text='Image returned by tool call a'),
+                                  dict(type='image_url', image_url=dict(url='data:image/png;base64,AA=='))]),
+        dict(role='tool', tool_call_id='b', content='second result'),
+    ]
+    assert project_tool_history(original['messages'])[1]['changed'] is True
+    write_json(request, original)
+    output = tmp_path / 'successor'
+    subset(monkeypatch, plan, output, 8)
+    with pytest.raises(ValueError, match='would change'):
+        runtime.execute(plan, output, branch_adapter=lambda *a, **kw: pytest.fail('paid work admitted'))
+    assert not (output / 'admission.json').exists()
+    assert not (output / 'receipts').exists()
+
+
+@pytest.mark.parametrize('change', ['deadline', 'requests', 'tokens', 'cost', 'policy', 'receipt_binding'])
+def test_successor_rejects_renewed_budget_or_changed_evidence(successor, tmp_path, monkeypatch, change):
+    plan, old_jobs = successor
+    altered = copy.deepcopy(plan)
+    if change == 'deadline':
+        altered['deadline_epoch'] += 1
+    elif change == 'requests':
+        altered['limits']['max_requests'] += 1
+    elif change == 'tokens':
+        altered['limits']['max_tokens'] += 1
+    elif change == 'cost':
+        altered['limits']['max_cost_usd'] += .01
+    elif change == 'policy':
+        altered['model']['parameters']['unapproved'] = True
+    else:
+        altered['bound_files'].pop(str(old_jobs[0]['path']))
+    altered = seal(altered)
+    output = tmp_path / 'successor'
+    subset(monkeypatch, altered, output, 8)
+    with pytest.raises(ValueError):
+        runtime.execute(altered, output, branch_adapter=lambda *a, **kw: pytest.fail('paid work admitted'))
+    assert not (output / 'admission.json').exists()
+
+
+def test_successor_rejects_unreceipted_old_attempt(successor, tmp_path, monkeypatch):
+    plan, old_jobs = successor
+    (old_jobs[0]['package'].parent / 'unknown-attempt').mkdir()
+    output = tmp_path / 'successor'
+    subset(monkeypatch, plan, output, 8)
+    with pytest.raises(ValueError, match='uncertain predecessor branch'):
+        runtime.execute(plan, output, branch_adapter=lambda *a, **kw: pytest.fail('uncertain attempt admitted'))
+    assert not (output / 'admission.json').exists()
+
+
+def test_successor_rejects_unclosed_predecessor_controller(successor, tmp_path, monkeypatch):
+    plan, _ = successor
+    altered = copy.deepcopy(plan)
+    from pathlib import Path
+    ref = altered['predecessor']['supervisor_result']
+    write_json(Path(ref['path']), dict(controller_exit_code=None))
+    ref['sha256'] = file_digest(Path(ref['path']))
+    altered['bound_files'][ref['path']] = ref['sha256']
+    altered = seal(altered)
+    output = tmp_path / 'successor'
+    subset(monkeypatch, altered, output, 8)
+    with pytest.raises(ValueError, match='must have exited'):
+        runtime.execute(altered, output, branch_adapter=lambda *a, **kw: pytest.fail('overlapping batch admitted'))
     assert not (output / 'admission.json').exists()

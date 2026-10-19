@@ -35,7 +35,9 @@ def _cost(prompt, completion, cached=0):
 class Admission:
     """L1 request_limiter interface, with reservations persisted before HTTP."""
 
-    def __init__(self, path: Path, plan_hash: str, caps: dict | None = None, *, expected_model: str = 'deepseek-v4.1-flash'):
+    def __init__(self, path: Path, plan_hash: str, caps: dict | None = None, *,
+                 expected_model: str = 'deepseek-v4.1-flash',
+                 absolute_deadline: float | None = None):
         self.path = Path(path)
         self._lock = threading.RLock()
         self._thread = threading.local()
@@ -57,18 +59,28 @@ class Admission:
             raise ValueError('expected reported model required')
         if not isinstance(plan_hash, str) or len(plan_hash) != 64 or any(c not in '0123456789abcdef' for c in plan_hash):
             raise ValueError('plan SHA256 required')
+        if absolute_deadline is not None:
+            if (type(absolute_deadline) not in (int, float)
+                    or not math.isfinite(absolute_deadline) or absolute_deadline <= 0):
+                raise ValueError('absolute deadline must be positive and finite')
+            absolute_deadline = float(absolute_deadline)
         if self.path.exists():
             self.state = read_json(self.path)
             verify_seal(self.state)
             self.state.pop('artifact_sha256')
             if (self.state['plan_sha256'] != plan_hash or self.state['limits'] != self.caps
-                    or self.state['expected_model'] != expected_model):
+                    or self.state['expected_model'] != expected_model
+                    or self.state.get('absolute_deadline') != absolute_deadline):
                 raise ValueError('persisted admission binding differs')
         else:
             self.state = dict(plan_sha256=plan_hash, limits=dict(self.caps),
                               expected_model=expected_model, started_at=time.time(),
+                              absolute_deadline=absolute_deadline,
                               accounting_mode='usage_equivalent_peak_rates_not_billed_cash',
                               requests=0, tokens=0, cost_usd=0.0, invalid_attempts=0, sends=[])
+        if (absolute_deadline is not None
+                and absolute_deadline > self.state['started_at'] + 86400):
+            raise ValueError('absolute deadline exceeds batch hard wall limit')
         self._save()
 
     def _save(self):
@@ -99,7 +111,11 @@ class Admission:
 
     def remaining_seconds(self):
         with self._lock:
-            return max(0.0, self.caps['max_wall_seconds'] - (time.time() - self.state['started_at']))
+            deadline = self.state['started_at'] + self.caps['max_wall_seconds']
+            absolute_deadline = self.state.get('absolute_deadline')
+            if absolute_deadline is not None:
+                deadline = min(deadline, absolute_deadline)
+            return max(0.0, deadline - time.time())
 
     def exhaustion_reason(self):
         with self._lock:

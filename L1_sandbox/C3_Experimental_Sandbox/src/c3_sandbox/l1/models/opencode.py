@@ -13,6 +13,80 @@ from urllib.parse import quote
 from ..core.contracts import Call, Reply, ProtocolError, ConfigurationError, Result
 from .http import NativeHTTP
 from .native import GeminiBackend, parse_json, _arguments, tool_result_text, is_native_error
+from ..storage import digest
+
+
+HISTORY_PROJECTION_POLICY = 'group_tool_results_before_images_v1'
+
+
+def _synthetic_image_id(message):
+    """Recognize only the exact image frame emitted by the native chat backend."""
+    if not isinstance(message,dict) or message.get('role') != 'user':
+        return None
+    content=message.get('content')
+    if not isinstance(content,list) or not content or not isinstance(content[0],dict):
+        return None
+    text=content[0].get('text')
+    prefix='Image returned by tool call '
+    if not isinstance(text,str) or not text.startswith(prefix):
+        return None
+    if (set(message) != {'role','content'} or len(content) != 2
+            or content[0] != {'type':'text','text':text}
+            or not isinstance(content[1],dict) or set(content[1]) != {'type','image_url'}
+            or content[1]['type'] != 'image_url' or not isinstance(content[1]['image_url'],dict)
+            or set(content[1]['image_url']) != {'url'}
+            or not isinstance(content[1]['image_url']['url'],str) or not text[len(prefix):]):
+        raise ConfigurationError('Unrecognized synthetic tool image frame in chat history')
+    return text[len(prefix):]
+
+
+def project_tool_history(messages):
+    """Return losslessly reordered messages and a wire-to-source position audit."""
+    if not isinstance(messages,list):
+        raise ConfigurationError('History projection requires a messages list')
+    positions=[]; index=0
+    while index < len(messages):
+        message=messages[index]
+        if not isinstance(message,dict):
+            raise ConfigurationError('History projection requires message objects')
+        if message.get('role') == 'tool' or _synthetic_image_id(message) is not None:
+            raise ConfigurationError('Unmatched tool result or image frame in chat history')
+        positions.append(index); index+=1
+        calls=message.get('tool_calls') if message.get('role') == 'assistant' else None
+        if not calls:
+            continue
+        if (not isinstance(calls,list) or any(not isinstance(call,dict)
+                or not isinstance(call.get('id'),str) or not call['id'] for call in calls)):
+            raise ConfigurationError('Missing tool call IDs in chat history')
+        ids=[call['id'] for call in calls]
+        if len(set(ids)) != len(ids):
+            raise ConfigurationError('Duplicate tool call IDs in chat history')
+        answered=set(); results=[]; images=[]
+        while index < len(messages):
+            following=messages[index]
+            if not isinstance(following,dict):
+                raise ConfigurationError('History projection requires message objects')
+            if following.get('role') == 'tool':
+                tool_id=following.get('tool_call_id')
+                if not isinstance(tool_id,str) or tool_id not in ids or tool_id in answered:
+                    raise ConfigurationError('Unmatched or duplicate tool result in chat history')
+                answered.add(tool_id); results.append(index)
+            else:
+                image_id=_synthetic_image_id(following)
+                if image_id is None:
+                    break
+                if image_id not in answered:
+                    raise ConfigurationError('Tool image frame has no preceding matching tool result')
+                images.append(index)
+            index+=1
+        if answered != set(ids):
+            raise ConfigurationError('Missing tool results or unknown intervening frame in chat history')
+        positions.extend(results); positions.extend(images)
+    projected=[copy.deepcopy(messages[position]) for position in positions]
+    return projected,{'policy':HISTORY_PROJECTION_POLICY,
+        'source_messages_sha256':digest(messages),'wire_messages_sha256':digest(projected),
+        'original_position_mapping':[{'wire_position':wire,'source_position':source}
+            for wire,source in enumerate(positions)],'changed':positions != list(range(len(messages)))}
 
 
 def _normalize_usage(usage):
@@ -59,6 +133,9 @@ class OpenCodeChatBackend:
         forbidden = {'model', 'messages', 'tools', 'stream', 'n', 'tool_choice', 'parallel_tool_calls'}
         if forbidden.intersection(config['parameters']):
             raise ConfigurationError('parameters override protocol-reserved fields')
+        policy=config.get('history_projection_policy')
+        if policy is not None and policy != HISTORY_PROJECTION_POLICY:
+            raise ConfigurationError('Unknown OpenCode chat history_projection_policy')
 
     def identity(self):
         return {
@@ -85,6 +162,7 @@ class OpenCodeChatBackend:
         if not isinstance(session_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', session_id):
             raise ConfigurationError('Invalid OpenCode conversation session ID')
         self._session_id = session_id
+        self._history_projection = None
         body = {
             'model': self.config['model'],
             'messages': copy.deepcopy(conversation['messages']),
@@ -95,15 +173,29 @@ class OpenCodeChatBackend:
         if tools:
             body['tools'] = [{'type': 'function', 'function': copy.deepcopy(t)} for t in tools]
             body['tool_choice'] = 'auto'
+        if self.config.get('history_projection_policy') is not None:
+            body['messages'],self._history_projection=project_tool_history(conversation['messages'])
         return body
 
     def send(self, body, timeout):
         if not getattr(self, '_session_id', None):
             raise ConfigurationError('OpenCode chat request must bind a conversation before send')
-        return _attach_usage_metadata(self.http.post(
+        projection=None
+        if self.config.get('history_projection_policy') is not None:
+            projection=getattr(self,'_history_projection',None)
+            try:
+                matches=projection is not None and digest(json.loads(body)['messages']) == projection['wire_messages_sha256']
+            except (ValueError,KeyError,TypeError,UnicodeError):
+                matches=False
+            if not matches:
+                raise ConfigurationError('Outbound history differs from the bound history projection')
+        result = _attach_usage_metadata(self.http.post(
             self.http.base + '/chat/completions', body, timeout,
             extra_headers={'x-opencode-session': self._session_id},
         ), self.config.get('expected_reported_model'))
+        if projection is not None:
+            result.metadata['history_projection']=copy.deepcopy(projection)
+        return result
 
     def parse(self, body, request_id):
         value = parse_json(body)

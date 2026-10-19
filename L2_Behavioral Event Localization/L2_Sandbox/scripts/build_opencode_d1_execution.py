@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[3]
 L2 = ROOT / 'L2_Behavioral Event Localization/L2_Sandbox'
@@ -30,7 +31,7 @@ def logical(path):
     return str(LOGICAL / Path(path).resolve().relative_to(ROOT))
 
 
-def build(phase: Path):
+def build(phase: Path, predecessor: Path | None = None):
     from l2_sandbox.opencode_admission import DEFAULT_CAPS
     phase = phase.resolve()
     old = L2 / 'validation/p4_contract_v2_20261019'
@@ -70,6 +71,8 @@ def build(phase: Path):
     model = copy.deepcopy(read_json(model_template)['model'])
     model['timeout_seconds'] = 600
     model['max_response_bytes'] = 16777216
+    if predecessor is not None:
+        model.setdefault('options', {})['history_projection_policy']='group_tool_results_before_images_v1'
     if (model['adapter'], model['provider'], model['model']) != ('opencode-chat','opencode-go','deepseek-v4.1-flash'):
         raise ValueError('unexpected continuation actor')
     bound[logical(model_template)] = file_digest(model_template)
@@ -86,7 +89,50 @@ def build(phase: Path):
     for directory in (L2/'scripts',ROOT/'scripts'):
         paths.update(directory.glob('*.py'))
     sources = {logical(p):file_digest(p) for p in sorted(paths)}
-    output = seal({
+    predecessor_doc=None
+    caps=copy.deepcopy(DEFAULT_CAPS)
+    deadline=None
+    if predecessor is not None:
+        predecessor=predecessor.resolve()
+        refs={}
+        for key, path in {
+            'plan':predecessor/'execution_plan.json', 'result':predecessor/'execution/result.json',
+            'admission':predecessor/'execution/admission.json', 'supervisor':predecessor/'supervisor_started.json',
+            'supervisor_result':predecessor/'supervisor_result.json',
+        }.items():
+            refs[key]={'path':logical(path),'sha256':file_digest(path)}
+            bound[logical(path)]=file_digest(path)
+        previous=read_json(predecessor/'execution_plan.json'); verify_seal(previous)
+        state=read_json(predecessor/'execution/admission.json'); verify_seal(state)
+        finished=read_json(predecessor/'supervisor_result.json')
+        if previous['scientific_plan']!=science or state['plan_sha256']!=previous['artifact_sha256'] or finished.get('controller_exit_code') is None:
+            raise ValueError('predecessor must be finished and belong to the exact scientific plan')
+        receipt_dir=predecessor/'execution/receipts'
+        for path in receipt_dir.glob('*.json'):
+            verify_seal(read_json(path)); bound[logical(path)]=file_digest(path)
+        deadline=read_json(predecessor/'supervisor_started.json')['deadline_epoch']
+        caps.update(max_requests=state['limits']['max_requests']-state['requests'],
+                    max_tokens=state['limits']['max_tokens']-state['tokens'],
+                    max_cost_usd=state['limits']['max_cost_usd']-state['cost_usd'],
+                    max_wall_seconds=state['limits']['max_wall_seconds'])
+        if deadline<=time.time() or any(caps[k]<=0 for k in ('max_requests','max_tokens','max_cost_usd','max_wall_seconds')):
+            raise ValueError('original batch budget or deadline exhausted')
+        archive_previous=phase/'historical_predecessor_sources.tar'
+        bound[logical(archive_previous)]=file_digest(archive_previous)
+        code_substitutions={}
+        for name, expected in previous['source_files'].items():
+            current=mapped(name)
+            if file_digest(current)!=expected:
+                prior=phase/'historical_predecessor_sources'/current.relative_to(ROOT)
+                if not prior.is_file() or prior.is_symlink() or file_digest(prior)!=expected:
+                    raise ValueError('predecessor source archive differs: '+str(current))
+                code_substitutions[name]={'path':logical(prior),'sha256':expected}
+                current=prior
+            bound[logical(current)]=expected
+        predecessor_doc={**refs,'receipt_directory':logical(receipt_dir),
+                         'source_commit':'56d2de1fe37e8058b7af59b526587639ea843bc3',
+                         'source_substitutions':code_substitutions}
+    payload={
         'schema':'cross-actor-d1-execution-v1',
         'authorization':{'exact_user_text':'开始吧，直接用opencode','execution_authorized':True,
                          'scope':'cross_actor_D1', 'source':'direct_user_message_20261019'},
@@ -99,14 +145,18 @@ def build(phase: Path):
         'source_files':sources,'bound_files':bound,
         'runs_dir':str(LOGICAL / 'L1_sandbox/C3_Experimental_Sandbox/runs/v3_qwen36_pi_prospective_dev45_20261018/episodes'),
         'model':model,'observer_base':base,'execution_concurrency':3,
-        'limits':copy.deepcopy(DEFAULT_CAPS),
+        'limits':caps,
         'operational_limits_origin':'conservative operator defaults within user-authorized HTTP/wall limits',
         'cost_scope':'12 USD upper-bound provider usage equivalent, not a claim of additional cash billing; Go quota/balance settings unchanged',
         'pricing_source':'https://docs.opencode.ai/docs/go/',
         'invalid_policy':'stop first invalid attempt; never replace parent or branch sample',
         'execution_location':'remote OpenCode inference and aml-b native validation; existing local ARM64 Docker runtime exception',
         'automatic_d2':False,
-    })
+    }
+    if predecessor_doc is not None:
+        payload.update(predecessor=predecessor_doc,deadline_epoch=deadline,
+                       continuation_policy='preserve completed equivalent wire histories and retain invalid attempts; run only untouched jobs')
+    output=seal(payload)
     path = phase / 'execution_plan.json'
     if path.exists() and read_json(path) != output:
         raise ValueError('refusing to replace frozen execution plan')
@@ -143,9 +193,10 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase',type=Path,required=True)
     parser.add_argument('--execute',action='store_true')
+    parser.add_argument('--predecessor',type=Path)
     args=parser.parse_args()
     if not args.execute:
-        build(args.phase)
+        build(args.phase,args.predecessor)
         return
     from l2_sandbox.opencode_d1_runtime import execute
     plan=read_json(args.phase / 'execution_plan.json')
