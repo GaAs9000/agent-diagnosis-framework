@@ -117,6 +117,10 @@ def test_serial_canary_then_three_parallel_and_reuse(plan, tmp_path, monkeypatch
 
     def adapter(unit, branch, message, **kwargs):
         nonlocal active, peak, canary_done
+        startup = read_json(output.parent / 'integrity_preflight.json')
+        assert startup['plan_sha256'] == plan['artifact_sha256']
+        assert startup['planned_jobs'] == 7
+        assert startup['actor_requests'] == 0
         with lock:
             index = len(calls)
             calls.append(unit['unit_id'])

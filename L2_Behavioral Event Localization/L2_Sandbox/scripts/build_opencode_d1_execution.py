@@ -119,7 +119,8 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
         deadline=read_json(predecessor/'supervisor_started.json')['deadline_epoch']
         caps.update(max_requests=state['limits']['max_requests']-state['requests'],
                     max_tokens=state['limits']['max_tokens']-state['tokens'],
-                    max_cost_usd=state['limits']['max_cost_usd']-state['cost_usd'],
+                    max_cost_usd=(None if state['limits']['max_cost_usd'] is None else
+                                  state['limits']['max_cost_usd']-state['cost_usd']),
                     max_wall_seconds=state['limits']['max_wall_seconds'])
         if budget_authorization is not None:
             from l2_sandbox.opencode_admission import validate_budget_authorization
@@ -127,15 +128,19 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
                 raise ValueError('regular budget authorization file required')
             authorization_path=budget_authorization.resolve()
             grant=validate_budget_authorization(read_json(authorization_path),previous['artifact_sha256'])
+            if (grant['schema']=='opencode-d1-budget-authorization-v2'
+                    and grant['deadline_epoch']!=deadline):
+                raise ValueError('cost cap removal must preserve predecessor absolute deadline')
             for cap, count in (('max_requests','requests'),('max_tokens','tokens'),('max_cost_usd','cost_usd')):
                 result=read_json(predecessor/'execution/result.json'); verify_seal(result)
                 field='aggregate_'+count if previous.get('predecessor') is not None else count
-                caps[cap]=grant['cumulative_limits'][cap]-result[field]
+                ceiling=grant['cumulative_limits'][cap]
+                caps[cap]=None if ceiling is None else ceiling-result[field]
             caps['max_wall_seconds']=grant['max_wall_seconds']
             deadline=grant['deadline_epoch']
             authorization_ref={'path':logical(authorization_path),'sha256':file_digest(authorization_path)}
             bound[authorization_ref['path']]=authorization_ref['sha256']
-        if deadline<=time.time() or any(caps[k]<=0 for k in ('max_requests','max_tokens','max_cost_usd','max_wall_seconds')):
+        if deadline<=time.time() or any(caps[k] is not None and caps[k]<=0 for k in ('max_requests','max_tokens','max_cost_usd','max_wall_seconds')):
             raise ValueError('original batch budget or deadline exhausted')
         archive_previous=phase/'historical_predecessor_sources.tar'
         bound[logical(archive_previous)]=file_digest(archive_previous)
@@ -201,9 +206,11 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
         from l2_sandbox.opencode_d1_runtime import _branch_storage_root
         payload['branch_storage_root']=str(_branch_storage_root({'branch_storage_root':str(branch_storage_root)}))
     if authorization_ref is not None:
+        no_cost_cap=grant['schema']=='opencode-d1-budget-authorization-v2'
         payload.update(budget_authorization=authorization_ref,
                        operational_limits_origin='explicit sealed Option A cumulative budget extension',
-                       cost_scope='50 USD cumulative upper-bound provider usage equivalent; Go quota/balance settings unchanged')
+                       cost_scope=('usage-equivalent cost metered without local cost cap; Go quota/balance settings unchanged'
+                                   if no_cost_cap else '50 USD cumulative upper-bound provider usage equivalent; Go quota/balance settings unchanged'))
     output=seal(payload)
     path = phase / 'execution_plan.json'
     if path.exists() and read_json(path) != output:

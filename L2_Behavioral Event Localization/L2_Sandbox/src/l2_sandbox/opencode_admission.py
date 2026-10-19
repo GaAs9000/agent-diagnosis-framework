@@ -33,17 +33,23 @@ def _cost(prompt, completion, cached=0):
 
 
 def validate_budget_authorization(authorization, predecessor_sha256):
-    """Validate the separately sealed, finite Option A cumulative grant."""
+    """Validate the sealed grant; v2 removes only the usage-equivalent cost cap."""
     verify_seal(authorization)
-    if (authorization.get('schema') != 'opencode-d1-budget-authorization-v1'
+    version = authorization.get('schema')
+    no_cost_cap = version == 'opencode-d1-budget-authorization-v2'
+    scope = ('cross_actor_D1_remove_usage_equivalent_cost_cap' if no_cost_cap
+             else 'cross_actor_D1_budget_extension')
+    if (version not in ('opencode-d1-budget-authorization-v1', 'opencode-d1-budget-authorization-v2')
             or authorization.get('execution_authorized') is not True
-            or authorization.get('scope') != 'cross_actor_D1_budget_extension'
+            or authorization.get('scope') != scope
             or authorization.get('source') != 'direct_user_message_20261019'
             or not isinstance(authorization.get('exact_user_text'), str)
             or not authorization['exact_user_text'].strip()
+            or (no_cost_cap and authorization['exact_user_text'] != '$50 等值用量 全部放开就行')
             or authorization.get('predecessor_plan_sha256') != predecessor_sha256
             or authorization.get('cumulative_limits') != dict(
-                max_requests=22000, max_tokens=1_000_000_000, max_cost_usd=50.0)):
+                max_requests=22000, max_tokens=1_000_000_000,
+                max_cost_usd=None if no_cost_cap else 50.0)):
         raise ValueError('explicit predecessor-bound Option A budget authorization required')
     start, deadline, wall = (authorization.get(k) for k in
                             ('phase_started_at_epoch', 'deadline_epoch', 'max_wall_seconds'))
@@ -74,12 +80,15 @@ class Admission:
         for name, value in (caps or {}).items():
             if name not in DEFAULT_CAPS:
                 raise ValueError('unknown admission cap')
+            if name == 'max_cost_usd' and value is None and hard_caps[name] is None:
+                self.caps[name] = None
+                continue
             if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
                 raise ValueError('admission caps must be positive finite numbers')
             if name.endswith('usd_per_million'):
                 if value != DEFAULT_CAPS[name]:
                     raise ValueError('peak accounting rates are fixed')
-            elif value > hard_caps[name]:
+            elif hard_caps[name] is not None and value > hard_caps[name]:
                 raise ValueError('admission cap exceeds batch hard limit')
             if name in ('max_requests', 'max_tokens', 'max_tokens_per_request', 'max_invalid_attempts') and type(value) is not int:
                 raise ValueError('count caps must be integers')
@@ -159,7 +168,8 @@ class Admission:
                 return 'http_attempt_cap'
             if self.state['tokens'] + _INPUT_FLOOR + _OUTPUT > self.caps['max_tokens']:
                 return 'token_cap'
-            if self.state['cost_usd'] + _cost(_INPUT_FLOOR, _OUTPUT) > self.caps['max_cost_usd']:
+            if (self.caps['max_cost_usd'] is not None
+                    and self.state['cost_usd'] + _cost(_INPUT_FLOOR, _OUTPUT) > self.caps['max_cost_usd']):
                 return 'usage_equivalent_cost_cap'
             return None
 
@@ -183,7 +193,8 @@ class Admission:
             prompt = max(estimated - _OUTPUT, _INPUT_FLOOR)
             tokens, cost = prompt + _OUTPUT, _cost(prompt, _OUTPUT)
             if (tokens > self.caps['max_tokens_per_request'] or self.state['tokens'] + tokens > self.caps['max_tokens']
-                    or self.state['cost_usd'] + cost > self.caps['max_cost_usd']):
+                    or (self.caps['max_cost_usd'] is not None
+                        and self.state['cost_usd'] + cost > self.caps['max_cost_usd'])):
                 return False
             self.state['requests'] += 1
             self.state['tokens'] += tokens

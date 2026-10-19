@@ -405,6 +405,9 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     if plan.get('budget_authorization') is not None:
         grant = read_json(_bound_reference(plan, plan['budget_authorization']))
         validate_budget_authorization(grant, old_plan['artifact_sha256'])
+        if (grant['schema'] == 'opencode-d1-budget-authorization-v2'
+                and grant['deadline_epoch'] != prior_deadline):
+            raise ValueError('cost cap removal must preserve predecessor absolute deadline')
         if (plan.get('deadline_epoch') != grant['deadline_epoch']
                 or plan['limits']['max_wall_seconds'] != grant['max_wall_seconds']
                 or plan['model'] != old_plan['model']):
@@ -418,8 +421,18 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
             raise ValueError('successor must preserve predecessor absolute deadline')
         for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
             used = old_admission.get(count)
+            if cap == 'max_cost_usd' and old_plan['limits'][cap] is None:
+                inherited = _admission_authorization(old_plan)
+                if (plan['model'] != old_plan['model']
+                        or plan['limits'][cap] is not None or inherited is None
+                        or validate_budget_authorization(inherited, inherited.get('predecessor_plan_sha256'))['schema']
+                        != 'opencode-d1-budget-authorization-v2'):
+                    raise ValueError('uncapped cost requires inherited v2 authorization')
+                continue
             if (type(used) not in (int, float) or not math.isfinite(used) or used < 0
                     or old_result.get(count) != used
+                    or type(plan['limits'][cap]) not in (int, float)
+                    or not math.isfinite(plan['limits'][cap])
                     or plan['limits'][cap] + used > old_plan['limits'][cap] + 1e-12):
                 raise ValueError('successor limits must carry all predecessor usage')
         if not 0 < plan['limits']['max_wall_seconds'] <= old_plan['limits']['max_wall_seconds'] <= 86400:
@@ -525,8 +538,13 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
             raise ValueError('predecessor invalid accounting differs')
     if grant is not None:
         for cap, count in (('max_requests', 'requests'), ('max_tokens', 'tokens'), ('max_cost_usd', 'cost_usd')):
-            remaining = grant['cumulative_limits'][cap] - aggregate[count]
+            ceiling = grant['cumulative_limits'][cap]
             value = plan['limits'][cap]
+            if cap == 'max_cost_usd' and ceiling is None:
+                if value is not None:
+                    raise ValueError('authorized cost cap removal requires null cost limit')
+                continue
+            remaining = ceiling - aggregate[count]
             if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0
                     or not math.isclose(value, remaining, rel_tol=0, abs_tol=1e-12)):
                 raise ValueError('authorized extension must subtract all ancestor usage exactly once')
@@ -557,6 +575,12 @@ def execute(plan: dict, output: Path, branch_adapter=None):
         # Validate the entire predecessor census and every reusable package
         # before writing a successor receipt or constructing its admission.
         carried = _predecessor_seeds(plan, jobs, injected)
+        write_json(output.parent / 'integrity_preflight.json', seal(dict(
+            schema='opencode-d1-integrity-preflight-v1',
+            plan_sha256=plan['artifact_sha256'], planned_jobs=len(jobs), retained=carried,
+            unstarted_jobs=sum('predecessor_seed' not in job for job in jobs),
+            actor_requests=0, tool_calls=0, scorer_invocations=0,
+            check_scope='startup integrity verification before successor admission')))
         completed, missing, failures = {}, [], []
         for job in jobs:
             if job['path'].exists():
