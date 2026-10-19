@@ -342,6 +342,9 @@ def components(config):
     for section,factory in [('model',models),('benchmark',benchmarks),('runtime',runtimes),('evaluation',evaluators)]:
         registry=factory()
         if config['plugins']['load_installed']: registry.load_installed()
+        elif section=='model' and config['model']['adapter']=='opencode-chat':
+            from ..models.opencode import OpenCodeChatBackend
+            registry.register('opencode-chat',OpenCodeChatBackend)
         out[section]=registry.create(config[section]['adapter'],config[section])
     return out
 
@@ -477,7 +480,40 @@ def _initial_upgrade_request(parent: Path, manifest: dict, cp: dict) -> bytes:
     return (parent/request['data']['body']['path']).read_bytes()
 
 
-def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False,resume_context_overflow_id:str|None=None,execution_observer=None)->dict:
+def _validate_actor_transition(binding:dict, previous_config:dict, config:dict,
+                               parent_cp:dict, parent_index_sha256:str,
+                               parent_checkpoint_sha256:str)->dict:
+    """Bind the sole supported actor change to an exact sealed chat checkpoint."""
+    expected={'schema_version':'cross-actor-model-transition-v1',
+              'source_config_sha256':digest(previous_config),'target_config_sha256':digest(config),
+              'source_model':previous_config['model'],'target_model':config['model'],
+              'parent_index_sha256':parent_index_sha256,
+              'parent_checkpoint_sha256':parent_checkpoint_sha256}
+    if not isinstance(binding,dict) or binding != expected:
+        raise ConfigurationError('Actor transition must exactly bind source/target configs, models and parent evidence')
+    source=previous_config['model']; target=config['model']
+    if (source['adapter'] not in ('openai-compatible','opencode-chat')
+            or target['adapter'] != 'opencode-chat' or target.get('provider') != 'opencode-go'
+            or target['model'] != 'deepseek-v4.1-flash' or source == target):
+        raise ConfigurationError('Actor transition requires compatible OpenAI chat history to OpenCode Go DeepSeek V4.1 Flash')
+    before=copy.deepcopy(previous_config); after=copy.deepcopy(config)
+    before.pop('model'); after.pop('model')
+    before.get('agent',{}).pop('intervention',None)
+    after.get('agent',{}).pop('intervention',None)
+    if before != after:
+        raise ConfigurationError('Actor transition may change only model configuration and an explicit branch intervention')
+    if source.get('supports_images',True) != target.get('supports_images',True):
+        raise ConfigurationError('Actor transition must preserve image support and available tools')
+    history=parent_cp.get('conversation')
+    if (not isinstance(history,dict) or not isinstance(history.get('messages'),list)
+            or not history['messages'] or 'contents' in history or 'input' in history
+            or any(not isinstance(message,dict) or message.get('role') not in
+                   ('system','user','assistant','tool') for message in history['messages'])):
+        raise ConfigurationError('Actor transition requires native Chat Completions messages; history conversion is forbidden')
+    return copy.deepcopy(expected)
+
+
+def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,checkpoint_id:str|None=None,request_limiter=None,resume_response_id:str|None=None,allow_pi_native_upgrade:bool=False,resume_context_overflow_id:str|None=None,execution_observer=None,actor_transition:dict|None=None)->dict:
     """Optionally admit every HTTP attempt via acquire(estimate, timeout)->bool.
 
     reconcile(estimate, actual) retains unknown usage with actual=None. An
@@ -496,6 +532,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     if execution_observer is not None:
         execution_observer.validate(copy.deepcopy(config))
     if output.is_symlink() or any(p.is_symlink() for p in output.parents): raise EvidenceError('symlink output path')
+    if actor_transition is not None and (parent is None or checkpoint_id is None
+            or allow_pi_native_upgrade or resume_response_id is not None or resume_context_overflow_id is not None):
+        raise ConfigurationError('Actor transition requires a cold parent checkpoint and cannot combine with native upgrade or saved-response continuation')
     if resume_response_id is not None and (parent is None or checkpoint_id is None):
         raise ConfigurationError('Saved-response continuation requires parent and checkpoint_id')
     if resume_context_overflow_id is not None:
@@ -523,13 +562,19 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
         upgrade = allow_pi_native_upgrade and _check_native_upgrade(previous_config, config)
         if resume_context_overflow_id is not None and not _check_context_upgrade(previous_config, config):
             raise ConfigurationError('Context overflow requires only native-v1 to context-v2 transition with unchanged 600-second timeout and budgets')
-        if base_config!=prev_base and not upgrade:
+        transition=None
+        if actor_transition is not None:
+            transition=_validate_actor_transition(actor_transition,previous_config,config,parent_cp,
+                pv['index_sha256'],file_digest(cp_file))
+        if base_config!=prev_base and not upgrade and transition is None:
             raise ConfigurationError('Cold resume currently requires the same resolved config; branch policy changes are not silently applied')
         if child_iv!=parent_iv:
             if child_iv is None or child_iv['at_request']<=parent_cp.get('budget_used',{}).get('model_requests',0):
                 raise ConfigurationError('Branch intervention on cold resume must target a request strictly after the checkpoint')
         lineage={'parent_episode_id':parent_manifest['episode_id'],'parent_checkpoint_id':checkpoint_id,
                  'parent_index_sha256':pv['index_sha256'],'parent_checkpoint_sha256':file_digest(parent/f'checkpoints/{checkpoint_id}.json')}
+        if transition is not None:
+            lineage['actor_transition']=transition
         if allow_pi_native_upgrade:
             if child_iv != parent_iv:
                 raise ConfigurationError('Native upgrade cannot change intervention')
@@ -588,6 +633,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
     start_data={'config':journal.ref('raw/resolved_config.json'),'lineage':lineage}
     if external_remaining is not None: start_data['external_wall_seconds']=external_remaining
     journal.emit('episode.started',start_data)
+    if actor_transition is not None:
+        write_json(output,'lineage/actor_transition.json',lineage['actor_transition'])
+        journal.emit('actor.transitioned',{'transition':journal.ref('lineage/actor_transition.json')})
     workspace=output.parent/('.l1-work-'+eid)
     workspace.mkdir(mode=0o700)
     # Shared host directories may inherit setgid even with mode=0700. The
@@ -660,6 +708,9 @@ def run(config:dict,output:Path,*,injected:dict|None=None,parent:Path|None=None,
             for section,maker in [('model',mr),('runtime',rr),('evaluation',er)]:
                 r=maker()
                 if config['plugins']['load_installed']: r.load_installed()
+                elif section=='model' and config['model']['adapter']=='opencode-chat':
+                    from ..models.opencode import OpenCodeChatBackend
+                    r.register('opencode-chat',OpenCodeChatBackend)
                 settings=copy.deepcopy(config[section])
                 if section=='runtime': settings['image']=parent_cp['qualification']['image_id']
                 comp[section]=r.create(settings['adapter'],settings)
