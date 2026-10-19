@@ -1,0 +1,29 @@
+{
+  "schema": "live-output-limit-recovery-proof-v1",
+  "branch_id": "eaffe48b90f1aef148250e8e24fc2aa2ff2f690c8bc529ea72e7757831842b7d",
+  "package_index_sha256": "cca6a9b09216b89c474c5e7888a58d143053ed14ad7a428c5d79d5270224a88e",
+  "source_request_id": "ep_53a10f33f9354794912f6b9c047eccfd:r000031",
+  "source_finish_reason": "length",
+  "source_completion_tokens": 8192,
+  "truncated_call_ids": [
+    "ep_53a10f33f9354794912f6b9c047eccfd:r000031:c0"
+  ],
+  "truncated_tools_executed": false,
+  "feedback_delivered_in_request": "ep_53a10f33f9354794912f6b9c047eccfd:r000032",
+  "original_assistant_message_preserved": true,
+  "next_http_status": 200,
+  "next_finish_reason": "tool_calls",
+  "next_complete_tool_executed": true,
+  "new_actor_requests": 7,
+  "model_requests_including_parent": 35,
+  "termination": "request_budget",
+  "execution_validity": "valid",
+  "protocol_validity": "valid",
+  "target_rubric_item_score": 1.0,
+  "scope": "one engineering recovery case; not whole-task full score or statistical efficacy",
+  "files": {
+    "evidence_index.json": "cca6a9b09216b89c474c5e7888a58d143053ed14ad7a428c5d79d5270224a88e",
+    "trajectory.jsonl": "717dfd8d5ccb9c2201974de7c02e4296535754a48d7e8b03c5d9c3800f3dc1f6",
+    "receipt.json": "eb40d464541845601133ddf8efc21487b3b19a70590a0be177639d75a9017fce"
+  }
+}

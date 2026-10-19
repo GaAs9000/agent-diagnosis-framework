@@ -1,0 +1,155 @@
+{
+  "schema": "opencode-output-limit-repair-acceptance-v1",
+  "source_commit": "f41c69906c147cb22046f0bf03cfa6208cbce79f",
+  "tests": {
+    "passed": 524,
+    "location": "aml-b CPU",
+    "output": "........................................................................ [ 13%]\n........................................................................ [ 27%]\n........................................................................ [ 41%]\n........................................................................ [ 54%]\n........................................................................ [ 68%]\n........................................................................ [ 82%]\n........................................................................ [ 96%]\n....................                                                     [100%]\n524 passed in 57.37s"
+  },
+  "recorded_failure": {
+    "path": "L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_d1_cross_actor_20261019/successor_01/execution/branches/8a32900a898f9ed4a4cea68c1664423442ad757b932c0c9683e20ba1b2ba366e/raw/model/r000023/response.bin",
+    "sha256": "2bf6ab97fbc4820bdbd78a6faf04e037eefab307aa462a8088428b87b4658f9b",
+    "completion_tokens": 8192,
+    "finish_reason": "length"
+  },
+  "coverage": [
+    "recorded malformed arguments",
+    "complete-looking length calls",
+    "no-call length",
+    "zero tool execution at cutoff",
+    "next request feedback",
+    "same-ID corrected call",
+    "last-slot no extra request",
+    "pending feedback checkpoint",
+    "ordinary branch isolation",
+    "global failure admission stop",
+    "valid zero versus scorer failure",
+    "multigeneration no-resampling",
+    "cumulative budget and unchanged deadline"
+  ],
+  "plan_sha256": "4f51d6393080ac60b0037835fbb25ba1d5a253d73693051bcb286fd02461a579",
+  "retained": {
+    "requests": 75,
+    "tokens": 3202974,
+    "cost_usd": 0.4824261960000017,
+    "http_send_count": 75,
+    "invalid_attempts": 2,
+    "branch_invalid": 0,
+    "fatal_invalid": 2,
+    "completed": 7,
+    "infrastructure_invalid": 6
+  },
+  "remaining_jobs": 2269,
+  "limits": {
+    "max_requests": 14925,
+    "max_wall_seconds": 86400,
+    "max_cost_usd": 11.517573803999998,
+    "max_tokens": 996797026,
+    "max_tokens_per_request": 33562624,
+    "max_invalid_attempts": 1,
+    "input_usd_per_million": 0.3,
+    "cached_input_usd_per_million": 0.006,
+    "output_usd_per_million": 1.2
+  },
+  "original_deadline": 1792473352.757362,
+  "old_predecessor_refs_unchanged": {
+    "admission": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_d1_cross_actor_20261019/successor_01/execution/admission.json",
+      "sha256": "1b4509507af324da6c3354a374a5cc75d2d2d86208b285e201d89821acb5e9a1"
+    },
+    "result": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_d1_cross_actor_20261019/successor_01/execution/result.json",
+      "sha256": "bc7a8622d2c37ef684a39d596ae71de377c96809af36d2a342dabe5b9738ebde"
+    },
+    "plan": {
+      "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_d1_cross_actor_20261019/successor_01/execution_plan.json",
+      "sha256": "8feab1bcf3b8e488b84de17bd6218e1701e1af5384d939c105cbbf6cd8741edf"
+    }
+  },
+  "new_real_actor_http_200": true,
+  "first_live_response_triggered_length_recovery": false,
+  "whole_batch_complete": false,
+  "scientific_efficacy": "not_established",
+  "d2_gate_open": false,
+  "launch": {
+    "started_at_epoch": 1792390896.54032,
+    "deadline_epoch": 1792473352.757362,
+    "max_wall_seconds": 82456.2170419693,
+    "min_free_disk_bytes": 8589934592,
+    "source_commit": "f41c69906c147cb22046f0bf03cfa6208cbce79f",
+    "supervisor_pid": 76807,
+    "restart_or_renew": false,
+    "controller_pid": 76810
+  },
+  "files": {
+    "admission_snapshot.json": {
+      "sha256": "ff7721d8a21d1a908f92e4e99b67fbf5706c9117a2a34aff2db3d079edd901c7",
+      "bytes": 3045
+    },
+    "execution_plan.json": {
+      "sha256": "5624e3b2d36d224975b145242bf812ffb3deed41ba76b23e97ed4117da3d83bc",
+      "bytes": 2540541
+    },
+    "first_actor_http.json": {
+      "sha256": "012a0b0b15e2ca7e6b0da971e8ace4bb58d92e08df6e6e9b4b585996cfaf40de",
+      "bytes": 2450
+    },
+    "integrity_preflight.json": {
+      "sha256": "936f4220034128d7715e60034292a36f7cb7b0eb7fb444a7e3020e18c7662a68",
+      "bytes": 715
+    },
+    "launch_receipt.json": {
+      "sha256": "9638728af31096789a92a5414b59d59c97f3ae9afc8de4f879a1614a78d1e95e",
+      "bytes": 379
+    },
+    "result_snapshot.json": {
+      "sha256": "fd4f1464daf43e70859818d9cae5d4fcec6d49c3f75fbd592ae3fb294622e4ab",
+      "bytes": 1207
+    },
+    "supervisor.py": {
+      "sha256": "8febc12da4b799d543a810254029339bf83b1ab1639d836cb9d1367e0b410f0c",
+      "bytes": 2301
+    },
+    "supervisor_started.json": {
+      "sha256": "687f9c716b90c575338a7952e7cbd15f2f13db57fbadbf34ab213608c5e12a09",
+      "bytes": 305
+    },
+    "tests_final.log": {
+      "sha256": "6e1b01ca7893f4c6cc36224468c991c18fd6a10aba5d0761a5ff21e1f7d5faaf",
+      "bytes": 661
+    },
+    "live_length_recovery.json": {
+      "sha256": "bd1a33752f674b8723b0e5df45a1a3e4ba83882106761edb734bcc980ac8080e",
+      "bytes": 1318
+    }
+  },
+  "live_output_limit_recovery_verified": {
+    "schema": "live-output-limit-recovery-proof-v1",
+    "branch_id": "eaffe48b90f1aef148250e8e24fc2aa2ff2f690c8bc529ea72e7757831842b7d",
+    "package_index_sha256": "cca6a9b09216b89c474c5e7888a58d143053ed14ad7a428c5d79d5270224a88e",
+    "source_request_id": "ep_53a10f33f9354794912f6b9c047eccfd:r000031",
+    "source_finish_reason": "length",
+    "source_completion_tokens": 8192,
+    "truncated_call_ids": [
+      "ep_53a10f33f9354794912f6b9c047eccfd:r000031:c0"
+    ],
+    "truncated_tools_executed": false,
+    "feedback_delivered_in_request": "ep_53a10f33f9354794912f6b9c047eccfd:r000032",
+    "original_assistant_message_preserved": true,
+    "next_http_status": 200,
+    "next_finish_reason": "tool_calls",
+    "next_complete_tool_executed": true,
+    "new_actor_requests": 7,
+    "model_requests_including_parent": 35,
+    "termination": "request_budget",
+    "execution_validity": "valid",
+    "protocol_validity": "valid",
+    "target_rubric_item_score": 1.0,
+    "scope": "one engineering recovery case; not whole-task full score or statistical efficacy",
+    "files": {
+      "evidence_index.json": "cca6a9b09216b89c474c5e7888a58d143053ed14ad7a428c5d79d5270224a88e",
+      "trajectory.jsonl": "717dfd8d5ccb9c2201974de7c02e4296535754a48d7e8b03c5d9c3800f3dc1f6",
+      "receipt.json": "eb40d464541845601133ddf8efc21487b3b19a70590a0be177639d75a9017fce"
+    }
+  }
+}
