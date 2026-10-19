@@ -1,0 +1,1132 @@
+{
+  "schema": "completed-dev45-readonly-audit-v1",
+  "created_at": "2026-10-19T02:39:18.785739+00:00",
+  "script_sha256": "123fac6937b0b1027c691b879f4427faae5f5a38a160a3f625d8442ba7cf284f",
+  "execution_host": "aml-b",
+  "actor_requests": 0,
+  "analyst_requests": 0,
+  "plan_sha256": "a95a02eecdbcac28b1fac1b0474d507aefb697b1659ec193154ec144d94e8f9b",
+  "result_file_sha256": "6c17fb8c1c21029fc01536ce96b919803232c8953cabad8ee38b36e05a25fb43",
+  "source_fingerprints_match": true,
+  "summary": {
+    "completed": 45,
+    "failed": 0,
+    "mean_score": 0.22296494355317883,
+    "nonzero": 25,
+    "full_score": 3,
+    "zero": 20,
+    "legal_delivery": 40,
+    "logical_requests": 965,
+    "http_attempts": 965,
+    "tokens": 24835222,
+    "retries": 0,
+    "termination": {
+      "assistant_finished": 38,
+      "request_budget": 7
+    },
+    "containers": 800
+  },
+  "by_task": {
+    "officeval_003": {
+      "count": 5,
+      "scores": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.0
+    },
+    "officeval_004": {
+      "count": 5,
+      "scores": [
+        0.45454545454545453,
+        0.36363636363636365,
+        0.4090909090909091,
+        0.36363636363636365,
+        0.45454545454545453
+      ],
+      "mean": 0.40909090909090906
+    },
+    "officeval_010": {
+      "count": 5,
+      "scores": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.0
+    },
+    "officeval_033": {
+      "count": 5,
+      "scores": [
+        0.35294117647058826,
+        0.29411764705882354,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.12941176470588237
+    },
+    "officeval_050": {
+      "count": 5,
+      "scores": [
+        0.05,
+        0.05,
+        0.05,
+        0.05,
+        0.05
+      ],
+      "mean": 0.05
+    },
+    "officeval_060": {
+      "count": 5,
+      "scores": [
+        1.0,
+        0.5454545454545454,
+        1.0,
+        0.5454545454545454,
+        1.0
+      ],
+      "mean": 0.8181818181818181
+    },
+    "officeval_070": {
+      "count": 5,
+      "scores": [
+        0.23076923076923078,
+        0.5384615384615384,
+        0.23076923076923078,
+        0.0,
+        0.0
+      ],
+      "mean": 0.2
+    },
+    "officeval_085": {
+      "count": 5,
+      "scores": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.0
+    },
+    "officeval_090": {
+      "count": 5,
+      "scores": [
+        0.4,
+        0.4,
+        0.4,
+        0.4,
+        0.4
+      ],
+      "mean": 0.4
+    }
+  },
+  "rows": [
+    {
+      "label": "officeval_003.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 5,
+      "http_attempts": 5,
+      "tokens": 83491,
+      "tool_calls": 5,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 4,
+        "stop": 1
+      },
+      "max_request_seconds": 29.03695379209239,
+      "observed_containers": 5,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_004.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.45454545454545453,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 22,
+      "http_attempts": 22,
+      "tokens": 698855,
+      "tool_calls": 23,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 21,
+        "stop": 1
+      },
+      "max_request_seconds": 175.10187833406962,
+      "observed_containers": 20,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_010.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 765754,
+      "tool_calls": 35,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 385.8748932090821,
+      "observed_containers": 21,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_033.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.35294117647058826,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 1521722,
+      "tool_calls": 35,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {
+        "session.compacted": 1
+      },
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 110.41732108395081,
+      "observed_containers": 36,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_050.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.05,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 23,
+      "http_attempts": 23,
+      "tokens": 342415,
+      "tool_calls": 22,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 22,
+        "stop": 1
+      },
+      "max_request_seconds": 353.71258095803205,
+      "observed_containers": 14,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_060.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 1.0,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 17,
+      "http_attempts": 17,
+      "tokens": 313537,
+      "tool_calls": 16,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 16,
+        "stop": 1
+      },
+      "max_request_seconds": 32.46586933301296,
+      "observed_containers": 17,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_070.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.23076923076923078,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 11,
+      "http_attempts": 11,
+      "tokens": 252349,
+      "tool_calls": 10,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 10,
+        "stop": 1
+      },
+      "max_request_seconds": 101.94650100008585,
+      "observed_containers": 11,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_085.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": false,
+      "zero_reason": "missing_or_damaged_delivery",
+      "requests": 12,
+      "http_attempts": 12,
+      "tokens": 110153,
+      "tool_calls": 12,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 11,
+        "stop": 1
+      },
+      "max_request_seconds": 38.07288804103155,
+      "observed_containers": 12,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_090.r00",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 17,
+      "http_attempts": 17,
+      "tokens": 431568,
+      "tool_calls": 16,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 16,
+        "stop": 1
+      },
+      "max_request_seconds": 34.59445045795292,
+      "observed_containers": 17,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_003.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 17,
+      "http_attempts": 17,
+      "tokens": 311534,
+      "tool_calls": 17,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 16,
+        "stop": 1
+      },
+      "max_request_seconds": 39.87658383301459,
+      "observed_containers": 16,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_004.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.36363636363636365,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 29,
+      "http_attempts": 29,
+      "tokens": 870952,
+      "tool_calls": 30,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 28,
+        "stop": 1
+      },
+      "max_request_seconds": 98.0213605830213,
+      "observed_containers": 20,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_010.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 562977,
+      "tool_calls": 35,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 374.85501833306625,
+      "observed_containers": 21,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_033.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.29411764705882354,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 17,
+      "http_attempts": 17,
+      "tokens": 921277,
+      "tool_calls": 16,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 16,
+        "stop": 1
+      },
+      "max_request_seconds": 80.91239712492097,
+      "observed_containers": 16,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_050.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.05,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 24,
+      "http_attempts": 24,
+      "tokens": 332887,
+      "tool_calls": 23,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 23,
+        "stop": 1
+      },
+      "max_request_seconds": 372.62049887503963,
+      "observed_containers": 14,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_060.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.5454545454545454,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 10,
+      "http_attempts": 10,
+      "tokens": 124093,
+      "tool_calls": 9,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 9,
+        "stop": 1
+      },
+      "max_request_seconds": 23.133249624981545,
+      "observed_containers": 10,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_070.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.5384615384615384,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 18,
+      "http_attempts": 18,
+      "tokens": 544556,
+      "tool_calls": 17,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 17,
+        "stop": 1
+      },
+      "max_request_seconds": 103.20259779202752,
+      "observed_containers": 18,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_085.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": false,
+      "zero_reason": "missing_or_damaged_delivery",
+      "requests": 11,
+      "http_attempts": 11,
+      "tokens": 73251,
+      "tool_calls": 11,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 10,
+        "stop": 1
+      },
+      "max_request_seconds": 31.930669625056908,
+      "observed_containers": 11,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_090.r01",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 10,
+      "http_attempts": 10,
+      "tokens": 373146,
+      "tool_calls": 9,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 9,
+        "stop": 1
+      },
+      "max_request_seconds": 44.86345308297314,
+      "observed_containers": 10,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_003.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 19,
+      "http_attempts": 19,
+      "tokens": 483757,
+      "tool_calls": 19,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 18,
+        "stop": 1
+      },
+      "max_request_seconds": 68.59551266697235,
+      "observed_containers": 14,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_004.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4090909090909091,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 14,
+      "http_attempts": 14,
+      "tokens": 441905,
+      "tool_calls": 14,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 13,
+        "stop": 1
+      },
+      "max_request_seconds": 94.8880152910715,
+      "observed_containers": 13,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_010.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 621870,
+      "tool_calls": 36,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 374.3538094999967,
+      "observed_containers": 22,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_033.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 1216555,
+      "tool_calls": 35,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {
+        "session.compacted": 2
+      },
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 84.17096054099966,
+      "observed_containers": 36,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_050.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.05,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 15,
+      "http_attempts": 15,
+      "tokens": 275007,
+      "tool_calls": 15,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 14,
+        "stop": 1
+      },
+      "max_request_seconds": 347.64099566603545,
+      "observed_containers": 13,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_060.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 1.0,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 14,
+      "http_attempts": 14,
+      "tokens": 242627,
+      "tool_calls": 13,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 13,
+        "stop": 1
+      },
+      "max_request_seconds": 43.47564279194921,
+      "observed_containers": 14,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_070.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.23076923076923078,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 22,
+      "http_attempts": 22,
+      "tokens": 965700,
+      "tool_calls": 22,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 21,
+        "stop": 1
+      },
+      "max_request_seconds": 124.62258779199328,
+      "observed_containers": 22,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_085.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": false,
+      "zero_reason": "missing_or_damaged_delivery",
+      "requests": 26,
+      "http_attempts": 26,
+      "tokens": 362157,
+      "tool_calls": 26,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 25,
+        "stop": 1
+      },
+      "max_request_seconds": 60.638698416994885,
+      "observed_containers": 26,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_090.r02",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 10,
+      "http_attempts": 10,
+      "tokens": 407730,
+      "tool_calls": 9,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 9,
+        "stop": 1
+      },
+      "max_request_seconds": 43.48665933392476,
+      "observed_containers": 10,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_003.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 18,
+      "http_attempts": 18,
+      "tokens": 347835,
+      "tool_calls": 18,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 17,
+        "stop": 1
+      },
+      "max_request_seconds": 52.288799040950835,
+      "observed_containers": 18,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_004.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.36363636363636365,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 30,
+      "http_attempts": 30,
+      "tokens": 857573,
+      "tool_calls": 30,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {
+        "session.compacted": 1
+      },
+      "finish_reasons": {
+        "tool_calls": 29,
+        "stop": 1
+      },
+      "max_request_seconds": 168.0152554580709,
+      "observed_containers": 22,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_010.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 623590,
+      "tool_calls": 34,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 34,
+        "stop": 1
+      },
+      "max_request_seconds": 234.3787323749857,
+      "observed_containers": 20,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_033.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 1341942,
+      "tool_calls": 35,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {
+        "session.compacted": 1
+      },
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 100.55391666607466,
+      "observed_containers": 31,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_050.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.05,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 24,
+      "http_attempts": 24,
+      "tokens": 361849,
+      "tool_calls": 24,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 23,
+        "stop": 1
+      },
+      "max_request_seconds": 362.0618697500322,
+      "observed_containers": 15,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_060.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.5454545454545454,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 16,
+      "http_attempts": 16,
+      "tokens": 207656,
+      "tool_calls": 15,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 15,
+        "stop": 1
+      },
+      "max_request_seconds": 122.59923712501768,
+      "observed_containers": 15,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_070.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 17,
+      "http_attempts": 17,
+      "tokens": 471367,
+      "tool_calls": 16,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 16,
+        "stop": 1
+      },
+      "max_request_seconds": 57.85578370804433,
+      "observed_containers": 17,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_085.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": false,
+      "zero_reason": "missing_or_damaged_delivery",
+      "requests": 30,
+      "http_attempts": 30,
+      "tokens": 412533,
+      "tool_calls": 30,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 29,
+        "stop": 1
+      },
+      "max_request_seconds": 50.95158462494146,
+      "observed_containers": 23,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_090.r03",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 11,
+      "http_attempts": 11,
+      "tokens": 227892,
+      "tool_calls": 10,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 10,
+        "stop": 1
+      },
+      "max_request_seconds": 47.502742832992226,
+      "observed_containers": 11,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_003.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 21,
+      "http_attempts": 21,
+      "tokens": 407632,
+      "tool_calls": 21,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 20,
+        "stop": 1
+      },
+      "max_request_seconds": 43.35330687498208,
+      "observed_containers": 17,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_004.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.45454545454545453,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 23,
+      "http_attempts": 23,
+      "tokens": 794373,
+      "tool_calls": 23,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 22,
+        "stop": 1
+      },
+      "max_request_seconds": 114.87523558305111,
+      "observed_containers": 19,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_010.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 25,
+      "http_attempts": 25,
+      "tokens": 431396,
+      "tool_calls": 24,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 24,
+        "stop": 1
+      },
+      "max_request_seconds": 388.21484149992466,
+      "observed_containers": 17,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_033.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 35,
+      "http_attempts": 35,
+      "tokens": 1759724,
+      "tool_calls": 36,
+      "model_retries": 0,
+      "termination": "request_budget",
+      "compactions": {
+        "session.compacted": 1
+      },
+      "finish_reasons": {
+        "tool_calls": 35
+      },
+      "max_request_seconds": 46.94855012500193,
+      "observed_containers": 37,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_050.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.05,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 29,
+      "http_attempts": 29,
+      "tokens": 1003560,
+      "tool_calls": 30,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {
+        "session.compacted": 1
+      },
+      "finish_reasons": {
+        "tool_calls": 28,
+        "stop": 1
+      },
+      "max_request_seconds": 384.9489954159362,
+      "observed_containers": 11,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_060.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 1.0,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 18,
+      "http_attempts": 18,
+      "tokens": 338796,
+      "tool_calls": 17,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 17,
+        "stop": 1
+      },
+      "max_request_seconds": 30.374915292020887,
+      "observed_containers": 15,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_070.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": true,
+      "zero_reason": "official_zero",
+      "requests": 15,
+      "http_attempts": 15,
+      "tokens": 389071,
+      "tool_calls": 15,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 14,
+        "stop": 1
+      },
+      "max_request_seconds": 54.21703808289021,
+      "observed_containers": 16,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_085.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.0,
+      "dim1_pass": false,
+      "zero_reason": "missing_or_damaged_delivery",
+      "requests": 32,
+      "http_attempts": 32,
+      "tokens": 456348,
+      "tool_calls": 33,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 31,
+        "stop": 1
+      },
+      "max_request_seconds": 107.35237674997188,
+      "observed_containers": 24,
+      "e1_status": "NOT_RUN"
+    },
+    {
+      "label": "officeval_090.r04",
+      "verified": true,
+      "study_valid": true,
+      "score": 0.4,
+      "dim1_pass": true,
+      "zero_reason": null,
+      "requests": 13,
+      "http_attempts": 13,
+      "tokens": 750260,
+      "tool_calls": 12,
+      "model_retries": 0,
+      "termination": "assistant_finished",
+      "compactions": {},
+      "finish_reasons": {
+        "tool_calls": 12,
+        "stop": 1
+      },
+      "max_request_seconds": 55.4102372500347,
+      "observed_containers": 13,
+      "e1_status": "NOT_RUN"
+    }
+  ],
+  "errors": [],
+  "scope": "sealed evidence and frozen configuration; no new scoring, recovery replay or formal G4 leakage audit",
+  "e1_checkpoint_scoring": "NOT_RUN",
+  "d0_frozen": false,
+  "d1_execution": false
+}
