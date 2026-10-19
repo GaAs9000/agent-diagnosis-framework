@@ -1,0 +1,41 @@
+{
+  "schema": "opencode-cost-cap-removal-launch-v1",
+  "snapshot_at_hkt": "2026-10-19T23:38:49.349994+08:00",
+  "state": "controller_started_initial_verification_in_progress",
+  "source_commit": "7fca4e58186631baf422324283d94e3ac24fc7b6",
+  "plan_sha256": "69c0c6fe13d903a1d87e90877973de7daab7bd7a738b791422b31eaa974f5c55",
+  "phase_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_04",
+  "cost_cap_enabled": false,
+  "max_cost_usd": null,
+  "metering_enabled": true,
+  "cumulative_max_requests": 22000,
+  "cumulative_max_tokens": 1000000000,
+  "remaining_phase_limits": {
+    "max_requests": 16994,
+    "max_wall_seconds": 86400,
+    "max_cost_usd": null,
+    "max_tokens": 799496864,
+    "max_tokens_per_request": 33562624,
+    "max_invalid_attempts": 1,
+    "input_usd_per_million": 0.3,
+    "cached_input_usd_per_million": 0.006,
+    "output_usd_per_million": 1.2
+  },
+  "deadline_epoch": 1792507635.4836779,
+  "retained_completed": 538,
+  "retained_invalid": 26,
+  "unstarted_jobs": 1718,
+  "new_actor_requests_not_yet_confirmed": true,
+  "files": {
+    "previous_reconciled_result.json": "a0dca144cb81ebe55489335df933efda26e82f90a73226a1d6070d5a01c4b1d3",
+    "supervisor.py": "33b167bf87bb5e5966a047c71ef58424bca35ac572d6b936a74eed368e3a5d78",
+    "server_tests.json": "882c8e4c4eab6493f8541268d75ab46eab9d9475d0d5dfb85420c1fe54987f64",
+    "budget_authorization.json": "0bcd96ae6cb93bedc37006e7816ce017be17ac7b8fcf40c77eb95b12a26cafd0",
+    "previous_supervisor_result.json": "ab573fd0477a16880103ff743a8aa2c65f5ec78b6ab37839ec5ee4df5b2baa13",
+    "operator_closure_summary.json": "039bdc53cc08336d6e9412ce8b3dc32face260a589b30d5099481881185cb9d0",
+    "launch_receipt.json": "89be9f4f10b553031ceb5f0edab762ef6d61fce336d4d535a547797c1138076c",
+    "operator_drain_request.json": "2a992003c3ddd79c354724a51c39e0ea28d9fdc0da50201bd3c8b90053c60812",
+    "storage_contract.json": "d82c481d082c30546fb6f3b052e5d3a8c0fd6ef6689d773f8b6d09c3f41fb3b7",
+    "supervisor_started.json": "b757f34bfe8c44fb3be2f9503d76e24891cf11c3a5407d6c010d94cb2988e727"
+  }
+}

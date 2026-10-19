@@ -1,0 +1,14 @@
+{
+  "started_at_epoch": 1792421956.490525,
+  "deadline_epoch": 1792507635.4836779,
+  "max_wall_seconds": 85678.99315285683,
+  "min_free_disk_bytes": 8589934592,
+  "storage_contract_sha256": "d08d70c71e8135ecdf541dadd8619bc33539d6d5e86674b42d12ed1a30a44c42",
+  "source_commit": "89d4c26f7305c6c102883ad90ddbbd4f8c6dcf3c",
+  "supervisor_pid": 75242,
+  "restart_or_renew": false,
+  "controller_pid": 75245,
+  "finished_at_epoch": 1792423899.324784,
+  "controller_exit_code": -2,
+  "supervisor_stop_reason": null
+}

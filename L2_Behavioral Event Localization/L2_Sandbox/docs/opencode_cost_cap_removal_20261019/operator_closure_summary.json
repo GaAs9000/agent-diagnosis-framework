@@ -1,0 +1,33 @@
+{
+  "manifest_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/manifest.json",
+  "manifest_file_sha256": "54c479baa25528a3411089f9fd1b8d511943c73037fba63e4a4964ccd97a6a31",
+  "closure_sha256": "4d9718ebcc02145087dacf3376418c469ffac0dc5622f8e3e85b5deca390af05",
+  "verification_scope": "operational_census_and_accounting_only",
+  "receipt_count": 564,
+  "operational_files": {
+    "admission": {
+      "original": {
+        "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/original_admission.json",
+        "sha256": "cb698c612c713ee5ae4d73b223bab462264acbbf523d52aa06f0f9ed10eb5fac"
+      },
+      "final": {
+        "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/final_admission.json",
+        "sha256": "63ef43060ed51927cbff0c69cc990f5563c1487d2897fd239490ae4525f874f1"
+      }
+    },
+    "result": {
+      "original": {
+        "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/original_result.json",
+        "sha256": "fa97db6bc5f52287db133b776c295677c8f77447552c5be0fd210b569765c07c"
+      },
+      "final": {
+        "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/final_result.json",
+        "sha256": "a0dca144cb81ebe55489335df933efda26e82f90a73226a1d6070d5a01c4b1d3"
+      }
+    }
+  },
+  "actor_requests": 0,
+  "scientific_artifacts_modified": false,
+  "successor_full_predecessor_verification_required": true,
+  "idempotent_rerun_verified_before_source_upgrade": true
+}

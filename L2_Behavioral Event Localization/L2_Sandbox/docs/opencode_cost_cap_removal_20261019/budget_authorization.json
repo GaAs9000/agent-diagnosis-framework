@@ -1,0 +1,23 @@
+{
+  "schema": "opencode-d1-budget-authorization-v2",
+  "execution_authorized": true,
+  "scope": "cross_actor_D1_remove_usage_equivalent_cost_cap",
+  "source": "direct_user_message_20261019",
+  "exact_user_text": "$50 等值用量 全部放开就行",
+  "predecessor_plan_sha256": "b42529ac22f8935181ecc4e9f77e23f1178897503d1b2f4fc12122bd8218de3a",
+  "cumulative_limits": {
+    "max_requests": 22000,
+    "max_tokens": 1000000000,
+    "max_cost_usd": null
+  },
+  "phase_started_at_epoch": 1792421235.4836779,
+  "deadline_epoch": 1792507635.4836779,
+  "max_wall_seconds": 86400,
+  "operator_drain_closure": {
+    "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_03/execution/operator_closure/manifest.json",
+    "sha256": "54c479baa25528a3411089f9fd1b8d511943c73037fba63e4a4964ccd97a6a31"
+  },
+  "no_resampling": true,
+  "automatic_d2": false,
+  "artifact_sha256": "09587291bfe4838d0923c6c49937a65c693d4d521c55ead4c2d7cdc165307c3d"
+}

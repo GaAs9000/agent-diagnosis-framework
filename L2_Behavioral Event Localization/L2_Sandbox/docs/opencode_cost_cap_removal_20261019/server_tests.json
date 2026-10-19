@@ -1,0 +1,10 @@
+{
+  "server": "aml-b",
+  "gpu_devices_used": 0,
+  "cpu_thread_cap": 4,
+  "passed": 132,
+  "skipped": 0,
+  "duration_seconds": 20.99,
+  "scope": "cost removal, authorization, multigeneration, admission, runtime, operator drain",
+  "independent_review": "no material blocker; source upgrade only after closure"
+}

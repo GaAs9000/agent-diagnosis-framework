@@ -1,0 +1,9 @@
+{
+  "schema": "opencode-operator-controller-drain-v1",
+  "requested_at_epoch": 1792423797.9414148,
+  "controller_pid": 75245,
+  "signal": "SIGINT_controller_only",
+  "exact_user_text": "$50 等值用量 全部放开就行",
+  "scope": "stop dispatch, allow already-submitted branches to finish; remove cost cap in successor; preserve HTTP/token/deadline/storage",
+  "source_commit": "6a26a252f92bfeada069e86465c079b686046e5e"
+}

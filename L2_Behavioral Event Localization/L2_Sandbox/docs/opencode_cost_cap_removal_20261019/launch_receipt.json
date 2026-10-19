@@ -1,0 +1,10 @@
+{
+  "supervisor_pid": 83469,
+  "source_commit": "7fca4e58186631baf422324283d94e3ac24fc7b6",
+  "supervisor_sha256": "33b167bf87bb5e5966a047c71ef58424bca35ac572d6b936a74eed368e3a5d78",
+  "plan_file_sha256": "0a8edce0f16064f96966dd43342c72692becb6b41b28842d86c63d299a629b91",
+  "storage_contract_sha256": "d82c481d082c30546fb6f3b052e5d3a8c0fd6ef6689d773f8b6d09c3f41fb3b7",
+  "cost_cap_enabled": false,
+  "automatic_restart": false,
+  "full_predecessor_verification": "required inside controller before Admission; startup proof persisted automatically"
+}
