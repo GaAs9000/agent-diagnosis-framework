@@ -1,0 +1,47 @@
+{
+  "schema": "opencode-finish-05-launch-evidence-v1",
+  "snapshot_at_hkt": "2026-10-20T17:56:20.738551+08:00",
+  "state": "controller_started_initial_verification_in_progress",
+  "source_commit": "cb8243ab91e24f453d8a5d28fd0b3996944d655d",
+  "plan_sha256": "fbaefdc8c789402cbcd39c44d4b8d699224710ef9f254e9e7a9ea72613044d3a",
+  "phase_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_05",
+  "retained_completed": 1792,
+  "retained_invalid": 78,
+  "unstarted_jobs": 412,
+  "cumulative_limits": {
+    "max_requests": 25000,
+    "max_tokens": 2000000000,
+    "max_cost_usd": null
+  },
+  "remaining_phase_limits": {
+    "max_requests": 7909,
+    "max_wall_seconds": 86400,
+    "max_cost_usd": null,
+    "max_tokens": 1000535032,
+    "max_tokens_per_request": 33562624,
+    "max_invalid_attempts": 1,
+    "input_usd_per_million": 0.3,
+    "cached_input_usd_per_million": 0.006,
+    "output_usd_per_million": 1.2
+  },
+  "requested_deadline_epoch": 1792594035.4836779,
+  "actual_deadline_epoch": 1792576346.4276428,
+  "automatic_terminal_report": true,
+  "automatic_d2": false,
+  "new_model_requests_not_yet_confirmed": true,
+  "files": {
+    "authorization_source.txt": "b054b6b0d3cd3be6ad0585ec8b8d059c601e444a030bcbd9cdac3c69bcc6cd37",
+    "network_preflight.json": "e30bdcd8f0e33b23e1440ff245bd07d8ffbb8bf1f59c983bf84bb073770531b0",
+    "previous_usage_reconciliation.json": "4c536408fcb700ffefce6e2e697a783a82c95437c857fa0fb1b5432d5cff96ac",
+    "supervisor.py": "642ddb1c5557c2c147d884838ac31ac1b8a6aab93ba61f2584bdac102a120600",
+    "server_tests.json": "de9d3c2fe92d00a44d13ab042c237af8d4eef2efa1215577cf4a3bc5b03ab755",
+    "previous_result.json": "7718b6f7df21745f1178b88dea7168356b2def55baeb5b5a6f07c80d390570aa",
+    "previous_descriptive_report.md": "97d8568d9b5bec97709c4506fa5f26652530c9cf5024c098cade4a3d83b1e995",
+    "budget_authorization.json": "fa5e79077919f4982e7cc25d3bbe3d273ea3d340c8266ecfa767660534a3843b",
+    "previous_supervisor_result.json": "4bb50cb0773770fb469bbc10307df4716f274ce405223b9f01a599bcb79bd595",
+    "launch_receipt.json": "b449f44eba3b00e46fee8a1294808aa1c8195f63328b4bf5069438a2f4144991",
+    "storage_contract.json": "f61b2c59f7b80bba9b5942c0d5d3209f103fc9c14f28162ebbba3277d25e6fd6",
+    "archive_integration_result.json": "7de3ec6bcd856b76dd96aaa677fea679f4806a629b256862933ad5320909d53e",
+    "supervisor_started.json": "becc6564020549cc17ef1b14df0731f169e3eeb02ac69d4c79ab59df6d215ef3"
+  }
+}

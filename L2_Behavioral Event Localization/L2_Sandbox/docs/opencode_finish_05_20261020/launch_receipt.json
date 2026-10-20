@@ -1,0 +1,12 @@
+{
+  "supervisor_pid": 98788,
+  "source_commit": "cb8243ab91e24f453d8a5d28fd0b3996944d655d",
+  "supervisor_sha256": "642ddb1c5557c2c147d884838ac31ac1b8a6aab93ba61f2584bdac102a120600",
+  "plan_file_sha256": "0462c8a20b45c016dd363bdc7fc0c8dafe1dd63b0bc9e09a5fdc172d855b1553",
+  "storage_contract_sha256": "f61b2c59f7b80bba9b5942c0d5d3209f103fc9c14f28162ebbba3277d25e6fd6",
+  "full_predecessor_verification": "mandatory inside controller before any new model admission",
+  "automatic_restart": false,
+  "automatic_d2": false,
+  "terminal_report_automatic": true,
+  "terminal_analysis_location": "aml-b CPU"
+}

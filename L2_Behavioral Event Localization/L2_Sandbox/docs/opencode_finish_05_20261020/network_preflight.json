@@ -1,0 +1,22 @@
+{
+  "actor_requests": 0,
+  "model_calls": 0,
+  "credential_used": false,
+  "method": "HEAD",
+  "url": "https://opencode.ai/inference/go/v1",
+  "proxies": {
+    "http": {
+      "scheme": "http",
+      "hostname": "127.0.0.1",
+      "port": 7897
+    },
+    "https": {
+      "scheme": "http",
+      "hostname": "127.0.0.1",
+      "port": 7897
+    }
+  },
+  "started_at_epoch": 1792489219.426301,
+  "http_status": 403,
+  "elapsed_seconds": 0.6799478530883789
+}

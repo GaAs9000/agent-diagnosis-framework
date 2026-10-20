@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "reused_completed_report": true,
+  "plan_sha256": "69c0c6fe13d903a1d87e90877973de7daab7bd7a738b791422b31eaa974f5c55",
+  "report_manifest_sha256": "e4ba1d5159c79293d222c6d5600edbf8e4d1459108067ba84051f13de6166a85",
+  "terminal_census": {
+    "planned": 2282,
+    "valid": 1792,
+    "invalid_or_incomplete": 78,
+    "unstarted": 412
+  },
+  "actor_requests": 0,
+  "scorer_invocations": 0,
+  "report_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_04/terminal_report/report.md",
+  "automatic_d2": false,
+  "artifact_sha256": "aba1a87858cd12946f5dcf15a83903072a70b2c1b333a2e1d47e310945dd5755"
+}

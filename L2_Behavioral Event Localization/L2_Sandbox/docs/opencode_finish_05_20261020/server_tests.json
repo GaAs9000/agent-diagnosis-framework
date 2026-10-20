@@ -1,0 +1,10 @@
+{
+  "server": "aml-b",
+  "passed": 175,
+  "skipped": 0,
+  "duration_seconds": 32.4,
+  "cpu_thread_cap": 4,
+  "gpu_devices_used": 0,
+  "scope": "finish grant, reporting, archive recovery, inherited grants, admission/runtime/operator drain",
+  "independent_review": "no outstanding material findings; archive retry finding resolved"
+}

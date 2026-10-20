@@ -1,0 +1,12 @@
+{
+  "schema": "opencode-external-storage-v1",
+  "volume_path": "/Volumes/PNY",
+  "volume_device": 16777243,
+  "branch_storage_root": "/Volumes/PNY/agent-diagnosis-framework/opencode_20261019/continuation_05/branches",
+  "min_free_disk_bytes": 8589934592,
+  "local_root": "/Users/jiashen/Desktop/问题诊断",
+  "local_device": 16777229,
+  "old_evidence_moved": false,
+  "old_evidence_deleted": false,
+  "artifact_sha256": "8ed3ec7bb3a50f1f59b7d52cd4ddfc8c6a97660ff711f95534442171afaf67e4"
+}

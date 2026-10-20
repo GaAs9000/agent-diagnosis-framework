@@ -1,0 +1,130 @@
+{
+  "census": {
+    "planned": 2282,
+    "valid": 1792,
+    "invalid_or_incomplete": 78,
+    "unstarted": 412
+  },
+  "usage": {
+    "admitted_requests": 17091,
+    "transport_started_requests": 17091,
+    "reported_settled_actual_tokens": 644288496,
+    "reported_settled_requests": 16858,
+    "settled_usage_equivalent_usd": 26.562153611999996,
+    "unknown_reserved_tokens": 355176472,
+    "unknown_usage_requests": 233,
+    "unknown_reserved_usage_equivalent_usd": 108.27080400000031,
+    "accounted_tokens_including_unknown_reservations": 999464968,
+    "accounted_usage_equivalent_usd": 134.83295761200029,
+    "phases": [
+      {
+        "plan_sha256": "69c0c6fe13d903a1d87e90877973de7daab7bd7a738b791422b31eaa974f5c55",
+        "admission_sha256": "ff0115af1dcd785185bd2c268462b6704d579d682ceb49383f4c9720800e8749",
+        "started_at_epoch": 1792424963.2736309,
+        "stop_reason": "token_cap",
+        "admitted_requests": 12085,
+        "transport_started_requests": 12085,
+        "reported_settled_actual_tokens": 451451113,
+        "reported_settled_requests": 11855,
+        "settled_usage_equivalent_usd": 18.346816116000003,
+        "unknown_reserved_tokens": 347510719,
+        "unknown_usage_requests": 230,
+        "unknown_reserved_usage_equivalent_usd": 105.9489597000003,
+        "accounted_tokens_including_unknown_reservations": 798961832,
+        "accounted_usage_equivalent_usd": 124.2957758160003
+      },
+      {
+        "plan_sha256": "b42529ac22f8935181ecc4e9f77e23f1178897503d1b2f4fc12122bd8218de3a",
+        "admission_sha256": "0cb751d9e44c56968a32a50e162e303773ff0e5089676348a59e58ab44c2e1ce",
+        "started_at_epoch": 1792422523.160272,
+        "stop_reason": "closed",
+        "admitted_requests": 308,
+        "transport_started_requests": 308,
+        "reported_settled_actual_tokens": 11790438,
+        "reported_settled_requests": 308,
+        "settled_usage_equivalent_usd": 0.6629142120000002,
+        "accounted_tokens_including_unknown_reservations": 11790438,
+        "accounted_usage_equivalent_usd": 0.6629142120000002
+      },
+      {
+        "plan_sha256": "59a5d20253420c8b76e2af8a7e883cc1321d436bc75a0316f84673baa4dad4f4",
+        "admission_sha256": "dde67c3e48efbc438dc0adeaee9336616811357da04f2f71bb54c8a8c7a69ef9",
+        "started_at_epoch": 1792391933.41431,
+        "stop_reason": "usage_equivalent_cost_cap",
+        "admitted_requests": 4528,
+        "transport_started_requests": 4528,
+        "reported_settled_actual_tokens": 175178159,
+        "reported_settled_requests": 4526,
+        "settled_usage_equivalent_usd": 7.08998714399999,
+        "unknown_reserved_tokens": 6608985,
+        "unknown_usage_requests": 2,
+        "unknown_reserved_usage_equivalent_usd": 1.9974411,
+        "accounted_tokens_including_unknown_reservations": 181787144,
+        "accounted_usage_equivalent_usd": 9.087428243999991
+      },
+      {
+        "plan_sha256": "4f51d6393080ac60b0037835fbb25ba1d5a253d73693051bcb286fd02461a579",
+        "admission_sha256": "cd56fd8bc33b83f548322d256384133c6e7a54249967ee11dacc57ecf0d4fda3",
+        "started_at_epoch": 1792390904.1143649,
+        "stop_reason": "invalid_attempt",
+        "admitted_requests": 95,
+        "transport_started_requests": 95,
+        "reported_settled_actual_tokens": 3722580,
+        "reported_settled_requests": 95,
+        "settled_usage_equivalent_usd": 0.30441314399999986,
+        "accounted_tokens_including_unknown_reservations": 3722580,
+        "accounted_usage_equivalent_usd": 0.30441314399999986
+      },
+      {
+        "plan_sha256": "24962056b95b231005e303c346922eae36b71deef406fbbaf0530ed43ac96dd1",
+        "admission_sha256": "96330ba2ee3fce6117e8bdbee384e7183b2c316413ed1177ed130885eee3a175",
+        "started_at_epoch": 1792387770.5829382,
+        "stop_reason": "invalid_attempt",
+        "admitted_requests": 50,
+        "transport_started_requests": 50,
+        "reported_settled_actual_tokens": 1474586,
+        "reported_settled_requests": 50,
+        "settled_usage_equivalent_usd": 0.10787129999999998,
+        "accounted_tokens_including_unknown_reservations": 1474586,
+        "accounted_usage_equivalent_usd": 0.10787129999999998
+      },
+      {
+        "plan_sha256": "08d86ad52ee6b886d1293b461b7a1355086d5b2be70cc13881db54e7ac524ee9",
+        "admission_sha256": "77b94db126e99bfe3bc9f03b0882606045f78ca6506cbe01f2b7516a1d49f6e7",
+        "started_at_epoch": 1792386954.8010712,
+        "stop_reason": "invalid_attempt",
+        "admitted_requests": 25,
+        "transport_started_requests": 25,
+        "reported_settled_actual_tokens": 671620,
+        "reported_settled_requests": 24,
+        "settled_usage_equivalent_usd": 0.05015169599999998,
+        "unknown_reserved_tokens": 1056768,
+        "unknown_usage_requests": 1,
+        "unknown_reserved_usage_equivalent_usd": 0.3244032,
+        "accounted_tokens_including_unknown_reservations": 1728388,
+        "accounted_usage_equivalent_usd": 0.37455489599999997
+      }
+    ],
+    "http_status_counts": {
+      "200": 16858,
+      "400": 1,
+      "503": 2,
+      "no_http_status": 230
+    },
+    "unknown_usage_http_status_counts": {
+      "400": 1,
+      "503": 2,
+      "no_http_status": 230
+    },
+    "send_state_counts": {
+      "settled": 16858,
+      "unknown_usage": 233
+    },
+    "accounting_mode": "usage_equivalent_peak_rates_not_billed_cash",
+    "billed_cash_usd": null,
+    "unknown_usage_refunded": false
+  },
+  "verification_scope": "receipt_seals_and_plan_bindings",
+  "formal_pvalue_gate_passed": false,
+  "d2_gate_open": false
+}

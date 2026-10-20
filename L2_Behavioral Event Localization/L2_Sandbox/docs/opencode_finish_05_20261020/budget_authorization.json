@@ -1,0 +1,31 @@
+{
+  "schema": "opencode-d1-budget-authorization-v3",
+  "execution_authorized": true,
+  "scope": "cross_actor_D1_finish_remaining",
+  "source": "direct_user_attachment_20261020",
+  "exact_user_text": "授权决定：批准启动 continuation_05，无损继承当前进度并跑完剩余 412 条未启动分支。",
+  "request_attachment_sha256": "b054b6b0d3cd3be6ad0585ec8b8d059c601e444a030bcbd9cdac3c69bcc6cd37",
+  "request_attachment": {
+    "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_05/authorization_source.txt",
+    "sha256": "b054b6b0d3cd3be6ad0585ec8b8d059c601e444a030bcbd9cdac3c69bcc6cd37"
+  },
+  "predecessor_plan_sha256": "69c0c6fe13d903a1d87e90877973de7daab7bd7a738b791422b31eaa974f5c55",
+  "predecessor_census": {
+    "completed_branches": 1792,
+    "invalid_or_incomplete_branches": 78,
+    "pending_branches": 412
+  },
+  "cumulative_limits": {
+    "max_requests": 25000,
+    "max_tokens": 2000000000,
+    "max_cost_usd": null
+  },
+  "phase_started_at_epoch": 1792489946.4276428,
+  "requested_deadline_epoch": 1792594035.4836779,
+  "authorized_deadline_extension_seconds": 86400,
+  "deadline_epoch": 1792576346.4276428,
+  "max_wall_seconds": 86400,
+  "no_resampling": true,
+  "automatic_d2": false,
+  "artifact_sha256": "a32e34de368f7d729017f8bf97ffdcf21709298a461d8a20af6ed76d40c06aab"
+}
