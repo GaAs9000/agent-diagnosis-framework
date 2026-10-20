@@ -128,9 +128,19 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
                 raise ValueError('regular budget authorization file required')
             authorization_path=budget_authorization.resolve()
             grant=validate_budget_authorization(read_json(authorization_path),previous['artifact_sha256'])
+            if grant['schema']=='opencode-d1-budget-authorization-v3':
+                source_ref=grant['request_attachment']
+                source_path=mapped(source_ref['path'])
+                if (source_path.is_symlink() or not source_path.is_file()
+                        or file_digest(source_path)!=source_ref['sha256']):
+                    raise ValueError('budget authorization attachment changed')
+                bound[logical(source_path)]=source_ref['sha256']
             if (grant['schema']=='opencode-d1-budget-authorization-v2'
                     and grant['deadline_epoch']!=deadline):
                 raise ValueError('cost cap removal must preserve predecessor absolute deadline')
+            if (grant['schema']=='opencode-d1-budget-authorization-v3'
+                    and grant['requested_deadline_epoch']!=deadline+86400):
+                raise ValueError('finish authorization must extend predecessor deadline by exactly 24 hours')
             for cap, count in (('max_requests','requests'),('max_tokens','tokens'),('max_cost_usd','cost_usd')):
                 result=read_json(predecessor/'execution/result.json'); verify_seal(result)
                 field='aggregate_'+count if previous.get('predecessor') is not None else count
@@ -206,7 +216,8 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
         from l2_sandbox.opencode_d1_runtime import _branch_storage_root
         payload['branch_storage_root']=str(_branch_storage_root({'branch_storage_root':str(branch_storage_root)}))
     if authorization_ref is not None:
-        no_cost_cap=grant['schema']=='opencode-d1-budget-authorization-v2'
+        no_cost_cap=grant['schema'] in ('opencode-d1-budget-authorization-v2',
+                                     'opencode-d1-budget-authorization-v3')
         payload.update(budget_authorization=authorization_ref,
                        operational_limits_origin='explicit sealed Option A cumulative budget extension',
                        cost_scope=('usage-equivalent cost metered without local cost cap; Go quota/balance settings unchanged'

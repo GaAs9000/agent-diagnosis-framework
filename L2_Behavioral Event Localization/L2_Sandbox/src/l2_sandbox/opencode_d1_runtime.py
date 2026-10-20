@@ -405,9 +405,17 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
     if plan.get('budget_authorization') is not None:
         grant = read_json(_bound_reference(plan, plan['budget_authorization']))
         validate_budget_authorization(grant, old_plan['artifact_sha256'])
+        if grant['schema'] == 'opencode-d1-budget-authorization-v3':
+            _bound_reference(plan, grant['request_attachment'])
+            if any(old_result.get(key) != value
+                   for key, value in grant['predecessor_census'].items()):
+                raise ValueError('finish authorization predecessor census differs')
         if (grant['schema'] == 'opencode-d1-budget-authorization-v2'
                 and grant['deadline_epoch'] != prior_deadline):
             raise ValueError('cost cap removal must preserve predecessor absolute deadline')
+        if (grant['schema'] == 'opencode-d1-budget-authorization-v3'
+                and grant['requested_deadline_epoch'] != prior_deadline + 86400):
+            raise ValueError('finish authorization must extend predecessor deadline by exactly 24 hours')
         if (plan.get('deadline_epoch') != grant['deadline_epoch']
                 or plan['limits']['max_wall_seconds'] != grant['max_wall_seconds']
                 or plan['model'] != old_plan['model']):
@@ -426,8 +434,9 @@ def _predecessor_seeds(plan, jobs, injected, *, _chain=()):
                 if (plan['model'] != old_plan['model']
                         or plan['limits'][cap] is not None or inherited is None
                         or validate_budget_authorization(inherited, inherited.get('predecessor_plan_sha256'))['schema']
-                        != 'opencode-d1-budget-authorization-v2'):
-                    raise ValueError('uncapped cost requires inherited v2 authorization')
+                        not in ('opencode-d1-budget-authorization-v2',
+                                'opencode-d1-budget-authorization-v3')):
+                    raise ValueError('uncapped cost requires inherited v2 or v3 authorization')
                 continue
             if (type(used) not in (int, float) or not math.isfinite(used) or used < 0
                     or old_result.get(count) != used

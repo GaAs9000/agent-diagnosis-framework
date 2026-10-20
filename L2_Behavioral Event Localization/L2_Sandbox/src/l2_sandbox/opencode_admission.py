@@ -33,22 +33,29 @@ def _cost(prompt, completion, cached=0):
 
 
 def validate_budget_authorization(authorization, predecessor_sha256):
-    """Validate the sealed grant; v2 removes only the usage-equivalent cost cap."""
+    """Validate explicit cumulative grants without changing default admission caps."""
     verify_seal(authorization)
     version = authorization.get('schema')
-    no_cost_cap = version == 'opencode-d1-budget-authorization-v2'
-    scope = ('cross_actor_D1_remove_usage_equivalent_cost_cap' if no_cost_cap
+    finish_remaining = version == 'opencode-d1-budget-authorization-v3'
+    no_cost_cap = version in ('opencode-d1-budget-authorization-v2',
+                             'opencode-d1-budget-authorization-v3')
+    scope = ('cross_actor_D1_finish_remaining' if finish_remaining else
+             'cross_actor_D1_remove_usage_equivalent_cost_cap' if no_cost_cap
              else 'cross_actor_D1_budget_extension')
-    if (version not in ('opencode-d1-budget-authorization-v1', 'opencode-d1-budget-authorization-v2')
+    if (version not in ('opencode-d1-budget-authorization-v1',
+                               'opencode-d1-budget-authorization-v2',
+                               'opencode-d1-budget-authorization-v3')
             or authorization.get('execution_authorized') is not True
             or authorization.get('scope') != scope
-            or authorization.get('source') != 'direct_user_message_20261019'
+            or authorization.get('source') != ('direct_user_attachment_20261020' if finish_remaining
+                                                else 'direct_user_message_20261019')
             or not isinstance(authorization.get('exact_user_text'), str)
             or not authorization['exact_user_text'].strip()
-            or (no_cost_cap and authorization['exact_user_text'] != '$50 等值用量 全部放开就行')
+            or (no_cost_cap and not finish_remaining and authorization['exact_user_text'] != '$50 等值用量 全部放开就行')
             or authorization.get('predecessor_plan_sha256') != predecessor_sha256
             or authorization.get('cumulative_limits') != dict(
-                max_requests=22000, max_tokens=1_000_000_000,
+                max_requests=25000 if finish_remaining else 22000,
+                max_tokens=2_000_000_000 if finish_remaining else 1_000_000_000,
                 max_cost_usd=None if no_cost_cap else 50.0)):
         raise ValueError('explicit predecessor-bound Option A budget authorization required')
     start, deadline, wall = (authorization.get(k) for k in
@@ -56,6 +63,27 @@ def validate_budget_authorization(authorization, predecessor_sha256):
     if (any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0
             for v in (start, deadline, wall)) or not 0 < deadline - start <= wall <= 86400):
         raise ValueError('budget authorization requires a finite phase deadline within 24 hours')
+    if finish_remaining:
+        attachment = authorization.get('request_attachment_sha256')
+        source_ref = authorization.get('request_attachment')
+        census = authorization.get('predecessor_census')
+        census_keys = ('completed_branches', 'invalid_or_incomplete_branches', 'pending_branches')
+        requested = authorization.get('requested_deadline_epoch')
+        if (not isinstance(attachment, str) or len(attachment) != 64
+                or any(c not in '0123456789abcdef' for c in attachment)
+                or not isinstance(source_ref, dict)
+                or not isinstance(source_ref.get('path'), str)
+                or not Path(source_ref['path']).is_absolute()
+                or source_ref.get('sha256') != attachment
+                or not isinstance(census, dict) or set(census) != set(census_keys)
+                or any(type(census[key]) is not int or census[key] < 0 for key in census_keys)
+                or sum(census.values()) != 2282
+                or type(requested) not in (int, float) or not math.isfinite(requested)
+                or requested <= 0
+                or authorization.get('authorized_deadline_extension_seconds') != 86400
+                or wall != 86400
+                or deadline != min(requested, start + 86400)):
+            raise ValueError('finish authorization requires bound attachment and bounded deadline extension')
     return authorization
 
 
