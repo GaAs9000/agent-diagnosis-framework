@@ -202,7 +202,10 @@ class NativePiValidator:
                 pass
             for pipe in (process.stdin, process.stdout):
                 if pipe is not None:
-                    pipe.close()
+                    try:
+                        pipe.close()
+                    except (OSError, ValueError):
+                        pass
 
 
 def validate_pi_call(name: str, arguments: Any, call_id: str = "validation", *, deadline_monotonic: float | None = None, **options: Any) -> dict[str, Any]:

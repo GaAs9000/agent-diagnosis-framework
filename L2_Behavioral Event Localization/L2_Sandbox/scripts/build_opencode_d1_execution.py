@@ -212,6 +212,11 @@ def build(phase: Path, predecessor: Path | None = None, *, recover_truncated_too
     if predecessor_doc is not None:
         payload.update(predecessor=predecessor_doc,deadline_epoch=deadline,
                        continuation_policy='preserve completed equivalent wire histories and retain invalid attempts; run only untouched jobs')
+        if authorization_ref is None:
+            payload.update(operational_limits_origin='remaining caps inherited from verified predecessor chain',
+                cost_scope=('usage-equivalent cost metered without local cost cap; Go quota/balance settings unchanged'
+                    if caps['max_cost_usd'] is None else
+                    'remaining predecessor usage-equivalent cap; not billed cash; Go quota/balance settings unchanged'))
     if branch_storage_root is not None:
         from l2_sandbox.opencode_d1_runtime import _branch_storage_root
         payload['branch_storage_root']=str(_branch_storage_root({'branch_storage_root':str(branch_storage_root)}))
