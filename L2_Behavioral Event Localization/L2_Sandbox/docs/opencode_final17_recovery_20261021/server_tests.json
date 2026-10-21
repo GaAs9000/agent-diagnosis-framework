@@ -1,0 +1,11 @@
+{
+  "server": "aml-b",
+  "passed": 122,
+  "skipped": 0,
+  "duration_seconds": 41.52,
+  "cpu_thread_cap": 4,
+  "gpu_devices_used": 0,
+  "native_test_directory": "/home/jiasheren2/projects/pi-native-validation-0731",
+  "scope": "native pipe cleanup, real pinned bridge validation, runtime/multigeneration/finish-grant",
+  "independent_review": "no material findings; upstream bridge disconnect cause remains unknown"
+}

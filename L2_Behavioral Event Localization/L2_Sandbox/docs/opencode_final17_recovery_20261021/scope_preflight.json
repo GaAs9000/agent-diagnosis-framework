@@ -1,0 +1,11 @@
+{
+  "plan_sha256": "29886d67ea382501fe9ae846411716f105c24ea0b73da5803e19f9de77439495",
+  "retained_receipts": 2265,
+  "completed": 2184,
+  "invalid": 81,
+  "unstarted_jobs": 17,
+  "verification_scope": "sealed receipt bindings and exact unstarted logical jobs; full packages/wires validated inside controller",
+  "actor_requests": 0,
+  "scorer_invocations": 0,
+  "artifact_sha256": "4ccaa4b78957ab319a30a25ecc97fd6ecd151e25f0cb5e83680266a30ac938aa"
+}

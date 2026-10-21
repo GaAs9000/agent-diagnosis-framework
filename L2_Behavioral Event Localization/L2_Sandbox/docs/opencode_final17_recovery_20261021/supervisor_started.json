@@ -1,0 +1,11 @@
+{
+  "started_at_epoch": 1792563290.073278,
+  "deadline_epoch": 1792576346.4276428,
+  "max_wall_seconds": 13056.354364871979,
+  "min_free_disk_bytes": 8589934592,
+  "storage_contract_sha256": "909b992a127863765ebcf1ca629fb3b2e7c8dea0cdff5b219ddd6d0e9c7462c3",
+  "source_commit": "578754f0a04f713afe1101258bb153be91a55632",
+  "supervisor_pid": 61487,
+  "restart_or_renew": false,
+  "controller_pid": 61490
+}

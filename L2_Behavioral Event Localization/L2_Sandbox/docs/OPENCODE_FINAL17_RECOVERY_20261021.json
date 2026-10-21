@@ -1,0 +1,36 @@
+{
+  "schema": "opencode-final17-recovery-launch-v1",
+  "snapshot_at_hkt": "2026-10-21T14:16:07.380080+08:00",
+  "state": "controller_started_full_predecessor_integrity_check",
+  "source_commit": "578754f0a04f713afe1101258bb153be91a55632",
+  "plan_sha256": "29886d67ea382501fe9ae846411716f105c24ea0b73da5803e19f9de77439495",
+  "phase_path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_06",
+  "retained_completed": 2184,
+  "retained_invalid": 81,
+  "only_unstarted": 17,
+  "limits": {
+    "max_requests": 4105,
+    "max_wall_seconds": 86400,
+    "max_cost_usd": null,
+    "max_tokens": 803547670,
+    "max_tokens_per_request": 33562624,
+    "max_invalid_attempts": 1,
+    "input_usd_per_million": 0.3,
+    "cached_input_usd_per_million": 0.006,
+    "output_usd_per_million": 1.2
+  },
+  "deadline_epoch": 1792576346.4276428,
+  "limits_extended": false,
+  "automatic_d2": false,
+  "model_calls_not_yet_confirmed": true,
+  "files": {
+    "scope_preflight.json": "1443109bc14efe4c04ec2ee52754bfb875695deaac890d29f953340160f4ac86",
+    "supervisor.py": "642ddb1c5557c2c147d884838ac31ac1b8a6aab93ba61f2584bdac102a120600",
+    "resume_scope.json": "19ff80149d38b07dab6af664905d106c5ee8e8e04ee34b576f7ab4f392a5e846",
+    "server_tests.json": "d80bc02373a0b7af5ed8243405d3c469b0b6ba5f3d526cde7cc2555a06e24e47",
+    "native_bridge_preflight.json": "1f67cab2857d550fbd1f34474afdd4457166ce6a5ed6d7c18d1a5c8bba8f6c72",
+    "launch_receipt.json": "12152138818030c4c892965bce3c2aaeff52e8580cb421a137f79a26b90bf1d1",
+    "storage_contract.json": "909b992a127863765ebcf1ca629fb3b2e7c8dea0cdff5b219ddd6d0e9c7462c3",
+    "supervisor_started.json": "db0da7c3f1e56da9089a3c6567035bc5758415dc2f5c2e7a8f2e01f26e8641d0"
+  }
+}

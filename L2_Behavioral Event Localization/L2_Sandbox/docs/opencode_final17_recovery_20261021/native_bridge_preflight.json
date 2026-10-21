@@ -1,0 +1,47 @@
+{
+  "started_at_epoch": 1792562989.690239,
+  "native_dependency_identity_matches": true,
+  "actual_identity": {
+    "repository": "https://github.com/earendil-works/pi",
+    "commit": "781152fc24841dc54b22284514604048ebe5e2c9",
+    "version": "0.73.1",
+    "validation_entrypoint": "@mariozechner/pi-agent-core.runAgentLoop",
+    "tool_factories": [
+      "createReadTool",
+      "createBashTool",
+      "createEditTool",
+      "createWriteTool"
+    ],
+    "mode": "recorded_assistant_validation_only",
+    "actor_requests": 0,
+    "packages": {
+      "@mariozechner/pi-agent-core": {
+        "version": "0.73.1",
+        "integrity": "sha512-Y/KVOhuKSgRQgYBlwmRtO2gPkUcoavOSqGF9bpQIINvNZvc19k6Z1H3bFDTce3Vp5ApMmTsfLH3+tNvOg75fAQ=="
+      },
+      "@mariozechner/pi-ai": {
+        "version": "0.73.1",
+        "integrity": "sha512-Jh4lXawZYuC83HzSIYuVum9NBqJD49i4JOt3H96cGW/924cwJMOyUs1Mv/e4QPzTXnzrqMoGviNQnvGgSu1LSg=="
+      },
+      "@mariozechner/pi-coding-agent": {
+        "version": "0.73.1",
+        "integrity": "sha512-gXQh3SaZmWTfVMc4Ao5+LGbVeKvzyO7tolok0nLsZgq9nGjZx/EEU3NM8C+qUnB4Nvs2rswG5qOVgLzQkq0fHQ=="
+      },
+      "@mariozechner/pi-tui": {
+        "version": "0.73.1",
+        "integrity": "sha512-ybVsRnUbzQRtbocltJ2OXb2QogrO67N2BlUyKjZz9BHcZYiDJtNkcKQockxDjsVvDc0uBCLDX6iZJoBElBd8fw=="
+      }
+    },
+    "lock_sha256": "a2d8234e735106612b35131287836aeb0637ea426327d973d971aad61c019f12",
+    "bridge_sha256": "fcc773d51134541715985f60d61aed4aa70e8d4b4b61129b617950ec83353107",
+    "approved_modules_sha256": "09d21d68b35382323f5663e1a060af306b7ef0c22902739fe3ad3aa4e4db68d3",
+    "approved_modules_verified": true,
+    "installed_tree_sha256": "0826af343d160af75aa71a550817e4f0b0a0281c7a1988c5da13a4cf01a00512",
+    "installed_files": 19701,
+    "node_version": "v22.16.0",
+    "dependency_identity": "bf0d77aad211b0a7da84ce230b095b2a9dcf18f3b5f03310967efb90b2d61770"
+  },
+  "actor_requests": 0,
+  "scorer_invocations": 0,
+  "node_validation_location": "aml-b CPU"
+}

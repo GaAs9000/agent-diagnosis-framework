@@ -1,0 +1,22 @@
+{
+  "schema": "opencode-original-scope-recovery-v1",
+  "source": "remaining work under existing v3 authorization; no new limits",
+  "authorization": {
+    "path": "/Users/jiashen/Desktop/问题诊断/L2_Behavioral Event Localization/L2_Sandbox/validation/opencode_length_repair_20261019/continuation_05/budget_authorization.json",
+    "sha256": "fa5e79077919f4982e7cc25d3bbe3d273ea3d340c8266ecfa767660534a3843b"
+  },
+  "predecessor_census": {
+    "completed_branches": 2184,
+    "invalid_or_incomplete_branches": 81,
+    "pending_branches": 17
+  },
+  "exact_scope": "only17unstarted; retain81invalid; no sample replacement",
+  "deadline_epoch": 1792576346.4276428,
+  "cumulative_max_requests": 25000,
+  "cumulative_max_tokens": 2000000000,
+  "max_cost_usd": null,
+  "primary_failure": "native Pi bridge closed; secondary pipe cleanup exception masked primary infrastructure error",
+  "upstream_disconnect_cause": "unknown",
+  "automatic_d2": false,
+  "artifact_sha256": "8177da934b7e2fb179ea50bb40ead778cba611d4b41662dbad230e027ca94c9a"
+}

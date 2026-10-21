@@ -1,0 +1,13 @@
+{
+  "supervisor_pid": 61487,
+  "source_commit": "578754f0a04f713afe1101258bb153be91a55632",
+  "supervisor_sha256": "642ddb1c5557c2c147d884838ac31ac1b8a6aab93ba61f2584bdac102a120600",
+  "plan_file_sha256": "4554d52aabc577927ffc73890d9a45522bbd13321332c0e8e6af6f4fb0f46757",
+  "scope_preflight_sha256": "1443109bc14efe4c04ec2ee52754bfb875695deaac890d29f953340160f4ac86",
+  "storage_contract_sha256": "909b992a127863765ebcf1ca629fb3b2e7c8dea0cdff5b219ddd6d0e9c7462c3",
+  "original_limits_preserved": true,
+  "only_unstarted_jobs": 17,
+  "automatic_d2": false,
+  "automatic_restart": false,
+  "automatic_terminal_report": true
+}
