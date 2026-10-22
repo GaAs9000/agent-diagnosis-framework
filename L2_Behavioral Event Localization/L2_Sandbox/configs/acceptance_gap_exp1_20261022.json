@@ -1,0 +1,152 @@
+{
+  "schema": "acceptance-gap-exp1-spec-v1",
+  "experiment_id": "acceptance_gap_exp1_20261022",
+  "status": "proposed_not_authorized",
+  "question": "Is the acceptance-criteria gap the binding constraint for the frozen Qwen3.6-27B + L1 Pi harness on OfficeVal DEV9, and do existing text-contract (PSCI-style) or render-check (GDPval-style) instructions close it?",
+  "direction_document": "L2_Behavioral Event Localization/L2_Sandbox/docs/RESEARCH_DIRECTION_UNWRITTEN_ACCEPTANCE_20261022.md",
+  "pi": {
+    "base_config": "L1_sandbox/C3_Experimental_Sandbox/configs/l1/officeval.qwen36.pi.t1.prospective-native.context-v2.timeout600.json",
+    "base_config_sha256": "09b6c6d83b779c06c7b15a34fe1b0893019af0fd75f6f4dce4de4f32fcfbf3c8",
+    "reference_prospective_freeze": {
+      "path": "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/prospective_freeze.json",
+      "sha256": "77a63041dff3f327ef3d32d89c71f1b4476312d2ddc6dbebe748affa314e84fc",
+      "use": "DEV45 task configuration hashes, Actor image/user/environment, native validator identity and expected vLLM service identity; its controller-source lock is superseded by the Exp1 plan's own source fingerprints"
+    },
+    "reference_cohort": {
+      "path": "L2_Behavioral Event Localization/L2_Sandbox/validation/a_plus_i_execute_20261018/dev45_batch/cohort.json",
+      "sha256": "aa6633d9663f98a5bd654ad9d20c4526dd138b7d7096fe0e57aa7a6531436680",
+      "use": "historical O reference for the drift check only; never pooled into the primary contrast"
+    },
+    "condition_injection": "agent.system_prompt: the condition text is inserted between the Pi base system prompt and the sandbox execution contract block. L1 rebuilds the contract block idempotently, and Pi compaction keeps messages[0:2] (system + task), so the text stays visible for the whole run; a user-turn injection would be summarized away by compaction. Only agent.system_prompt differs from O; O is hash-equal to the DEV45 frozen task configuration.",
+    "controller_source_drift": "Since the DEV45 execution commit 8d32bdb only three execution-path files changed: core/orchestrator.py (actor-transition and OpenCode output-limit paths, gated to the opencode-chat adapter), models/opencode.py (not used by this openai-compatible configuration) and runtime/pi_native_validation.py (pipe cleanup on bridge errors). The Exp1 plan fingerprints the current sources; the drift check against DEV45 O measures any behavioural effect."
+  },
+  "tasks": {
+    "primary": ["officeval_003", "officeval_004", "officeval_010", "officeval_033", "officeval_050", "officeval_060", "officeval_070", "officeval_090"],
+    "f_only": ["officeval_085"],
+    "f_only_reason": "The officeval_085 verifier requires three exact deliverable filenames that neither the task text nor the official runner prompt states, and it has no fallback. O, T and V are 0 by construction there, so only F is run, as a diagnostic of performance once the names are known."
+  },
+  "conditions": {
+    "O": {
+      "label": "original task",
+      "message": null
+    },
+    "F": {
+      "label": "full grader specification at start (information upper bound)",
+      "prefix": "下面是本任务交付物的验收标准。评分时会逐条检查这些标准（评分器本身仍不可调用）。完成任务时请满足这些标准。",
+      "explicit_heading": "任务说明中的要求：",
+      "implicit_heading": "评分细则：",
+      "source": {
+        "path": "L2_Behavioral Event Localization/L2_Sandbox/docs/p4_artifacts_20261019/d1_plan.json",
+        "sha256": "6688fae43dd06f7ffe5e165c7b72bb08ed6899d53101dd191195468d04bda68b",
+        "field": "task_ladder_message_specs.<task>.ladder_messages.R_implicit.message",
+        "strip_prefix_field": "task_ladder_message_specs.<task>.ladder_messages.S.message",
+        "note": "Verbatim requirement lists of the frozen D1 R_implicit arm (explicit task requirements plus exact verifier specifications), without the D/S process sentences."
+      },
+      "annotation_removals": ["（是否可由原图支持待人工看图）"],
+      "deliverable_names": {
+        "officeval_003": {
+          "verifier": {"path": "L1_sandbox/C3_Experimental_Sandbox/third_party/OmegaUse-OfficeVal/verifiers/officeval_003_verifier.py", "sha256": "b870ac1d57b71133e808b44beedc15b8cca516504f9d27361b7a35b87032eb19"},
+          "names": ["部门协调会记录_会议内容横线表格版.docx"],
+          "text": "交付文件名：评分时优先查找 /workspace/submission/部门协调会记录_会议内容横线表格版.docx；找不到时取该目录中按名称排序的第一个 .docx。"
+        },
+        "officeval_004": {
+          "verifier": {"path": "L1_sandbox/C3_Experimental_Sandbox/third_party/OmegaUse-OfficeVal/verifiers/officeval_004_verifier.py", "sha256": "d7c174c11d2ed0e0fe46e33c92b6e8850dc14e182f43c62edac7e0958d22fec0"},
+          "names": ["毕业实习报告_格式调整版.docx", "毕业实习鉴定表_格式调整版.docx"],
+          "text": "交付文件名：评分时优先查找 /workspace/submission/毕业实习报告_格式调整版.docx 和 /workspace/submission/毕业实习鉴定表_格式调整版.docx；找不到时按文件名中的“报告”“鉴定”匹配。"
+        },
+        "officeval_085": {
+          "verifier": {"path": "L1_sandbox/C3_Experimental_Sandbox/third_party/OmegaUse-OfficeVal/verifiers/officeval_085_verifier.py", "sha256": "19261a63805762270bc5c1bcf23a9e68360cda7c559c8d087c1e997a68f57082"},
+          "names": ["1_美化版_S11可编辑图表.xlsx", "2_美化版_S11可编辑图表.xlsx", "3_美化版_S11可编辑图表.xlsx"],
+          "text": "交付文件名：评分时只按以下文件名在 /workspace/submission/ 中查找交付物，缺少任何一个都按未交付计：1_美化版_S11可编辑图表.xlsx、2_美化版_S11可编辑图表.xlsx、3_美化版_S11可编辑图表.xlsx（分别对应 表1.xlsx、表2.xlsx、表3.xlsx）。"
+        }
+      }
+    },
+    "T": {
+      "label": "self-written acceptance contract (PSCI-style text baseline)",
+      "text": "开始修改之前，先根据任务说明和 /workspace/input 中的全部输入材料（包括图片和原始文档），整理一份这份交付物的验收清单：逐条写出交付物必须满足的具体、可检查的要求，例如要保持或达到的格式、数值、位置、结构和完整性要求。把清单保存为 /workspace/acceptance_contract.md，不要放进 /workspace/submission。完成修改后、结束之前，逐条对照这份清单检查交付物；有不满足的就修改并重新保存，直到每一条都满足后再结束。"
+    },
+    "V": {
+      "label": "render-and-inspect self-check (GDPval-style)",
+      "text": "结束之前，把交付文件渲染成图片检查一遍：例如先用 LibreOffice 无界面模式把交付文件转换成 PDF，再把 PDF 转换成 PNG 图片，并用 read 工具查看这些图片。对照任务说明和输入材料（包括参考图片和原始文档）检查渲染结果：内容是否正确完整，排版和格式是否符合要求，有没有错位、重叠、溢出、乱码或缺失。发现问题就修改、重新保存并再次检查，确认没有问题后再结束。"
+    }
+  },
+  "condition_header": "[补充说明]",
+  "blocks": {
+    "count": 5,
+    "design": "Block b contains replicate b of every cell: 8 primary tasks x {O,F,T,V} plus officeval_085 x F = 33 runs. Any prefix of complete blocks is balanced.",
+    "order_seed": "acceptance-gap-exp1-20261022",
+    "slots_per_block": 33
+  },
+  "limits_per_block": {
+    "concurrency": 3,
+    "attempt_limit_per_slot": 1,
+    "max_model_requests_per_slot": 35,
+    "max_tool_calls_per_slot": 140,
+    "logical_cap": 1155,
+    "http_cap": 4620,
+    "lease_seconds": 21600,
+    "service_stop_before_hard_stop_seconds": 600,
+    "send_window_seconds": 645,
+    "request_timeout_seconds": 600
+  },
+  "totals": {
+    "runs": 165,
+    "logical_cap": 5775,
+    "http_cap": 23100,
+    "expected_logical_requests": "about 3,600-4,600 (DEV45 mean 21.4 requests per run; F/T/V are expected to add 0-40%)",
+    "expected_gpu_hours": "about 3 hours per block (DEV45 sustained about 282 requests/hour at concurrency 3); worst case about 4.1 hours per block; five separate six-hour leases"
+  },
+  "service": {
+    "host": "aml-b",
+    "gpu_index": 4,
+    "gpu_uuid": "GPU-6d3f754b-b139-9354-0cbc-42bf22208180",
+    "remote_python": "/home/jiasheren2/envs/agent-diagnosis-d0-py312/bin/python",
+    "remote_code_root": "/home/jiasheren2/projects/agent_diagnosis_d0_20261018/Users/jiashen/Desktop/问题诊断",
+    "remote_identity_receipt": {
+      "path": "/home/jiasheren2/projects/a_plus_i_execute_20261018/service_identity_v2/identity_runtime.json",
+      "sha256": "25630fdbecb08f005a10d1173080003c6ddaad521cf52144fd122cc4b3043d68"
+    },
+    "local_endpoint": "http://127.0.0.1:8001",
+    "tunnel_script": "scripts/start_tunnel.sh",
+    "native_validator_env": {
+      "C3_PI_NODE": "L1_sandbox/C3_Experimental_Sandbox/validation/pi_native_alignment_20261018/runtime/node-validator-remote.sh",
+      "C3_PI_NATIVE_DIR": "L1_sandbox/C3_Experimental_Sandbox/validation/pi_native_alignment_20261018/runtime/pi_native"
+    }
+  },
+  "analysis": {
+    "endpoint": "study-outcome-v1 study_outcome_y, i.e. official OfficeVal completion_rate in [0,1]; study-invalid runs are excluded from means and counted",
+    "task_weighting": "equal weight per primary task; cell mean first, then contrast, then average over tasks",
+    "bootstrap": {"type": "two_stage_task_then_run", "replicates": 10000, "seed": 20261022, "interval": 0.95},
+    "g1_information_binding": {"contrast": "F-O", "min_effect": 0.15, "lower_bound_must_exceed": 0.0},
+    "g2_existing_methods_insufficient": {"contrasts": ["T-O", "V-O"], "max_share_of_f_minus_o": 0.3333333333333333},
+    "existing_methods_sufficient_share": 0.6666666666666666,
+    "decision_basis": "G1 uses the F-O point estimate and its two-stage bootstrap 95% lower bound; the T/V share rules compare point estimates (best of T and V chosen by point estimate); futility uses the F-O upper bound. Bootstrap intervals for T-O and V-O are reported, not used for the decision.",
+    "min_valid_runs_per_cell": 4,
+    "futility": {"min_blocks": 3, "f_minus_o_upper_below": 0.10},
+    "drift": {"compare": "concurrent O vs DEV45 O on the 8 primary tasks", "flag_abs_diff": 0.10},
+    "harm": {"items_with_o_pass_rate_at_least": 0.6, "min_o_valid_runs": 3, "flag_mean_drop_above": 0.10},
+    "source_rule": {
+      "default": "shown",
+      "task_overrides": {"officeval_085": "unknowable", "officeval_090": "assumed", "officeval_033": "assumed"},
+      "item_overrides": {"officeval_003": {"文档表格中没有空白行": "written"}},
+      "note": "Coarse frozen rule from the direction document section 2.2; officeval_033 pending review. Descriptive only."
+    }
+  },
+  "decision_rules": [
+    {"label": "stop_futility", "when": "after at least 3 complete blocks: upper 95% bound of F-O < 0.10", "action": "stop remaining blocks; the information gap is not binding for this pi"},
+    {"label": "no_go_information_not_binding", "when": "final: F-O < 0.15 or its lower 95% bound <= 0", "action": "stop this direction for this pi; report"},
+    {"label": "stop_existing_methods_sufficient", "when": "final: G1 holds and max(T-O, V-O) >= (2/3)(F-O)", "action": "existing text/render baselines already close most of the gap; the method contribution would be marginal"},
+    {"label": "partial_requires_user_decision", "when": "final: G1 holds and (1/3)(F-O) <= max(T-O, V-O) < (2/3)(F-O)", "action": "user decides; any method must beat the best of T and V"},
+    {"label": "go_method_development", "when": "final: G1 holds and max(T-O, V-O) < (1/3)(F-O)", "action": "proceed to acceptance compilation development on DEV; held-out families stay unexposed"}
+  ],
+  "operational_stops": [
+    "Any integrity, provenance, source or service-identity error stops the block (fail closed; no automatic retry or resampling).",
+    "If more than 20% of a block's runs are study-invalid, pause before the next block and diagnose; do not change the frozen conditions to continue.",
+    "No lease renewal, no automatic restart, no replacement of invalid runs; missing cells are reported."
+  ],
+  "not_in_scope": [
+    "Held-out families (only the 8 primary DEV tasks plus 085 F).",
+    "Analyst models, D1/D2/D3, checkpoint continuation branches.",
+    "Any change to tasks, verifiers, budgets, model, harness or image."
+  ]
+}
