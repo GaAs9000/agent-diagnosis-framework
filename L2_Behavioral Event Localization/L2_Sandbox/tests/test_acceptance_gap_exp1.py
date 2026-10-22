@@ -507,3 +507,53 @@ def test_drift_against_reference_o():
     reference = [dict(task=t, y=0.1) for t in tasks]
     report = an.drift(values, reference, tasks, 0.10)
     assert report['task_equal_difference'] == pytest.approx(0.2) and report['flagged'] is True
+
+
+def fake_block_phase(root, block, spec_sha, means):
+    """Minimal sealed block outputs in the driver's layout (executed plan, cohort, graded packages)."""
+    spec = spec_analysis()
+    labels = [f'{t}.{c}.r{block:02d}' for t in spec['tasks']['primary'] for c in ('O', 'F', 'T', 'V')]
+    labels.append(f'officeval_085.F.r{block:02d}')
+    execution = root / f'block_{block:02d}' / 'execution'
+    execution.mkdir(parents=True)
+    plan = an.seal(dict(spec_sha256=spec_sha, block=block, slots=labels), 'plan_sha256')
+    (execution / 'executed_plan.json').write_text(json.dumps(plan))
+    slots = {}
+    for index, label in enumerate(labels):
+        task, condition, _ = an.parse_label(label)
+        package = root / 'packages' / label
+        package.mkdir(parents=True)
+        (package / 'official_grade.json').write_text(json.dumps({'official_raw': {
+            'dim1_pass': True, 'max_score': 10, 'dim2_items': [dict(rule='keep', delta=1, max_delta=1)]}}))
+        y = means.get(condition, 0.3) + 0.01 * (index % 3)
+        slots[label] = dict(status='completed', study_valid=True, path=str(package),
+                            outcome=dict(study_valid=True, study_outcome_y=y),
+                            usage=dict(model_requests_including_parent=20))
+    (execution / 'cohort.json').write_text(json.dumps(an.seal(dict(plan_sha256=plan['plan_sha256'], slots=slots))))
+    return root / f'block_{block:02d}'
+
+
+def test_exported_inputs_reproduce_the_direct_analysis(tmp_path, monkeypatch):
+    spec, spec_sha = an.load_spec()
+    reference = [dict(task=t, y=0.2) for t in spec['tasks']['primary']]
+    monkeypatch.setattr(an, 'load_reference', lambda value: reference)
+    means = {'O': 0.2, 'F': 0.6, 'T': 0.25, 'V': 0.22}
+    phases = [fake_block_phase(tmp_path, b, spec_sha, means) for b in range(3)]
+    inputs = an.export_inputs(phases)
+    assert inputs['evidence_reverified'] is False and len(inputs['runs']) == 99
+    remote = an.analyze_inputs(json.loads(json.dumps(inputs)), spec, spec_sha)
+    blocks, runs = [], []
+    for phase in phases:
+        meta, block_runs = an.load_block(phase, spec_sha, reverify=False)
+        blocks.append(meta)
+        runs += block_runs
+    direct = an.analyze(blocks, runs, spec, spec_sha, reference)
+    assert remote['decision'] == direct['decision'] == 'interim_continue'
+    assert remote['estimates'] == direct['estimates'] and remote['intervals_ci95'] == direct['intervals_ci95']
+    assert remote['provenance']['inputs_sha256'] == inputs['artifact_sha256']
+    tampered = json.loads(json.dumps(inputs))
+    tampered['runs'][0]['y'] = 1.0
+    with pytest.raises(ValueError, match='seal'):
+        an.analyze_inputs(tampered, spec, spec_sha)
+    with pytest.raises(ValueError, match='not exported under this spec'):
+        an.analyze_inputs(inputs, spec, '0' * 64)

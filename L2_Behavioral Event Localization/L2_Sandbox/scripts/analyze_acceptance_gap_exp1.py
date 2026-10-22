@@ -250,7 +250,7 @@ def source_deductions(runs, tasks, conditions, rule_map):
     return out
 
 
-def analyze(blocks, runs, spec, spec_sha, reference=None):
+def analyze(blocks, runs, spec, spec_sha, reference=None, provenance=None):
     analysis = spec['analysis']
     primary = spec['tasks']['primary']
     primary_runs = [r for r in runs if r['task'] in primary]
@@ -263,7 +263,7 @@ def analyze(blocks, runs, spec, spec_sha, reference=None):
     complete = all(values.get((t, c)) for t in primary for c in ('O', *CONTRASTS))
     estimates = {c: contrast(values, primary, c) for c in CONTRASTS} if complete else None
     result = dict(schema=SCHEMA, spec_sha256=spec_sha, blocks=blocks, census=census, actor_requests=0,
-                  analyst_requests=0, estimates=estimates)
+                  analyst_requests=0, estimates=estimates, provenance=provenance or {})
     decision, reasons, intervals = 'insufficient_data', {}, None
     if complete:
         boot = analysis['bootstrap']
@@ -304,23 +304,66 @@ def report_markdown(summary):
     return '\n'.join(lines) + '\n'
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--blocks', type=Path, nargs='+', required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--spec', type=Path, default=SPEC)
-    args = parser.parse_args(argv)
-    if args.output.exists():
-        parser.error('output exists; analysis never overwrites')
-    spec, spec_sha = load_spec(args.spec)
+INPUTS_SCHEMA = 'acceptance-gap-exp1-analysis-inputs-1'
+
+
+def export_inputs(phases, spec_path=SPEC):
+    """Read sealed block receipts and graded items locally; no computation beyond collection."""
+    spec, spec_sha = load_spec(spec_path)
     blocks, runs = [], []
-    for phase in args.blocks:
-        meta, block_runs = load_block(phase, spec_sha)
+    for phase in phases:
+        meta, block_runs = load_block(phase, spec_sha, reverify=False)
         if any(b['block'] == meta['block'] for b in blocks):
-            parser.error('duplicate block')
+            raise ValueError('duplicate block')
         blocks.append(meta)
         runs += block_runs
-    summary = analyze(sorted(blocks, key=lambda b: b['block']), runs, spec, spec_sha, load_reference(spec))
+    return seal(dict(schema=INPUTS_SCHEMA, spec_sha256=spec_sha, blocks=sorted(blocks, key=lambda b: b['block']),
+                     runs=runs, reference=load_reference(spec), evidence_reverified=False,
+                     note='outcomes taken from sealed receipts; each package was verified by the driver at slot completion'))
+
+
+def analyze_inputs(inputs, spec, spec_sha):
+    verify_seal(inputs)
+    if inputs.get('schema') != INPUTS_SCHEMA or inputs.get('spec_sha256') != spec_sha:
+        raise ValueError('analysis inputs were not exported under this spec')
+    provenance = dict(inputs_sha256=inputs['artifact_sha256'], evidence_reverified=inputs['evidence_reverified'])
+    return analyze(inputs['blocks'], inputs['runs'], spec, spec_sha, inputs['reference'], provenance)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--blocks', type=Path, nargs='+')
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--spec', type=Path, default=SPEC)
+    parser.add_argument('--export-inputs', type=Path, help='write analysis inputs from sealed receipts and stop')
+    parser.add_argument('--inputs', type=Path, help='analyze previously exported inputs (no evidence access)')
+    args = parser.parse_args(argv)
+    if args.export_inputs:
+        if not args.blocks or args.export_inputs.exists():
+            parser.error('--export-inputs needs --blocks and a new output file')
+        value = export_inputs(args.blocks, args.spec)
+        args.export_inputs.parent.mkdir(parents=True, exist_ok=True)
+        with args.export_inputs.open('x', encoding='utf-8') as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        print(json.dumps(dict(inputs=str(args.export_inputs), inputs_sha256=value['artifact_sha256']), indent=2))
+        return
+    if not args.output or args.output.exists():
+        parser.error('--output must name a new directory; analysis never overwrites')
+    spec, spec_sha = load_spec(args.spec)
+    if args.inputs:
+        summary = analyze_inputs(read_json(args.inputs), spec, spec_sha)
+    else:
+        if not args.blocks:
+            parser.error('--blocks or --inputs required')
+        blocks, runs = [], []
+        for phase in args.blocks:
+            meta, block_runs = load_block(phase, spec_sha)
+            if any(b['block'] == meta['block'] for b in blocks):
+                parser.error('duplicate block')
+            blocks.append(meta)
+            runs += block_runs
+        summary = analyze(sorted(blocks, key=lambda b: b['block']), runs, spec, spec_sha, load_reference(spec),
+                          dict(evidence_reverified=True))
     args.output.mkdir(parents=True)
     write_json(args.output / 'summary.json', summary)
     (args.output / 'report.md').write_text(report_markdown(summary), encoding='utf-8')
