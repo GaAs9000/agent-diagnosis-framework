@@ -282,9 +282,18 @@ class Chain:
     def ensure_tunnel(self):
         if self.tunnel_alive():
             return False
-        self.must(['bash', str(TUNNEL)], 120, 'tunnel_failed', label='start tunnel')
-        if not self.tunnel_alive():
-            raise ChainStop('tunnel_failed', 'tunnel did not come up')
+        # start_tunnel.sh leaves a backgrounded `ssh -f` master; never capture its output
+        # through pipes (the master would keep them open), log it to a file instead.
+        log = self.run_dir / 'tunnel.log'
+        with log.open('a', encoding='utf-8') as handle:
+            try:
+                code = self.runner(['bash', str(TUNNEL)], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=handle,
+                                   stderr=handle, timeout=120).returncode
+            except subprocess.TimeoutExpired:
+                code = -9
+        self.event('command', label='start tunnel', returncode=code, log=str(log))
+        if code or not self.tunnel_alive():
+            raise ChainStop('tunnel_failed', 'see ' + str(log))
         self.state['tunnel_restarts'] += 1
         self.event('tunnel_started')
         return True

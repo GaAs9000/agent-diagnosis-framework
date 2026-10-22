@@ -293,3 +293,22 @@ def test_main_is_inert_without_execute(capsys, env):
     assert c.main(['--authorization', str(env.auth)]) == 0
     assert json.loads(capsys.readouterr().out)['status'] == 'not_executed'
     assert not (env.root / 'chain/lock').exists()
+
+
+def test_tunnel_script_output_goes_to_a_file_not_pipes(env):
+    seen, alive = [], iter([False, True])
+    env.chain.tunnel_alive = lambda: next(alive)
+
+    def runner(cmd, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    env.chain.runner = runner
+    assert env.chain.ensure_tunnel() is True
+    kwargs = seen[0]
+    assert 'capture_output' not in kwargs and kwargs['stdout'] is kwargs['stderr']
+    assert hasattr(kwargs['stdout'], 'fileno') and kwargs['stdin'] == subprocess.DEVNULL
+    env.chain.tunnel_alive = lambda: False
+    with pytest.raises(c.ChainStop) as stop:
+        env.chain.ensure_tunnel()
+    assert stop.value.reason == 'tunnel_failed'
