@@ -3,7 +3,7 @@
   "status": "preview_not_executable",
   "review": {
     "experiment_id": "acceptance_gap_exp1_20261022",
-    "spec_sha256": "12df753a90b2dc4848fb2a62e335b62cccf4101606d4e1e01380d2f1252b2dfa",
+    "spec_sha256": "f5aee3b48c8a2d469a6543d20d32554349208a05a9149382f1791b2521661335",
     "base_config_sha256": "09b6c6d83b779c06c7b15a34fe1b0893019af0fd75f6f4dce4de4f32fcfbf3c8",
     "condition_text_sha256": {
       "officeval_003": {
@@ -303,7 +303,7 @@
       "request_timeout_seconds": 600
     }
   },
-  "review_digest": "b47c44be7e0c64b166a0161552fa092f45259741abc0e4e9cdbb2f5ca2e8bdfb",
+  "review_digest": "1ca1856f3fcd59dbb656ad7ba2861e8d481af62e5ef06b99f7e4c855ebacce90",
   "condition_texts": {
     "officeval_003": {
       "O": null,

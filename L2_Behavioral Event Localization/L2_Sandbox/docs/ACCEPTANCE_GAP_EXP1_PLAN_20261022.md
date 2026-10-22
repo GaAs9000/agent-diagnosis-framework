@@ -28,7 +28,7 @@
 - 除 `agent.system_prompt` 外，F、T、V 的配置与 O 完全一致。脚本会逐条检查：每个配置都是 L1 校验的不动点，执行契约那一段没有变化。
 - 每条运行的第一个请求还要再核对一次：实际发出的系统提示必须与封存配置完全相同，并且 F/T/V 带标记、O 不带标记。
 - F 文本的来源：逐字使用冻结的 D1 `R_implicit` 要求清单，去掉了开头的 D/S 流程句和 003 的一条内部注记"（是否可由原图支持待人工看图）"。003、004、085 另外写明交付文件名，脚本会核对这些文件名确实出现在对应 verifier 的源码里。
-- 条件文字和完整系统提示见 [preview.json](./acceptance_gap_exp1_20261022/preview.json)，`review_digest` 为 `b47c44be7e0c64b166a0161552fa092f45259741abc0e4e9cdbb2f5ca2e8bdfb`。
+- 条件文字和完整系统提示见 [preview.json](./acceptance_gap_exp1_20261022/preview.json)，`review_digest` 为 `1ca1856f3fcd59dbb656ad7ba2861e8d481af62e5ef06b99f7e4c855ebacce90`。
 
 ### 2.2 任务、重复与顺序
 
@@ -48,8 +48,8 @@
 | 运行数 | 33 | 165 |
 | 逻辑请求上限 | 1,155 | 5,775 |
 | HTTP 尝试上限（含重试） | 4,620 | 23,100 |
-| 预计请求数 | 约 700–900 | 约 3,600–4,600 |
-| 预计 GPU 时间（aml-b GPU4，3 并发） | 约 3 小时，最坏约 4.1 小时 | 约 15–20 小时 |
+| 预计请求数 | 约 700–920 | 约 3,500–4,600 |
+| 预计 GPU 时间（aml-b GPU4，3 并发，按 DEV45 实测约 282 次/小时） | 约 2.5–3.3 小时，最坏约 4.1 小时 | 约 13–17 小时，最坏约 21 小时 |
 | 预计本地磁盘 | 约 1.8 GB | 约 9 GB |
 
 - 每个区块单独申请一次 6 小时租约，结束即释放，不续租、不自动重启。
@@ -85,7 +85,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `configs/acceptance_gap_exp1_20261022.json` | 冻结 spec：条件、任务、区块、上限、分析阈值、决策规则（SHA-256 `12df753a90b2dc4848fb2a62e335b62cccf4101606d4e1e01380d2f1252b2dfa`） |
+| `configs/acceptance_gap_exp1_20261022.json` | 冻结 spec：条件、任务、区块、上限、分析阈值、决策规则（SHA-256 `f5aee3b48c8a2d469a6543d20d32554349208a05a9149382f1791b2521661335`） |
 | `scripts/run_acceptance_gap_exp1.py` | 驱动器：生成预览、生成封存的区块计划、校验计划、执行一个区块（需 `--execute`） |
 | `scripts/supervise_acceptance_gap_exp1.py` | 监督器：复用 R22/DEV45 的 GPU 租约监督器，负责容器归属标签和服务释放 |
 | `scripts/launch_acceptance_gap_block.py` | 操作助手：prepare / start-service / launch / status |
@@ -128,8 +128,8 @@
   "exact_text": "<你的原话>",
   "source": "direct user message in Kiro session, 2026-10-22",
   "experiment_id": "acceptance_gap_exp1_20261022",
-  "spec_sha256": "12df753a90b2dc4848fb2a62e335b62cccf4101606d4e1e01380d2f1252b2dfa",
-  "approved_review_digest": "b47c44be7e0c64b166a0161552fa092f45259741abc0e4e9cdbb2f5ca2e8bdfb",
+  "spec_sha256": "f5aee3b48c8a2d469a6543d20d32554349208a05a9149382f1791b2521661335",
+  "approved_review_digest": "1ca1856f3fcd59dbb656ad7ba2861e8d481af62e5ef06b99f7e4c855ebacce90",
   "authorized_blocks": [0, 1, 2, 3, 4]
 }
 ```
@@ -165,6 +165,7 @@ $PY "$S/launch_acceptance_gap_block.py" launch --block N --execute
 $PY "$S/launch_acceptance_gap_block.py" status --block N
 ```
 
+- 第 1–4 步要连续完成：6 小时租约从 prepare 开始计时，start-service 和 launch 都会检查剩余时间。
 - 监督器在区块结束或租约到期时自动清理本区块的容器并释放 GPU 服务；结果在 `validation/acceptance_gap_exp1_20261022/block_NN/` 下。
 - 第 4 步如果因为隧道没起来而超时，服务不会被关掉：修好隧道后重新执行第 4 步即可。预检失败则会立即释放服务。
 - 跑完 3 个区块后先做一次中期分析，检查中止条件；5 个区块全部跑完后做最终分析：

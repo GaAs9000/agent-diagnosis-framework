@@ -93,8 +93,8 @@
     "runs": 165,
     "logical_cap": 5775,
     "http_cap": 23100,
-    "expected_logical_requests": "about 3,600-4,600 (DEV45 mean 21.4 requests per run; F/T/V are expected to add 0-40%)",
-    "expected_gpu_hours": "about 3 hours per block (DEV45 sustained about 282 requests/hour at concurrency 3); worst case about 4.1 hours per block; five separate six-hour leases"
+    "expected_logical_requests": "about 3,500-4,600 (DEV45 mean 21.4 requests per run; F/T/V are expected to add 0-40%; O is not)",
+    "expected_gpu_hours": "about 2.5-3.3 hours per block at the DEV45 sustained rate of about 282 requests/hour (concurrency 3); worst case about 4.1 hours per block; five separate six-hour leases"
   },
   "service": {
     "host": "aml-b",
